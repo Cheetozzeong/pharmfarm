@@ -9,6 +9,22 @@ pnpm install
 pnpm dev
 ```
 
+## 모바일 래퍼 실행
+
+모바일 앱은 `https://pharmfarm.vercel.app/` 배포본을 WebView로 엽니다.
+
+```bash
+pnpm mobile
+pnpm mobile:android
+pnpm mobile:ios
+```
+
+다른 URL로 확인하려면 다음 환경 변수를 사용합니다.
+
+```bash
+EXPO_PUBLIC_PHARMFARM_WEB_URL=https://example.com pnpm mobile
+```
+
 ## 확인
 
 ```bash

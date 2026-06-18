@@ -21,21 +21,14 @@ import {
   Wifi,
   WifiOff,
 } from "lucide-react";
+import {
+  BrowserMultiFormatReader,
+  type IScannerControls,
+} from "@zxing/browser";
+import { BarcodeFormat, DecodeHintType } from "@zxing/library";
 
 type ViewKey = "receipt" | "return" | "inventory" | "sync";
 type EventTone = "ok" | "warn" | "error" | "info";
-
-type BarcodeDetectorLike = {
-  detect(source: HTMLVideoElement): Promise<Array<{ rawValue: string }>>;
-};
-
-declare global {
-  interface Window {
-    BarcodeDetector?: {
-      new (options?: { formats?: string[] }): BarcodeDetectorLike;
-    };
-  }
-}
 
 type QrFields = {
   pc: string;
@@ -371,11 +364,38 @@ function currency(value: number) {
   return new Intl.NumberFormat("ko-KR").format(value);
 }
 
+function createScannerReader() {
+  const hints = new Map<DecodeHintType, unknown>();
+  hints.set(DecodeHintType.TRY_HARDER, true);
+  hints.set(DecodeHintType.CHARACTER_SET, "UTF-8");
+  hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+    BarcodeFormat.QR_CODE,
+    BarcodeFormat.DATA_MATRIX,
+  ]);
+
+  return new BrowserMultiFormatReader(hints, {
+    delayBetweenScanAttempts: 120,
+    delayBetweenScanSuccess: 650,
+    tryPlayVideoTimeout: 5000,
+  });
+}
+
+function getPreferredCameraConstraints(): MediaStreamConstraints {
+  return {
+    audio: false,
+    video: {
+      facingMode: { ideal: "environment" },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      frameRate: { ideal: 30 },
+    },
+  };
+}
+
 function App() {
   const videoRef = useRef<HTMLVideoElement>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const rafRef = useRef<number | null>(null);
-  const lastDetectedRef = useRef("");
+  const scannerControlsRef = useRef<IScannerControls | null>(null);
+  const lastDetectedRef = useRef({ value: "", at: 0 });
   const activeViewRef = useRef<ViewKey>("receipt");
   const receiptQueueRef = useRef<ReceiptQueueItem[]>([]);
   const receiptHistoryRef = useRef<ReceiptTrace[]>(initialReceiptHistory);
@@ -569,16 +589,13 @@ function App() {
   );
 
   const stopCamera = useCallback(() => {
-    if (rafRef.current) {
-      window.cancelAnimationFrame(rafRef.current);
-      rafRef.current = null;
-    }
-
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
+    scannerControlsRef.current?.stop();
+    scannerControlsRef.current = null;
 
     if (videoRef.current) {
+      videoRef.current.pause();
       videoRef.current.srcObject = null;
+      videoRef.current.removeAttribute("src");
     }
   }, []);
 
@@ -594,68 +611,61 @@ function App() {
       setCameraError("");
 
       try {
-        if (!navigator.mediaDevices?.getUserMedia) {
-          throw new Error("브라우저 카메라 API를 사용할 수 없습니다.");
+        if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+          throw new Error(
+            "카메라는 HTTPS 또는 localhost 환경에서만 사용할 수 있습니다.",
+          );
         }
 
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: { facingMode: { ideal: "environment" } },
-        });
+        const video = videoRef.current;
+
+        if (!video) {
+          throw new Error("카메라 화면을 준비하지 못했습니다.");
+        }
+
+        const reader = createScannerReader();
+        const controls = await reader.decodeFromConstraints(
+          getPreferredCameraConstraints(),
+          video,
+          (result) => {
+            const value = result?.getText();
+
+            if (!value) return;
+
+            const now = Date.now();
+            const lastDetected = lastDetectedRef.current;
+
+            if (value === lastDetected.value && now - lastDetected.at < 1500) {
+              return;
+            }
+
+            lastDetectedRef.current = { value, at: now };
+            setManualPayload(value);
+            handlePayload(value, "camera");
+          },
+        );
 
         if (cancelled) {
-          stream.getTracks().forEach((track) => track.stop());
+          controls.stop();
           return;
         }
 
-        streamRef.current = stream;
-
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-
-        const Detector = window.BarcodeDetector;
-
-        if (!Detector) {
-          setCameraError(
-            "자동 인식 미지원 브라우저입니다. 수동 입력으로 확인하세요.",
-          );
-          return;
-        }
-
-        const detector = new Detector({ formats: ["qr_code", "data_matrix"] });
-
-        const scan = async () => {
-          if (cancelled) return;
-
-          const video = videoRef.current;
-
-          if (video && video.readyState >= 2) {
-            try {
-              const codes = await detector.detect(video);
-              const value = codes[0]?.rawValue;
-
-              if (value && value !== lastDetectedRef.current) {
-                lastDetectedRef.current = value;
-                setManualPayload(value);
-                handlePayload(value, "camera");
-              }
-            } catch {
-              setCameraError("프레임 분석 중 오류가 발생했습니다.");
-            }
-          }
-
-          rafRef.current = window.requestAnimationFrame(scan);
-        };
-
-        rafRef.current = window.requestAnimationFrame(scan);
+        scannerControlsRef.current = controls;
       } catch (error) {
-        setCameraError(
-          error instanceof Error
-            ? error.message
-            : "카메라를 시작하지 못했습니다.",
-        );
+        if (cancelled) return;
+
+        if (error instanceof Error && error.name === "NotAllowedError") {
+          setCameraError(
+            "카메라 권한이 거부되었습니다. 브라우저 권한을 확인하세요.",
+          );
+        } else {
+          setCameraError(
+            error instanceof Error
+              ? error.message
+              : "카메라를 시작하지 못했습니다.",
+          );
+        }
+
         setCameraActive(false);
       }
     }
