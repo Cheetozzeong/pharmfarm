@@ -851,6 +851,8 @@ function currency(value: number) {
 
 function MobileApp() {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const scanAudioRef = useRef<HTMLAudioElement | null>(null);
+  const audioUnlockedRef = useRef(false);
   const scannerControlsRef = useRef<IScannerControls | null>(null);
   const lastDetectedRef = useRef({ value: "", at: 0 });
   const modeRef = useRef<Mode>("receipt");
@@ -892,6 +894,46 @@ function MobileApp() {
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
+
+  useEffect(() => {
+    const audio = new Audio("/barcode_sound.mp3");
+    audio.preload = "auto";
+    scanAudioRef.current = audio;
+
+    return () => {
+      audio.pause();
+      scanAudioRef.current = null;
+    };
+  }, []);
+
+  const unlockScanAudio = useCallback(() => {
+    const audio = scanAudioRef.current;
+    if (!audio || audioUnlockedRef.current) return;
+
+    const previousVolume = audio.volume;
+    audio.volume = 0;
+    void audio
+      .play()
+      .then(() => {
+        audio.pause();
+        audio.currentTime = 0;
+        audio.volume = previousVolume;
+        audioUnlockedRef.current = true;
+      })
+      .catch(() => {
+        audio.volume = previousVolume;
+      });
+  }, []);
+
+  const playScanSound = useCallback(() => {
+    const audio = scanAudioRef.current;
+    if (!audio) return;
+
+    audio.pause();
+    audio.currentTime = 0;
+    audio.volume = 1;
+    void audio.play().catch(() => undefined);
+  }, []);
 
   const selectedWholesaler = useMemo(
     () =>
@@ -1193,6 +1235,7 @@ function MobileApp() {
             const accepted = handlePayload(value);
             if (accepted) {
               lastDetectedRef.current = { value, at: now };
+              playScanSound();
             }
           },
         );
@@ -1220,7 +1263,7 @@ function MobileApp() {
       cancelled = true;
       stopCamera();
     };
-  }, [cameraActive, handlePayload, stopCamera]);
+  }, [cameraActive, handlePayload, playScanSound, stopCamera]);
 
   function chooseMode(nextMode: Mode) {
     if (nextMode === mode) return;
@@ -1284,6 +1327,17 @@ function MobileApp() {
     setSampleCursor((value) => value + 1);
     setScanNotice("샘플 QR을 처리하고 있습니다.");
     handlePayload(sample);
+  }
+
+  function toggleCamera() {
+    setCameraActive((current) => {
+      const next = !current;
+      if (next) {
+        lastDetectedRef.current = { value: "", at: 0 };
+        unlockScanAudio();
+      }
+      return next;
+    });
   }
 
   function startReceipt() {
@@ -1445,13 +1499,6 @@ function MobileApp() {
     }
   }
 
-  function logout() {
-    clearAuthTokens();
-    setApiState("unauthorized");
-    setApiMessage("로그인이 필요합니다.");
-    setScreen("account");
-  }
-
   return (
     <main className={`phone ${screenClass(screen, mode)}`}>
       {screen === "wholesaler" && (
@@ -1492,7 +1539,7 @@ function MobileApp() {
             }
           }}
           onSample={useSample}
-          onToggleCamera={() => setCameraActive((value) => !value)}
+          onToggleCamera={toggleCamera}
           onWholesaler={openWholesalerPicker}
         />
       )}
@@ -1611,9 +1658,7 @@ function MobileApp() {
             hasStoredAuthTokens() ? () => setScreen("wholesaler") : undefined
           }
           onLoginId={setLoginId}
-          onLogout={logout}
           onPassword={setPassword}
-          onRefresh={bootstrapAuth}
           onSubmit={submitLogin}
         />
       )}
@@ -2340,9 +2385,7 @@ function AccountScreen({
   password,
   onBack,
   onLoginId,
-  onLogout,
   onPassword,
-  onRefresh,
   onSubmit,
 }: {
   apiBase: string;
@@ -2352,15 +2395,13 @@ function AccountScreen({
   password: string;
   onBack?: () => void;
   onLoginId: (value: string) => void;
-  onLogout: () => void;
   onPassword: (value: string) => void;
-  onRefresh: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
 }) {
   return (
     <>
       <Header title="계정" onBack={onBack} />
-      <section className="scroll-body">
+      <section className="scroll-body account-body">
         <div className="account-card">
           <span>API</span>
           <strong>{apiBase}</strong>
@@ -2389,14 +2430,6 @@ function AccountScreen({
           </button>
         </form>
       </section>
-      <BottomBar stack>
-        <button className="secondary-btn" type="button" onClick={onRefresh}>
-          연결 확인
-        </button>
-        <button className="secondary-btn" type="button" onClick={onLogout}>
-          로그아웃
-        </button>
-      </BottomBar>
     </>
   );
 }

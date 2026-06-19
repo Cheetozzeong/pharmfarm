@@ -11,6 +11,7 @@
   --line: #eef1f2;
   --panel: #f6f7f8;
   --dark: #0c0e0f;
+  --app-height: 100vh;
   color: var(--ink);
   background: #eef0f2;
   font-family:
@@ -22,6 +23,18 @@
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+}
+
+@supports (height: 100svh) {
+  :root {
+    --app-height: 100svh;
+  }
+}
+
+@supports (height: 100dvh) {
+  :root {
+    --app-height: 100dvh;
+  }
 }
 
 * {
@@ -39,7 +52,7 @@ body,
 
 body {
   display: flex;
-  min-height: 100dvh;
+  min-height: var(--app-height);
   align-items: center;
   justify-content: center;
   background: #eef0f2;
@@ -94,9 +107,9 @@ p {
   position: relative;
   display: flex;
   width: min(100vw, 430px);
-  height: 100dvh;
-  min-height: 620px;
-  max-height: 932px;
+  height: var(--app-height);
+  min-height: 0;
+  max-height: var(--app-height);
   flex-direction: column;
   overflow: hidden;
   background: #fff;
@@ -341,7 +354,7 @@ p {
 
 .scan-result {
   position: absolute;
-  bottom: 134px;
+  bottom: calc(126px + env(safe-area-inset-bottom));
   left: 50%;
   z-index: 2;
   display: grid;
@@ -443,7 +456,7 @@ p {
 
 .scan-actions {
   position: absolute;
-  bottom: 78px;
+  bottom: calc(72px + env(safe-area-inset-bottom));
   left: 0;
   z-index: 6;
   display: flex;
@@ -464,7 +477,7 @@ p {
 .modebar {
   position: absolute;
   right: 0;
-  bottom: calc(24px + env(safe-area-inset-bottom));
+  bottom: calc(18px + env(safe-area-inset-bottom));
   left: 0;
   z-index: 6;
   display: flex;
@@ -595,6 +608,10 @@ p {
   padding: 4px 18px 116px;
   background: inherit;
   -webkit-overflow-scrolling: touch;
+}
+
+.account-body {
+  padding-bottom: calc(28px + env(safe-area-inset-bottom));
 }
 
 .section-label {
@@ -1487,20 +1504,21 @@ p {
 
 @media (min-width: 431px) {
   body {
-    padding: 40px;
+    padding: 24px;
   }
 
   .phone {
-    width: 320px;
-    height: min(690px, calc(100dvh - 80px));
-    min-height: 690px;
+    width: min(390px, calc(100vw - 48px));
+    height: min(844px, calc(var(--app-height) - 48px));
+    min-height: min(620px, calc(var(--app-height) - 48px));
+    max-height: calc(var(--app-height) - 48px);
     border: 1px solid #e6e9eb;
-    border-radius: 42px;
+    border-radius: 34px;
     box-shadow: 0 14px 44px rgba(16, 24, 28, 0.2);
   }
 
   .return-sheet {
-    border-radius: 26px 26px 42px 42px;
+    border-radius: 26px 26px 34px 34px;
   }
 }
 
@@ -1513,7 +1531,7 @@ body:has(.cms-shell) {
 
 @media (max-height: 680px) {
   .phone {
-    min-height: 100dvh;
+    min-height: 0;
   }
 
   .scan-box {
@@ -1544,7 +1562,7 @@ body:has(.cms-shell) {
   display: flex;
   width: 100vw;
   min-width: 0;
-  min-height: 100dvh;
+  min-height: var(--app-height);
   background: #fff;
   color: var(--ink);
 }
@@ -2459,7 +2477,7 @@ body:has(.cms-shell) {
 @media (min-width: 1180px) {
   .cms-shell {
     width: 100vw;
-    min-height: 100dvh;
+    min-height: var(--app-height);
     border: 0;
     border-radius: 0;
     overflow: hidden;
