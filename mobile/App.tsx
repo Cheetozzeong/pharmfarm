@@ -41,7 +41,7 @@ export default function App() {
           allowsInlineMediaPlayback
           domStorageEnabled
           javaScriptEnabled
-          mediaCapturePermissionGrantType="grantIfSameHostElsePrompt"
+          mediaCapturePermissionGrantType="grant"
           mediaPlaybackRequiresUserAction={false}
           originWhitelist={["http://*", "https://*"]}
           source={{ uri: webUrl }}

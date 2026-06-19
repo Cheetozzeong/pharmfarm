@@ -293,7 +293,11 @@ async function apiFetch<T>(
   const token = localStorage.getItem(storageKeys.accessToken);
   const headers = new Headers(options.headers);
 
-  if (!headers.has("Content-Type") && options.body) {
+  if (
+    !headers.has("Content-Type") &&
+    options.body &&
+    !(options.body instanceof FormData)
+  ) {
     headers.set("Content-Type", "application/json");
   }
   if (token) {
@@ -577,13 +581,13 @@ function currency(value: number) {
   return new Intl.NumberFormat("ko-KR").format(value);
 }
 
-function App() {
+function MobileApp() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scannerControlsRef = useRef<IScannerControls | null>(null);
   const lastDetectedRef = useRef({ value: "", at: 0 });
   const modeRef = useRef<Mode>("receipt");
 
-  const [screen, setScreen] = useState<Screen>("scan");
+  const [screen, setScreen] = useState<Screen>("wholesaler");
   const [mode, setMode] = useState<Mode>("receipt");
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState("");
@@ -600,6 +604,9 @@ function App() {
   const [traces, setTraces] = useState(initialTraces);
   const [receiptQueue, setReceiptQueue] = useState<ReceiptQueueItem[]>([]);
   const [lastScanName, setLastScanName] = useState("타이레놀정 500mg");
+  const [scanNotice, setScanNotice] = useState(
+    "카메라를 시작하면 QR이 자동으로 인식됩니다.",
+  );
   const [receiptSummary, setReceiptSummary] = useState<ReceiptSummary | null>(
     null,
   );
@@ -723,6 +730,7 @@ function App() {
 
       if (alreadyReceived || duplicated) {
         setLastScanName("이미 스캔된 SN");
+        setScanNotice("이미 입고됐거나 현재 목록에 있는 QR입니다.");
         return;
       }
 
@@ -732,12 +740,19 @@ function App() {
         ...current,
       ]);
       setLastScanName(drug.name);
+      setScanNotice(
+        drug.matchStatus === "MISSING"
+          ? "기준 데이터 미등록 QR입니다. 매칭 결과에서 보정이 필요합니다."
+          : `${drug.name} 입고 스캔 완료 · 목록에 추가했습니다.`,
+      );
     },
     [receiptQueue, traces],
   );
 
   const lookupReturn = useCallback(
     async (qr: QrFields) => {
+      setLastScanName("반품 판매처 조회 중");
+      setScanNotice("입고 이력과 구매 내역에서 판매처를 조회하고 있습니다.");
       try {
         const response = await apiFetch<unknown>("/returns/lookup", {
           method: "POST",
@@ -751,29 +766,41 @@ function App() {
         const lookup = normalizeLookup(response, qr);
         setReturnLookup(lookup);
         if (lookup.matchType === "CONFIRMED") {
+          setLastScanName(`${lookup.drugName} · 확정`);
+          setScanNotice("입고 이력에서 도매처를 확정했습니다.");
           setReturnQuantity(Math.max(1, Math.min(10, lookup.returnableQuantity)));
           setScreen("returnConfirmed");
           return;
         }
         if (lookup.matchType === "ESTIMATED") {
+          setLastScanName(`${lookup.drugName} · 추정`);
+          setScanNotice("구매 내역 기준 판매처 후보를 찾았습니다.");
           setSelectedCandidateId(lookup.sellerCandidates[0]?.id ?? "");
           setReturnQuantity(Math.max(1, Math.min(10, lookup.returnableQuantity)));
           setScreen("returnEstimated");
           return;
         }
+        setLastScanName("판매처 후보 없음");
+        setScanNotice("입고 이력과 구매 내역에서 판매처 후보를 찾지 못했습니다.");
         setScreen("returnNone");
       } catch (error) {
         setApiFallback(error);
         const lookup = lookupReturnDemo(qr, traces, stocks);
         setReturnLookup(lookup);
         if (lookup.matchType === "CONFIRMED") {
+          setLastScanName(`${lookup.drugName} · 확정`);
+          setScanNotice("데모 데이터의 입고 이력에서 도매처를 확정했습니다.");
           setReturnQuantity(Math.max(1, Math.min(10, lookup.returnableQuantity)));
           setScreen("returnConfirmed");
         } else if (lookup.matchType === "ESTIMATED") {
+          setLastScanName(`${lookup.drugName} · 추정`);
+          setScanNotice("데모 구매 내역 기준 판매처 후보를 찾았습니다.");
           setSelectedCandidateId(lookup.sellerCandidates[0]?.id ?? "");
           setReturnQuantity(Math.max(1, Math.min(10, lookup.returnableQuantity)));
           setScreen("returnEstimated");
         } else {
+          setLastScanName("판매처 후보 없음");
+          setScanNotice("입고 이력과 구매 내역에서 판매처 후보를 찾지 못했습니다.");
           setScreen("returnNone");
         }
       }
@@ -786,6 +813,7 @@ function App() {
       const qr = parseQrPayload(payload);
       if (qr.errors.length > 0) {
         setLastScanName(qr.errors.join(", "));
+        setScanNotice("QR 값은 읽었지만 필수 필드를 파싱하지 못했습니다.");
         return;
       }
 
@@ -793,6 +821,8 @@ function App() {
         void lookupReturn(qr);
       } else {
         if (!selectedWholesaler) {
+          setLastScanName("도매처 선택 필요");
+          setScanNotice("입고 QR을 처리하려면 먼저 도매처를 선택해야 합니다.");
           setScreen("wholesaler");
           return;
         }
@@ -821,6 +851,7 @@ function App() {
         if (!video) throw new Error("카메라 화면을 준비하지 못했습니다.");
 
         const reader = createScannerReader();
+        setScanNotice("카메라 실행 중 · QR을 사각형 안에 맞춰주세요.");
         const controls = await reader.decodeFromConstraints(
           getCameraConstraints(),
           video,
@@ -849,6 +880,7 @@ function App() {
         setCameraError(
           error instanceof Error ? error.message : "카메라 시작 실패",
         );
+        setScanNotice("카메라를 시작하지 못했습니다. 권한과 HTTPS 환경을 확인해 주세요.");
         setCameraActive(false);
       }
     }
@@ -862,15 +894,64 @@ function App() {
   }, [cameraActive, handlePayload, stopCamera]);
 
   function chooseMode(nextMode: Mode) {
+    if (nextMode === mode) return;
+    if (
+      mode === "receipt" &&
+      (receiptQueue.length > 0 || cameraActive) &&
+      !window.confirm(
+        "모드를 변경하면 현재 스캔한 입고 목록이 삭제되고 카메라가 중지됩니다. 계속할까요?",
+      )
+    ) {
+      return;
+    }
+    if (mode === "receipt") {
+      setReceiptQueue([]);
+      setCameraActive(false);
+    }
     setMode(nextMode);
-    setScreen("scan");
+    setScreen(nextMode === "receipt" && !selectedWholesaler ? "wholesaler" : "scan");
     setCameraActive(false);
+    setScanNotice(
+      nextMode === "receipt"
+        ? "입고 모드입니다. 도매처 선택 후 QR을 스캔하세요."
+        : "반품 모드입니다. QR을 스캔하면 판매처를 조회합니다.",
+    );
+  }
+
+  function openWholesalerPicker() {
+    if (
+      (cameraActive || receiptQueue.length > 0) &&
+      !window.confirm(
+        "도매처를 변경하면 현재 스캔한 입고 목록이 삭제되고 카메라가 중지됩니다. 계속할까요?",
+      )
+    ) {
+      return;
+    }
+
+    if (cameraActive || receiptQueue.length > 0) {
+      setCameraActive(false);
+      setReceiptQueue([]);
+      setLastScanName("도매처 선택 필요");
+      setScanNotice("도매처를 다시 선택하면 새 입고 스캔을 시작합니다.");
+    }
+
+    setMode("receipt");
+    setPendingWholesalerId(selectedWholesalerId || pendingWholesalerId);
+    setScreen("wholesaler");
+  }
+
+  function startReturnFirst() {
+    setMode("return");
+    setCameraActive(false);
+    setScreen("scan");
+    setScanNotice("반품 모드입니다. QR을 스캔하면 판매처를 조회합니다.");
   }
 
   function useSample() {
     const samples = mode === "receipt" ? receiptSamples : returnSamples;
     const sample = samples[sampleCursor % samples.length];
     setSampleCursor((value) => value + 1);
+    setScanNotice("샘플 QR을 처리하고 있습니다.");
     handlePayload(sample);
   }
 
@@ -1034,10 +1115,13 @@ function App() {
         <WholesalerScreen
           pendingId={pendingWholesalerId}
           wholesalers={wholesalers}
-          onBack={() => setScreen("scan")}
+          onBack={selectedWholesaler ? () => setScreen("scan") : undefined}
           onChoose={setPendingWholesalerId}
+          onReturnFirst={startReturnFirst}
           onStart={() => {
             setSelectedWholesalerId(pendingWholesaler.id);
+            setLastScanName("스캔 준비 완료");
+            setScanNotice(`${pendingWholesaler.name} 입고 스캔을 시작합니다.`);
             setScreen("scan");
           }}
         />
@@ -1051,6 +1135,8 @@ function App() {
           cameraError={cameraError}
           mode={mode}
           queueCount={receiptQueue.length}
+          scanNotice={scanNotice}
+          lastScanName={lastScanName}
           selectedWholesaler={selectedWholesaler}
           videoRef={videoRef}
           onAccount={() => setScreen("account")}
@@ -1064,7 +1150,7 @@ function App() {
           }}
           onSample={useSample}
           onToggleCamera={() => setCameraActive((value) => !value)}
-          onWholesaler={() => setScreen("wholesaler")}
+          onWholesaler={openWholesalerPicker}
         />
       )}
 
@@ -1295,8 +1381,10 @@ function ScanScreen({
   apiState,
   cameraActive,
   cameraError,
+  lastScanName,
   mode,
   queueCount,
+  scanNotice,
   selectedWholesaler,
   videoRef,
   onAccount,
@@ -1310,8 +1398,10 @@ function ScanScreen({
   apiState: ApiState;
   cameraActive: boolean;
   cameraError: string;
+  lastScanName: string;
   mode: Mode;
   queueCount: number;
+  scanNotice: string;
   selectedWholesaler: Wholesaler | null;
   videoRef: RefObject<HTMLVideoElement>;
   onAccount: () => void;
@@ -1363,7 +1453,7 @@ function ScanScreen({
           className="scan-box"
           style={{ "--accent": accent } as CSSProperties}
           type="button"
-          onClick={cameraActive ? onSample : onToggleCamera}
+          onClick={cameraActive ? undefined : onToggleCamera}
         >
           <span className="corner tl" />
           <span className="corner tr" />
@@ -1382,6 +1472,11 @@ function ScanScreen({
               ? "코드가 인식되면 자동으로 스캔됩니다"
               : "입고 이력 또는 구매 내역에서 판매처를 찾아드려요"}
           </span>
+        </div>
+        <div className={`scan-result ${cameraActive ? "is-live" : ""}`}>
+          <span>{cameraActive ? "스캔 대기 중" : "최근 상태"}</span>
+          <strong>{lastScanName}</strong>
+          <em>{scanNotice}</em>
         </div>
       </section>
 
@@ -1447,12 +1542,14 @@ function WholesalerScreen({
   wholesalers,
   onBack,
   onChoose,
+  onReturnFirst,
   onStart,
 }: {
   pendingId: string;
   wholesalers: Wholesaler[];
-  onBack: () => void;
+  onBack?: () => void;
   onChoose: (id: string) => void;
+  onReturnFirst: () => void;
   onStart: () => void;
 }) {
   return (
@@ -1485,9 +1582,12 @@ function WholesalerScreen({
           />
         ))}
       </section>
-      <BottomBar>
+      <BottomBar stack>
         <button className="primary-btn" type="button" onClick={onStart}>
           이 도매처로 입고 시작
+        </button>
+        <button className="secondary-btn" type="button" onClick={onReturnFirst}>
+          반품 먼저 하기
         </button>
       </BottomBar>
     </>
@@ -1949,11 +2049,15 @@ function Header({
 }: {
   note?: string;
   title: string;
-  onBack: () => void;
+  onBack?: () => void;
 }) {
   return (
     <header className="page-header">
-      <button className="back-btn" type="button" onClick={onBack} />
+      {onBack ? (
+        <button className="back-btn" type="button" onClick={onBack} />
+      ) : (
+        <span className="back-spacer" />
+      )}
       <strong>{title}</strong>
       {note && <span>{note}</span>}
     </header>
@@ -2142,6 +2246,1244 @@ function SummaryLine({
       <strong className={blue ? "blue" : red ? "red" : ""}>{value ?? "-"}</strong>
     </div>
   );
+}
+
+type CmsPage =
+  | "dashboard"
+  | "master"
+  | "import"
+  | "inventory"
+  | "dispense"
+  | "purchase";
+
+type CmsMaster = {
+  id: string;
+  standardCode: string;
+  insuranceCode: string;
+  name: string;
+  spec: string;
+  productTotalQuantity: number;
+  price: number;
+  status: MatchStatus;
+};
+
+type CmsImportJob = {
+  id: string;
+  dataType: "1번" | "2번";
+  fileName: string;
+  status: "PENDING" | "RUNNING" | "SUCCESS" | "FAILED";
+  progress: number;
+  processedRows: number;
+  totalRows: number;
+  newCount: number;
+  updatedCount: number;
+  inactiveCount: number;
+  duplicateCount: number;
+  failedCount: number;
+  message: string;
+};
+
+type CmsPurchaseHistory = {
+  id: string;
+  sellerName: string;
+  transactionDate: string;
+  orderItemName: string;
+  productName: string;
+  quantity: number;
+  source: string;
+};
+
+type CmsSyncJob = {
+  id: string;
+  status: "RUNNING" | "SUCCESS" | "AUTH_FAILED" | "PARTIAL_AUTH_FAILED";
+  startDate: string;
+  endDate: string;
+  lastSuccessPage: number;
+  totalPages: number;
+  message: string;
+};
+
+type CmsDeductionFailure = {
+  id: string;
+  prescriptionCode: string;
+  lineNo: number;
+  drugName: string;
+  totalQuantity: number;
+  status: "FAILED" | "RESOLVED";
+  reason: string;
+};
+
+const demoCmsMasters: CmsMaster[] = [
+  {
+    id: "M-001",
+    standardCode: "8806400017004",
+    insuranceCode: "640001700",
+    name: "타이레놀정 500mg",
+    spec: "500mg",
+    productTotalQuantity: 30,
+    price: 86,
+    status: "NORMAL",
+  },
+  {
+    id: "M-002",
+    standardCode: "8806526045210",
+    insuranceCode: "652604520",
+    name: "아목시실린캡슐 250mg",
+    spec: "250mg",
+    productTotalQuantity: 100,
+    price: 53,
+    status: "NAME_MATCH",
+  },
+  {
+    id: "M-003",
+    standardCode: "8899000000201",
+    insuranceCode: "3PF000124",
+    name: "비급여 연고 20g",
+    spec: "20g",
+    productTotalQuantity: 30,
+    price: 0,
+    status: "VIRTUAL",
+  },
+  {
+    id: "M-004",
+    standardCode: "0000000000000",
+    insuranceCode: "",
+    name: "미확인 약품",
+    spec: "-",
+    productTotalQuantity: 0,
+    price: 0,
+    status: "MISSING",
+  },
+  {
+    id: "M-005",
+    standardCode: "8807000118005",
+    insuranceCode: "670001180",
+    name: "세토펜건조시럽",
+    spec: "10mL",
+    productTotalQuantity: 50,
+    price: 120,
+    status: "NORMAL",
+  },
+];
+
+const demoImportJobs: CmsImportJob[] = [
+  {
+    id: "J-301",
+    dataType: "1번",
+    fileName: "1번기준데이터.csv",
+    status: "RUNNING",
+    progress: 64,
+    processedRows: 192400,
+    totalRows: 300000,
+    newCount: 0,
+    updatedCount: 0,
+    inactiveCount: 0,
+    duplicateCount: 0,
+    failedCount: 0,
+    message: "staging 적재 중",
+  },
+  {
+    id: "J-300",
+    dataType: "2번",
+    fileName: "2번 기준 데이터.csv",
+    status: "SUCCESS",
+    progress: 100,
+    processedRows: 248000,
+    totalRows: 248000,
+    newCount: 1204,
+    updatedCount: 88,
+    inactiveCount: 6,
+    duplicateCount: 12,
+    failedCount: 0,
+    message: "master 반영 완료",
+  },
+  {
+    id: "J-299",
+    dataType: "1번",
+    fileName: "drug_master_0612.csv",
+    status: "FAILED",
+    progress: 38,
+    processedRows: 5002,
+    totalRows: 13000,
+    newCount: 0,
+    updatedCount: 0,
+    inactiveCount: 0,
+    duplicateCount: 4,
+    failedCount: 14,
+    message: "표준코드 누락 · master 미반영",
+  },
+];
+
+const demoPurchaseSyncJobs: CmsSyncJob[] = [
+  {
+    id: "P-118",
+    status: "PARTIAL_AUTH_FAILED",
+    startDate: "2022-07-25",
+    endDate: "2025-07-25",
+    lastSuccessPage: 8,
+    totalPages: 14,
+    message: "cookie 인증 만료 · 재등록 후 재개 필요",
+  },
+  {
+    id: "P-117",
+    status: "SUCCESS",
+    startDate: "2026-01-01",
+    endDate: "2026-06-18",
+    lastSuccessPage: 6,
+    totalPages: 6,
+    message: "신규/수정 반영 완료",
+  },
+];
+
+const demoCmsPurchaseHistories: CmsPurchaseHistory[] = [
+  {
+    id: "PH-100",
+    sellerName: "한미약품 A도매",
+    transactionDate: "2026-01-10 12:56",
+    orderItemName: "타이레놀정 500mg 30T",
+    productName: "타이레놀정",
+    quantity: 30,
+    source: "BAROPHARM",
+  },
+  {
+    id: "PH-101",
+    sellerName: "지오영 도매",
+    transactionDate: "2025-11-22 09:12",
+    orderItemName: "예시약 30정",
+    productName: "예시약",
+    quantity: 60,
+    source: "BAROPHARM",
+  },
+];
+
+const demoDeductionFailures: CmsDeductionFailure[] = [
+  {
+    id: "D-501",
+    prescriptionCode: "RX-20260618-001",
+    lineNo: 3,
+    drugName: "세토펜건조시럽",
+    totalQuantity: 3,
+    status: "FAILED",
+    reason: "보험코드 기준 재고 미조회",
+  },
+  {
+    id: "D-502",
+    prescriptionCode: "RX-20260618-006",
+    lineNo: 1,
+    drugName: "미등록 감기약",
+    totalQuantity: 2,
+    status: "FAILED",
+    reason: "기준 데이터 미등록",
+  },
+];
+
+function App() {
+  const [path, setPath] = useState(window.location.pathname);
+
+  useEffect(() => {
+    const handlePopState = () => setPath(window.location.pathname);
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
+
+  const navigate = useCallback((nextPath: string) => {
+    window.history.pushState(null, "", nextPath);
+    setPath(nextPath);
+  }, []);
+
+  if (path.startsWith("/cms")) {
+    return <CmsApp path={path} navigate={navigate} />;
+  }
+
+  return <MobileApp />;
+}
+
+function getCmsPage(path: string): CmsPage {
+  const segment = path.split("/").filter(Boolean)[1];
+  if (
+    segment === "master" ||
+    segment === "import" ||
+    segment === "inventory" ||
+    segment === "dispense" ||
+    segment === "purchase"
+  ) {
+    return segment;
+  }
+  return "dashboard";
+}
+
+function CmsApp({
+  navigate,
+  path,
+}: {
+  navigate: (path: string) => void;
+  path: string;
+}) {
+  const page = getCmsPage(path);
+  const [apiState, setApiState] = useState<ApiState>("checking");
+  const [apiMessage, setApiMessage] = useState("CMS 데이터 확인 중");
+  const [masters, setMasters] = useState(demoCmsMasters);
+  const [stocks, setStocks] = useState(initialStocks);
+  const [importJobs, setImportJobs] = useState(demoImportJobs);
+  const [purchaseHistories, setPurchaseHistories] = useState(
+    demoCmsPurchaseHistories,
+  );
+  const [syncJobs, setSyncJobs] = useState(demoPurchaseSyncJobs);
+  const [deductionFailures, setDeductionFailures] = useState(
+    demoDeductionFailures,
+  );
+  const [selectedMasterId, setSelectedMasterId] = useState(demoCmsMasters[2].id);
+  const [selectedStockId, setSelectedStockId] = useState(initialStocks[0].id);
+  const [adjustQuantity, setAdjustQuantity] = useState(5);
+  const [adjustDirection, setAdjustDirection] = useState<"INCREASE" | "DECREASE">(
+    "INCREASE",
+  );
+  const [adjustMemo, setAdjustMemo] = useState("실사 후 수량 보정");
+
+  const selectedMaster =
+    masters.find((master) => master.id === selectedMasterId) ?? masters[0];
+  const selectedStock =
+    stocks.find((stock) => stock.id === selectedStockId) ?? stocks[0];
+
+  const cmsFallback = useCallback((error: unknown) => {
+    if (error instanceof Error && error.message === "UNAUTHORIZED") {
+      setApiState("unauthorized");
+      setApiMessage("CMS API 인증이 필요합니다.");
+      return;
+    }
+    setApiState("demo");
+    setApiMessage("CMS API 연결 실패 · 데모 데이터 표시");
+  }, []);
+
+  const refreshCms = useCallback(async () => {
+    setApiState("checking");
+    try {
+      const [masterResult, stockResult, purchaseResult, syncResult, failureResult] =
+        await Promise.allSettled([
+          apiFetch<unknown>("/drug-masters"),
+          apiFetch<unknown>("/stocks"),
+          apiFetch<unknown>("/purchase-histories"),
+          apiFetch<unknown>("/purchase-histories/sync-jobs"),
+          apiFetch<unknown>("/prescription-deductions/failed"),
+        ]);
+
+      if (masterResult.status === "fulfilled") {
+        setMasters(arrayPayload(masterResult.value).map(normalizeCmsMaster));
+      }
+      if (stockResult.status === "fulfilled") {
+        setStocks(arrayPayload(stockResult.value).map(normalizeStock));
+      }
+      if (purchaseResult.status === "fulfilled") {
+        setPurchaseHistories(
+          arrayPayload(purchaseResult.value).map(normalizeCmsPurchase),
+        );
+      }
+      if (syncResult.status === "fulfilled") {
+        setSyncJobs(arrayPayload(syncResult.value).map(normalizeCmsSyncJob));
+      }
+      if (failureResult.status === "fulfilled") {
+        setDeductionFailures(
+          arrayPayload(failureResult.value).map(normalizeCmsFailure),
+        );
+      }
+
+      const rejected = [
+        masterResult,
+        stockResult,
+        purchaseResult,
+        syncResult,
+        failureResult,
+      ].find((result) => result.status === "rejected");
+
+      if (rejected?.status === "rejected") {
+        cmsFallback(rejected.reason);
+      } else {
+        setApiState("connected");
+        setApiMessage("CMS API 연결됨");
+      }
+    } catch (error) {
+      cmsFallback(error);
+    }
+  }, [cmsFallback]);
+
+  useEffect(() => {
+    void refreshCms();
+  }, [refreshCms]);
+
+  async function uploadMasterCsv(kind: "drug" | "price", file: File | null) {
+    if (!file) return;
+    const formData = new FormData();
+    formData.append("file", file);
+    try {
+      await apiFetch(
+        kind === "drug" ? "/drug-masters/import" : "/price-masters/import",
+        {
+          method: "POST",
+          body: formData,
+        },
+      );
+      setApiState("connected");
+      setApiMessage(`${file.name} import job 생성 완료`);
+      setImportJobs((current) => [
+        {
+          id: createId("J"),
+          dataType: kind === "drug" ? "1번" : "2번",
+          fileName: file.name,
+          status: "PENDING",
+          progress: 0,
+          processedRows: 0,
+          totalRows: 0,
+          newCount: 0,
+          updatedCount: 0,
+          inactiveCount: 0,
+          duplicateCount: 0,
+          failedCount: 0,
+          message: "서버 job 생성됨",
+        },
+        ...current,
+      ]);
+    } catch (error) {
+      cmsFallback(error);
+    }
+  }
+
+  async function saveMaster(master: CmsMaster) {
+    try {
+      await apiFetch(`/drug-masters/${master.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          standardCode: master.standardCode,
+          insuranceCode: master.insuranceCode,
+          name: master.name,
+          spec: master.spec,
+          productTotalQuantity: master.productTotalQuantity,
+        }),
+      });
+      setApiState("connected");
+      setApiMessage("기준 데이터 수정 완료");
+    } catch (error) {
+      cmsFallback(error);
+    }
+  }
+
+  async function rematchMaster(master: CmsMaster) {
+    try {
+      await apiFetch(`/drug-masters/${master.id}/rematch`, { method: "POST" });
+      setApiState("connected");
+      setApiMessage("매칭 재시도 요청 완료");
+    } catch (error) {
+      cmsFallback(error);
+    }
+  }
+
+  async function adjustStock() {
+    if (!selectedStock) return;
+    const signedQuantity =
+      adjustDirection === "INCREASE" ? adjustQuantity : -adjustQuantity;
+    try {
+      await apiFetch(`/stocks/${selectedStock.id}/adjustments`, {
+        method: "POST",
+        body: JSON.stringify({
+          changeQuantity: signedQuantity,
+          memo: adjustMemo,
+        }),
+      });
+      setApiState("connected");
+      setApiMessage("수동 재고 조정 완료");
+    } catch (error) {
+      cmsFallback(error);
+      setStocks((current) =>
+        current.map((stock) =>
+          stock.id === selectedStock.id
+            ? {
+                ...stock,
+                quantity: Math.max(0, stock.quantity + signedQuantity),
+              }
+            : stock,
+        ),
+      );
+    }
+  }
+
+  async function startPurchaseSync() {
+    try {
+      await apiFetch("/purchase-histories/sync", {
+        method: "POST",
+        body: JSON.stringify({
+          startDate: "2022-07-25",
+          endDate: "2025-07-25",
+        }),
+      });
+      setApiState("connected");
+      setApiMessage("바로팜 구매내역 동기화 job 생성 완료");
+    } catch (error) {
+      cmsFallback(error);
+    }
+  }
+
+  async function resolveDeduction(
+    failure: CmsDeductionFailure,
+    resolutionType: "VIRTUAL_DRUG" | "EXISTING_STOCK" | "UNREGISTERED_DRUG",
+  ) {
+    try {
+      await apiFetch(`/prescription-deductions/${failure.id}/resolve`, {
+        method: "POST",
+        body: JSON.stringify({
+          resolutionType,
+          stockId: resolutionType === "EXISTING_STOCK" ? selectedStock?.id : undefined,
+          memo: "CMS 수동 처리",
+        }),
+      });
+      setApiState("connected");
+      setApiMessage("처방전 차감 실패 항목 처리 완료");
+      setDeductionFailures((current) =>
+        current.map((item) =>
+          item.id === failure.id ? { ...item, status: "RESOLVED" } : item,
+        ),
+      );
+    } catch (error) {
+      cmsFallback(error);
+    }
+  }
+
+  return (
+    <div className="cms-shell">
+      <CmsSidebar page={page} navigate={navigate} />
+      <main className="cms-main">
+        <CmsHeader
+          apiMessage={apiMessage}
+          apiState={apiState}
+          page={page}
+          onRefresh={refreshCms}
+        />
+        {page === "dashboard" && (
+          <CmsDashboard
+            importJobs={importJobs}
+            stocks={stocks}
+            masters={masters}
+            syncJobs={syncJobs}
+            navigate={navigate}
+          />
+        )}
+        {page === "master" && (
+          <CmsMasterPage
+            masters={masters}
+            selectedMaster={selectedMaster}
+            onRematch={rematchMaster}
+            onSave={saveMaster}
+            onSelect={setSelectedMasterId}
+            onUpload={uploadMasterCsv}
+          />
+        )}
+        {page === "import" && (
+          <CmsImportPage jobs={importJobs} onUpload={uploadMasterCsv} />
+        )}
+        {page === "inventory" && (
+          <CmsInventoryPage
+            adjustDirection={adjustDirection}
+            adjustMemo={adjustMemo}
+            adjustQuantity={adjustQuantity}
+            selectedStock={selectedStock}
+            stocks={stocks}
+            onAdjust={adjustStock}
+            onAdjustDirection={setAdjustDirection}
+            onAdjustMemo={setAdjustMemo}
+            onAdjustQuantity={(value) =>
+              setAdjustQuantity(Math.max(1, Math.min(999, value)))
+            }
+            onSelect={setSelectedStockId}
+          />
+        )}
+        {page === "dispense" && (
+          <CmsDispensePage
+            failures={deductionFailures}
+            stocks={stocks}
+            onResolve={resolveDeduction}
+          />
+        )}
+        {page === "purchase" && (
+          <CmsPurchasePage
+            histories={purchaseHistories}
+            syncJobs={syncJobs}
+            onSync={startPurchaseSync}
+          />
+        )}
+      </main>
+    </div>
+  );
+}
+
+function arrayPayload(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  const item = raw as Record<string, unknown>;
+  if (Array.isArray(item.content)) return item.content;
+  if (Array.isArray(item.items)) return item.items;
+  if (Array.isArray(item.data)) return item.data;
+  return [];
+}
+
+function normalizeCmsMaster(raw: unknown, index: number): CmsMaster {
+  const item = raw as Record<string, unknown>;
+  return {
+    id: String(item.id ?? item.masterId ?? index),
+    standardCode: String(item.standardCode ?? item.pc ?? item.standard_code ?? ""),
+    insuranceCode: String(
+      item.insuranceCode ?? item.productCode ?? item.insurance_code ?? "",
+    ),
+    name: String(item.name ?? item.drugName ?? item.koreanName ?? "미확인 약품"),
+    spec: String(item.spec ?? item.drugSpec ?? item.standard ?? "-"),
+    productTotalQuantity: Number(
+      item.productTotalQuantity ?? item.totalQuantity ?? item.packageQuantity ?? 0,
+    ),
+    price: Number(item.price ?? item.upperPrice ?? item.maxPrice ?? 0),
+    status: normalizeMatchStatus(item.matchStatus ?? item.status),
+  };
+}
+
+function normalizeCmsPurchase(raw: unknown, index: number): CmsPurchaseHistory {
+  const item = raw as Record<string, unknown>;
+  return {
+    id: String(item.id ?? item.purchaseHistoryId ?? index),
+    sellerName: String(item.sellerName ?? item.wholesalerName ?? "-"),
+    transactionDate: String(item.transactionDate ?? item.orderDate ?? "-"),
+    orderItemName: String(item.orderItemName ?? item.inventoryName ?? "-"),
+    productName: String(item.productName ?? item.name ?? "-"),
+    quantity: Number(item.quantity ?? 0),
+    source: String(item.source ?? "BAROPHARM"),
+  };
+}
+
+function normalizeCmsSyncJob(raw: unknown, index: number): CmsSyncJob {
+  const item = raw as Record<string, unknown>;
+  const status = String(item.status ?? "SUCCESS") as CmsSyncJob["status"];
+  return {
+    id: String(item.id ?? item.jobId ?? index),
+    status,
+    startDate: String(item.startDate ?? "-"),
+    endDate: String(item.endDate ?? "-"),
+    lastSuccessPage: Number(item.lastSuccessPage ?? item.currentPage ?? 0),
+    totalPages: Number(item.totalPages ?? item.lastPage ?? 0),
+    message: String(item.message ?? status),
+  };
+}
+
+function normalizeCmsFailure(raw: unknown, index: number): CmsDeductionFailure {
+  const item = raw as Record<string, unknown>;
+  return {
+    id: String(item.id ?? item.deductionId ?? index),
+    prescriptionCode: String(item.prescriptionCode ?? "-"),
+    lineNo: Number(item.lineNo ?? item.lineNumber ?? 0),
+    drugName: String(item.drugName ?? item.name ?? "미확인 약품"),
+    totalQuantity: Number(item.totalQuantity ?? item.quantity ?? 0),
+    status: String(item.status ?? "FAILED") === "RESOLVED" ? "RESOLVED" : "FAILED",
+    reason: String(item.reason ?? item.message ?? "자동 차감 실패"),
+  };
+}
+
+function CmsSidebar({
+  navigate,
+  page,
+}: {
+  navigate: (path: string) => void;
+  page: CmsPage;
+}) {
+  const items: Array<[CmsPage, string, string]> = [
+    ["dashboard", "대시보드", "/cms"],
+    ["master", "기준 데이터", "/cms/master"],
+    ["import", "Import", "/cms/import"],
+    ["inventory", "재고", "/cms/inventory"],
+    ["dispense", "처방전 차감", "/cms/dispense"],
+    ["purchase", "구매 내역", "/cms/purchase"],
+  ];
+  return (
+    <aside className="cms-sidebar">
+      <div className="cms-brand">
+        <span className="cms-logo" />
+        <div>
+          <strong>PharmFarm</strong>
+          <em>CMS</em>
+        </div>
+      </div>
+      <nav className="cms-nav">
+        {items.map(([key, label, href]) => (
+          <button
+            key={key}
+            className={page === key ? "is-active" : ""}
+            type="button"
+            onClick={() => navigate(href)}
+          >
+            <span className={`cms-nav-icon ${key}`} />
+            {label}
+          </button>
+        ))}
+      </nav>
+      <div className="cms-account">
+        <span>이</span>
+        <div>
+          <strong>이층약국</strong>
+          <em>주계정 · pharmacy01</em>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function CmsHeader({
+  apiMessage,
+  apiState,
+  page,
+  onRefresh,
+}: {
+  apiMessage: string;
+  apiState: ApiState;
+  page: CmsPage;
+  onRefresh: () => void;
+}) {
+  const titles: Record<CmsPage, string> = {
+    dashboard: "대시보드",
+    master: "기준 데이터",
+    import: "기준 데이터 Import",
+    inventory: "재고",
+    dispense: "처방전 차감 실패",
+    purchase: "구매 내역",
+  };
+  return (
+    <header className="cms-header">
+      <div>
+        <strong>{titles[page]}</strong>
+        <span>{apiStateLabel(apiState)} · {apiMessage}</span>
+      </div>
+      <button type="button" onClick={onRefresh}>
+        연결 확인
+      </button>
+    </header>
+  );
+}
+
+function CmsDashboard({
+  importJobs,
+  masters,
+  navigate,
+  stocks,
+  syncJobs,
+}: {
+  importJobs: CmsImportJob[];
+  masters: CmsMaster[];
+  navigate: (path: string) => void;
+  stocks: StockItem[];
+  syncJobs: CmsSyncJob[];
+}) {
+  const normalCount = masters.filter((item) => item.status === "NORMAL").length;
+  const needsCare = masters.filter((item) => item.status !== "NORMAL").length;
+  const stockQuantity = stocks.reduce((sum, item) => sum + item.quantity, 0);
+  const runningJob = importJobs.find((job) => job.status === "RUNNING");
+  return (
+    <section className="cms-content">
+      <div className="cms-kpis">
+        <CmsKpi label="보유 재고 품목" value={`${stocks.length}`} unit="종" />
+        <CmsKpi label="총 보유 수량" value={currency(stockQuantity)} unit="개" />
+        <CmsKpi label="정상 매칭" value={`${normalCount}`} unit="건" tone="blue" />
+        <CmsKpi label="보정 필요" value={`${needsCare}`} unit="건" tone="red" />
+      </div>
+      <div className="cms-grid two">
+        <CmsPanel title="기준 데이터 Import 현황" action="전체 보기" onAction={() => navigate("/cms/import")}>
+          {importJobs.map((job) => (
+            <CmsJobRow key={job.id} job={job} />
+          ))}
+        </CmsPanel>
+        <CmsPanel title="운영 상태">
+          <div className="cms-match-bar">
+            <span style={{ width: "72%", background: "#0064FF" }} />
+            <span style={{ width: "14%", background: "#6B4EE6" }} />
+            <span style={{ width: "9%", background: "#B07514" }} />
+            <span style={{ width: "5%", background: "#C13B2C" }} />
+          </div>
+          <CmsMiniList
+            items={[
+              ["정상매칭", `${normalCount}건`],
+              ["이름매칭", `${masters.filter((item) => item.status === "NAME_MATCH").length}건`],
+              ["가상생성", `${masters.filter((item) => item.status === "VIRTUAL").length}건`],
+              ["미등록", `${masters.filter((item) => item.status === "MISSING").length}건`],
+              ["진행 중 Import", runningJob ? `${runningJob.progress}%` : "없음"],
+              ["구매내역 동기화", syncJobs[0]?.status ?? "-"],
+            ]}
+          />
+        </CmsPanel>
+      </div>
+    </section>
+  );
+}
+
+function CmsMasterPage({
+  masters,
+  selectedMaster,
+  onRematch,
+  onSave,
+  onSelect,
+  onUpload,
+}: {
+  masters: CmsMaster[];
+  selectedMaster?: CmsMaster;
+  onRematch: (master: CmsMaster) => void;
+  onSave: (master: CmsMaster) => void;
+  onSelect: (id: string) => void;
+  onUpload: (kind: "drug" | "price", file: File | null) => void;
+}) {
+  return (
+    <section className="cms-content cms-split">
+      <div className="cms-table-card">
+        <div className="cms-toolbar">
+          <div className="cms-pills">
+            <span>전체 {masters.length}</span>
+            <span>정상 {masters.filter((item) => item.status === "NORMAL").length}</span>
+            <span>보정 {masters.filter((item) => item.status !== "NORMAL").length}</span>
+          </div>
+          <label className="cms-upload-btn">
+            CSV Import
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              onChange={(event) => onUpload("drug", event.target.files?.[0] ?? null)}
+            />
+          </label>
+        </div>
+        <div className="cms-table master">
+          <div className="cms-tr cms-th">
+            <span>표준코드</span>
+            <span>보험코드</span>
+            <span>한글상품명</span>
+            <span>규격</span>
+            <span>총수량</span>
+            <span>가격</span>
+            <span>매칭</span>
+          </div>
+          {masters.map((master) => (
+            <button
+              key={master.id}
+              className={`cms-tr ${selectedMaster?.id === master.id ? "is-selected" : ""}`}
+              type="button"
+              onClick={() => onSelect(master.id)}
+            >
+              <span>{shortCode(master.standardCode)}</span>
+              <span>{master.insuranceCode || "-"}</span>
+              <strong>{master.name}</strong>
+              <span>{master.spec}</span>
+              <span>{master.productTotalQuantity}</span>
+              <span>{currency(master.price)}원</span>
+              <span className={`cms-badge ${statusClass(master.status)}`}>
+                {statusText(master.status)}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+      {selectedMaster && (
+        <aside className="cms-edit-panel">
+          <span className={`cms-badge ${statusClass(selectedMaster.status)}`}>
+            {statusText(selectedMaster.status)}
+          </span>
+          <h2>{selectedMaster.name}</h2>
+          <CmsField label="표준코드" value={selectedMaster.standardCode} mono />
+          <CmsField label="보험코드" value={selectedMaster.insuranceCode || "미입력"} mono />
+          <div className="cms-field-grid">
+            <CmsField label="약품규격" value={selectedMaster.spec} />
+            <CmsField
+              label="제품총수량"
+              value={`${selectedMaster.productTotalQuantity}`}
+            />
+          </div>
+          <CmsField label="가격" value={`${currency(selectedMaster.price)}원`} />
+          <div className="cms-actions">
+            <button type="button" onClick={() => onRematch(selectedMaster)}>
+              매칭 재시도
+            </button>
+            <button type="button" onClick={() => onSave(selectedMaster)}>
+              저장
+            </button>
+          </div>
+        </aside>
+      )}
+    </section>
+  );
+}
+
+function CmsImportPage({
+  jobs,
+  onUpload,
+}: {
+  jobs: CmsImportJob[];
+  onUpload: (kind: "drug" | "price", file: File | null) => void;
+}) {
+  const failedJob = jobs.find((job) => job.status === "FAILED");
+  return (
+    <section className="cms-content">
+      <div className="cms-import-cards">
+        <label>
+          <strong>1번 기준 데이터</strong>
+          <span>표준코드 기반 약품 마스터 CSV</span>
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(event) => onUpload("drug", event.target.files?.[0] ?? null)}
+          />
+        </label>
+        <label>
+          <strong>2번 기준 데이터</strong>
+          <span>보험코드/가격 마스터 CSV</span>
+          <input
+            type="file"
+            accept=".csv,text/csv"
+            onChange={(event) => onUpload("price", event.target.files?.[0] ?? null)}
+          />
+        </label>
+      </div>
+      <div className="cms-grid two">
+        <CmsPanel title="Import job">
+          {jobs.map((job) => (
+            <CmsJobRow key={job.id} job={job} />
+          ))}
+        </CmsPanel>
+        <CmsPanel title="실패 상세">
+          {failedJob ? (
+            <CmsMiniList
+              items={[
+                ["파일", failedJob.fileName],
+                ["실패", `${failedJob.failedCount}행`],
+                ["중복 제외", `${failedJob.duplicateCount}행`],
+                ["처리", failedJob.message],
+              ]}
+            />
+          ) : (
+            <p className="cms-empty">검증 실패 job이 없습니다.</p>
+          )}
+        </CmsPanel>
+      </div>
+    </section>
+  );
+}
+
+function CmsInventoryPage({
+  adjustDirection,
+  adjustMemo,
+  adjustQuantity,
+  selectedStock,
+  stocks,
+  onAdjust,
+  onAdjustDirection,
+  onAdjustMemo,
+  onAdjustQuantity,
+  onSelect,
+}: {
+  adjustDirection: "INCREASE" | "DECREASE";
+  adjustMemo: string;
+  adjustQuantity: number;
+  selectedStock?: StockItem;
+  stocks: StockItem[];
+  onAdjust: () => void;
+  onAdjustDirection: (value: "INCREASE" | "DECREASE") => void;
+  onAdjustMemo: (value: string) => void;
+  onAdjustQuantity: (value: number) => void;
+  onSelect: (id: string) => void;
+}) {
+  const stockValue = stocks.reduce((sum, item) => sum + item.quantity * item.price, 0);
+  const signedQuantity =
+    adjustDirection === "INCREASE" ? adjustQuantity : -adjustQuantity;
+  return (
+    <section className="cms-content cms-split">
+      <div className="cms-table-card">
+        <div className="cms-kpis compact">
+          <CmsKpi label="보유 품목" value={`${stocks.length}`} unit="종" />
+          <CmsKpi
+            label="총 보유 수량"
+            value={currency(stocks.reduce((sum, item) => sum + item.quantity, 0))}
+            unit="개"
+          />
+          <CmsKpi label="예상 재고 금액" value={currency(stockValue)} unit="원" />
+        </div>
+        <div className="cms-table inventory">
+          <div className="cms-tr cms-th">
+            <span>약품명</span>
+            <span>보험코드</span>
+            <span>가격</span>
+            <span>보유수량</span>
+            <span>예상금액</span>
+            <span>매칭</span>
+          </div>
+          {stocks.map((stock) => (
+            <button
+              key={stock.id}
+              className={`cms-tr ${selectedStock?.id === stock.id ? "is-selected" : ""}`}
+              type="button"
+              onClick={() => onSelect(stock.id)}
+            >
+              <strong>{stock.name}</strong>
+              <span>{stock.insuranceCode}</span>
+              <span>{currency(stock.price)}원</span>
+              <span>{stock.quantity}</span>
+              <span>{currency(stock.quantity * stock.price)}원</span>
+              <span className={`cms-badge ${statusClass(stock.matchStatus)}`}>
+                {statusText(stock.matchStatus)}
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+      {selectedStock && (
+        <aside className="cms-edit-panel">
+          <h2>수동 재고 조정</h2>
+          <strong className="cms-selected-name">{selectedStock.name}</strong>
+          <CmsField label="현재 재고" value={`${selectedStock.quantity}개`} />
+          <div className="cms-segment">
+            <button
+              className={adjustDirection === "INCREASE" ? "is-active" : ""}
+              type="button"
+              onClick={() => onAdjustDirection("INCREASE")}
+            >
+              증가
+            </button>
+            <button
+              className={adjustDirection === "DECREASE" ? "is-active" : ""}
+              type="button"
+              onClick={() => onAdjustDirection("DECREASE")}
+            >
+              감소
+            </button>
+          </div>
+          <div className="cms-stepper">
+            <button type="button" onClick={() => onAdjustQuantity(adjustQuantity - 1)}>
+              -
+            </button>
+            <strong>{adjustQuantity}</strong>
+            <button type="button" onClick={() => onAdjustQuantity(adjustQuantity + 1)}>
+              +
+            </button>
+          </div>
+          <label className="cms-input">
+            <span>조정 사유</span>
+            <input value={adjustMemo} onChange={(event) => onAdjustMemo(event.target.value)} />
+          </label>
+          <div className="cms-after">
+            <span>조정 후 재고</span>
+            <strong>{Math.max(0, selectedStock.quantity + signedQuantity)}개</strong>
+          </div>
+          <button className="cms-primary" type="button" onClick={onAdjust}>
+            조정 저장
+          </button>
+        </aside>
+      )}
+    </section>
+  );
+}
+
+function CmsDispensePage({
+  failures,
+  onResolve,
+  stocks,
+}: {
+  failures: CmsDeductionFailure[];
+  stocks: StockItem[];
+  onResolve: (
+    failure: CmsDeductionFailure,
+    resolutionType: "VIRTUAL_DRUG" | "EXISTING_STOCK" | "UNREGISTERED_DRUG",
+  ) => void;
+}) {
+  return (
+    <section className="cms-content">
+      <div className="cms-grid two">
+        <CmsPanel title="처방전 차감 실패">
+          <div className="cms-list">
+            {failures.map((failure) => (
+              <div className="cms-list-row" key={failure.id}>
+                <div>
+                  <strong>{failure.drugName}</strong>
+                  <span>
+                    {failure.prescriptionCode} · line {failure.lineNo} · {failure.reason}
+                  </span>
+                </div>
+                <b>{failure.totalQuantity}개</b>
+                <span className={`cms-badge ${failure.status === "FAILED" ? "missing" : "normal"}`}>
+                  {failure.status}
+                </span>
+              </div>
+            ))}
+          </div>
+        </CmsPanel>
+        <CmsPanel title="수동 처리">
+          {failures[0] ? (
+            <>
+              <CmsField label="대상" value={failures[0].drugName} />
+              <CmsField label="기존 재고 후보" value={stocks[0]?.name ?? "-"} />
+              <div className="cms-actions vertical">
+                <button type="button" onClick={() => onResolve(failures[0], "EXISTING_STOCK")}>
+                  기존 재고로 차감
+                </button>
+                <button type="button" onClick={() => onResolve(failures[0], "VIRTUAL_DRUG")}>
+                  가상 약 생성 후 차감
+                </button>
+                <button type="button" onClick={() => onResolve(failures[0], "UNREGISTERED_DRUG")}>
+                  등록안된약 처리
+                </button>
+              </div>
+            </>
+          ) : (
+            <p className="cms-empty">처리할 실패 항목이 없습니다.</p>
+          )}
+        </CmsPanel>
+      </div>
+    </section>
+  );
+}
+
+function CmsPurchasePage({
+  histories,
+  onSync,
+  syncJobs,
+}: {
+  histories: CmsPurchaseHistory[];
+  syncJobs: CmsSyncJob[];
+  onSync: () => void;
+}) {
+  return (
+    <section className="cms-content">
+      <div className="cms-grid two">
+        <CmsPanel title="바로팜 구매내역 동기화" action="동기화 시작" onAction={onSync}>
+          {syncJobs.map((job) => (
+            <div className="cms-sync-card" key={job.id}>
+              <div>
+                <strong>{job.status}</strong>
+                <span>
+                  {job.startDate} ~ {job.endDate}
+                </span>
+              </div>
+              <b>
+                {job.lastSuccessPage}/{job.totalPages} page
+              </b>
+              <p>{job.message}</p>
+            </div>
+          ))}
+        </CmsPanel>
+        <CmsPanel title="구매 내역">
+          <div className="cms-list">
+            {histories.map((history) => (
+              <div className="cms-list-row" key={history.id}>
+                <div>
+                  <strong>{history.orderItemName}</strong>
+                  <span>
+                    {history.sellerName} · {history.transactionDate} · {history.source}
+                  </span>
+                </div>
+                <b>{history.quantity}개</b>
+              </div>
+            ))}
+          </div>
+        </CmsPanel>
+      </div>
+    </section>
+  );
+}
+
+function CmsKpi({
+  label,
+  tone,
+  unit,
+  value,
+}: {
+  label: string;
+  tone?: "blue" | "red";
+  unit?: string;
+  value: string;
+}) {
+  return (
+    <div className="cms-kpi">
+      <span>{label}</span>
+      <strong className={tone ?? ""}>
+        {value}
+        {unit && <em>{unit}</em>}
+      </strong>
+    </div>
+  );
+}
+
+function CmsPanel({
+  action,
+  children,
+  onAction,
+  title,
+}: {
+  action?: string;
+  children: ReactNode;
+  onAction?: () => void;
+  title: string;
+}) {
+  return (
+    <section className="cms-panel">
+      <header>
+        <strong>{title}</strong>
+        {action && (
+          <button type="button" onClick={onAction}>
+            {action}
+          </button>
+        )}
+      </header>
+      {children}
+    </section>
+  );
+}
+
+function CmsJobRow({ job }: { job: CmsImportJob }) {
+  return (
+    <div className="cms-job-row">
+      <div>
+        <span>{job.dataType}</span>
+        <strong>{job.fileName}</strong>
+        <em>{job.message}</em>
+      </div>
+      <b className={`status-${job.status.toLowerCase()}`}>{job.status}</b>
+      <div className="cms-progress">
+        <span style={{ width: `${job.progress}%` }} />
+      </div>
+      <small>
+        {currency(job.processedRows)} / {currency(job.totalRows)} 행 · 신규 {job.newCount} ·
+        수정 {job.updatedCount} · 중복 {job.duplicateCount}
+      </small>
+    </div>
+  );
+}
+
+function CmsMiniList({ items }: { items: Array<[string, string]> }) {
+  return (
+    <div className="cms-mini-list">
+      {items.map(([label, value]) => (
+        <div key={label}>
+          <span>{label}</span>
+          <strong>{value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CmsField({
+  label,
+  mono,
+  value,
+}: {
+  label: string;
+  mono?: boolean;
+  value: string;
+}) {
+  return (
+    <label className="cms-field">
+      <span>{label}</span>
+      <strong className={mono ? "mono" : ""}>{value}</strong>
+    </label>
+  );
+}
+
+function shortCode(value: string) {
+  if (!value) return "-";
+  if (value.length <= 8) return value;
+  return `${value.slice(0, 4)}...${value.slice(-4)}`;
 }
 
 export default App;
