@@ -135,6 +135,12 @@ type ReturnSummary = {
   stockAfter: number;
 };
 
+type ScanExpiryNotice = {
+  display: string;
+  year: number | null;
+  month: number | null;
+};
+
 type CameraConstraintSet = MediaTrackConstraintSet & {
   exposureMode?: string;
   focusMode?: string;
@@ -801,6 +807,51 @@ function normalizeExp(value: string) {
   return value;
 }
 
+function formatExpiryNotice(exp: string): ScanExpiryNotice {
+  const trimmed = exp.trim();
+  const parts = trimmed.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (!parts) {
+    return {
+      display: trimmed || "확인 필요",
+      year: null,
+      month: null,
+    };
+  }
+
+  const year = Number(parts[1]);
+  const month = Number(parts[2]);
+  const day = Number(parts[3]);
+  const validDate = new Date(Date.UTC(year, month - 1, day));
+  const isValid =
+    validDate.getUTCFullYear() === year &&
+    validDate.getUTCMonth() === month - 1 &&
+    validDate.getUTCDate() === day;
+
+  if (!isValid) {
+    return {
+      display: trimmed,
+      year: null,
+      month: null,
+    };
+  }
+
+  return {
+    display: `${parts[1]}.${parts[2]}`,
+    year,
+    month,
+  };
+}
+
+function getExpiryAudioSources(notice: ScanExpiryNotice) {
+  if (!notice.year || !notice.month) return [];
+
+  return [
+    `/audio/year/${notice.year}.mp3`,
+    `/audio/month/${String(notice.month).padStart(2, "0")}.mp3`,
+  ];
+}
+
 function resolveDrug(pc: string): DrugMaster {
   const match = demoMasters.find((drug) => drug.pc === pc);
   if (match) return match;
@@ -852,9 +903,14 @@ function currency(value: number) {
 function MobileApp() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scanAudioRef = useRef<HTMLAudioElement | null>(null);
+  const expiryAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioUnlockedRef = useRef(false);
+  const expiryAudioUnlockedRef = useRef(false);
   const scannerControlsRef = useRef<IScannerControls | null>(null);
   const lastDetectedRef = useRef({ value: "", at: 0 });
+  const expiryDismissTimerRef = useRef<number | null>(null);
+  const expirySpeechTimerRef = useRef<number | null>(null);
+  const expirySpeechRequestRef = useRef(0);
   const modeRef = useRef<Mode>("receipt");
 
   const [screen, setScreen] = useState<Screen>(() =>
@@ -890,6 +946,8 @@ function MobileApp() {
     null,
   );
   const [sampleCursor, setSampleCursor] = useState(0);
+  const [scanExpiryNotice, setScanExpiryNotice] =
+    useState<ScanExpiryNotice | null>(null);
 
   useEffect(() => {
     modeRef.current = mode;
@@ -897,12 +955,30 @@ function MobileApp() {
 
   useEffect(() => {
     const audio = new Audio("/barcode_sound.mp3");
+    const expiryAudio = new Audio();
     audio.preload = "auto";
+    expiryAudio.preload = "auto";
     scanAudioRef.current = audio;
+    expiryAudioRef.current = expiryAudio;
 
     return () => {
       audio.pause();
+      expiryAudio.pause();
       scanAudioRef.current = null;
+      expiryAudioRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (expiryDismissTimerRef.current) {
+        window.clearTimeout(expiryDismissTimerRef.current);
+      }
+      if (expirySpeechTimerRef.current) {
+        window.clearTimeout(expirySpeechTimerRef.current);
+      }
+      expirySpeechRequestRef.current += 1;
+      expiryAudioRef.current?.pause();
     };
   }, []);
 
@@ -934,6 +1010,126 @@ function MobileApp() {
     audio.volume = 1;
     void audio.play().catch(() => undefined);
   }, []);
+
+  const unlockExpiryAudio = useCallback(() => {
+    const audio = expiryAudioRef.current;
+    if (!audio || expiryAudioUnlockedRef.current) return;
+
+    const previousVolume = audio.volume;
+    audio.volume = 0;
+    audio.src = "/audio/year/2027.mp3";
+    audio.load();
+    void audio
+      .play()
+      .then(() => {
+        audio.pause();
+        audio.removeAttribute("src");
+        audio.load();
+        audio.volume = previousVolume;
+        expiryAudioUnlockedRef.current = true;
+      })
+      .catch(() => {
+        audio.removeAttribute("src");
+        audio.load();
+        audio.volume = previousVolume;
+      });
+  }, []);
+
+  const clearExpiryAudio = useCallback(() => {
+    const audio = expiryAudioRef.current;
+    if (!audio) return;
+    audio.pause();
+    audio.currentTime = 0;
+    audio.removeAttribute("src");
+    audio.load();
+  }, []);
+
+  const playExpiryAudioFile = useCallback(
+    (src: string, requestId: number) =>
+      new Promise<void>((resolve, reject) => {
+        if (requestId !== expirySpeechRequestRef.current) {
+          resolve();
+          return;
+        }
+
+        const audio = expiryAudioRef.current;
+        if (!audio) {
+          reject(new Error("EXPIRY_AUDIO_NOT_READY"));
+          return;
+        }
+
+        const cleanup = () => {
+          audio.removeEventListener("ended", handleEnded);
+          audio.removeEventListener("error", handleError);
+        };
+        const handleEnded = () => {
+          cleanup();
+          resolve();
+        };
+        const handleError = () => {
+          cleanup();
+          reject(new Error(`AUDIO_LOAD_FAILED: ${src}`));
+        };
+
+        audio.addEventListener("ended", handleEnded);
+        audio.addEventListener("error", handleError);
+        audio.pause();
+        audio.currentTime = 0;
+        audio.src = src;
+        audio.load();
+        audio.volume = 1;
+        void audio.play().catch((error) => {
+          cleanup();
+          reject(error);
+        });
+      }),
+    [],
+  );
+
+  const playExpiryAudio = useCallback(
+    async (notice: ScanExpiryNotice) => {
+      const sources = getExpiryAudioSources(notice);
+      if (sources.length === 0) return;
+
+      const requestId = expirySpeechRequestRef.current + 1;
+      expirySpeechRequestRef.current = requestId;
+      clearExpiryAudio();
+
+      try {
+        for (const source of sources) {
+          if (requestId !== expirySpeechRequestRef.current) return;
+          await playExpiryAudioFile(source, requestId);
+        }
+      } catch {
+        clearExpiryAudio();
+      }
+    },
+    [clearExpiryAudio, playExpiryAudioFile],
+  );
+
+  const presentScanExpiry = useCallback(
+    (qr: QrFields) => {
+      const notice = formatExpiryNotice(qr.exp);
+      setScanExpiryNotice(notice);
+
+      if (expiryDismissTimerRef.current) {
+        window.clearTimeout(expiryDismissTimerRef.current);
+      }
+      expiryDismissTimerRef.current = window.setTimeout(() => {
+        setScanExpiryNotice(null);
+        expiryDismissTimerRef.current = null;
+      }, 2300);
+
+      if (expirySpeechTimerRef.current) {
+        window.clearTimeout(expirySpeechTimerRef.current);
+      }
+      expirySpeechTimerRef.current = window.setTimeout(() => {
+        void playExpiryAudio(notice);
+        expirySpeechTimerRef.current = null;
+      }, 460);
+    },
+    [playExpiryAudio],
+  );
 
   const selectedWholesaler = useMemo(
     () =>
@@ -1180,20 +1376,20 @@ function MobileApp() {
       if (qr.errors.length > 0) {
         setLastScanName(qr.errors.join(", "));
         setScanNotice("QR 값은 읽었지만 필수 필드를 파싱하지 못했습니다.");
-        return false;
+        return null;
       }
 
       if (modeRef.current === "return") {
         void lookupReturn(qr);
-        return true;
+        return qr;
       } else {
         if (!selectedWholesaler) {
           setLastScanName("도매처 선택 필요");
           setScanNotice("입고 QR을 처리하려면 먼저 도매처를 선택해야 합니다.");
           setScreen("wholesaler");
-          return false;
+          return null;
         }
-        return addReceiptQr(qr);
+        return addReceiptQr(qr) ? qr : null;
       }
     },
     [addReceiptQr, lookupReturn, selectedWholesaler],
@@ -1232,10 +1428,11 @@ function MobileApp() {
               return;
             }
 
-            const accepted = handlePayload(value);
-            if (accepted) {
+            const acceptedQr = handlePayload(value);
+            if (acceptedQr) {
               lastDetectedRef.current = { value, at: now };
               playScanSound();
+              presentScanExpiry(acceptedQr);
             }
           },
         );
@@ -1263,7 +1460,13 @@ function MobileApp() {
       cancelled = true;
       stopCamera();
     };
-  }, [cameraActive, handlePayload, playScanSound, stopCamera]);
+  }, [
+    cameraActive,
+    handlePayload,
+    playScanSound,
+    presentScanExpiry,
+    stopCamera,
+  ]);
 
   function chooseMode(nextMode: Mode) {
     if (nextMode === mode) return;
@@ -1326,7 +1529,12 @@ function MobileApp() {
     const sample = samples[sampleCursor % samples.length];
     setSampleCursor((value) => value + 1);
     setScanNotice("샘플 QR을 처리하고 있습니다.");
-    handlePayload(sample);
+    unlockExpiryAudio();
+    const acceptedQr = handlePayload(sample);
+    if (acceptedQr) {
+      playScanSound();
+      presentScanExpiry(acceptedQr);
+    }
   }
 
   function toggleCamera() {
@@ -1335,6 +1543,7 @@ function MobileApp() {
       if (next) {
         lastDetectedRef.current = { value: "", at: 0 };
         unlockScanAudio();
+        unlockExpiryAudio();
       }
       return next;
     });
@@ -1661,6 +1870,14 @@ function MobileApp() {
           onPassword={setPassword}
           onSubmit={submitLogin}
         />
+      )}
+
+      {scanExpiryNotice && (
+        <div className="scan-expiry-modal" role="status" aria-live="polite">
+          <span>유효기간</span>
+          <strong>{scanExpiryNotice.display}</strong>
+          <em>스캔 완료</em>
+        </div>
       )}
     </main>
   );

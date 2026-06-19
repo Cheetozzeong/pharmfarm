@@ -103,6 +103,22 @@ p {
   }
 }
 
+@keyframes expiry-pop {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -44%) scale(0.96);
+  }
+  12%,
+  78% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -54%) scale(0.98);
+  }
+}
+
 .phone {
   position: relative;
   display: flex;
@@ -452,6 +468,60 @@ p {
   font-size: 12px;
   font-weight: 700;
   text-align: center;
+}
+
+.scan-expiry-modal {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 30;
+  display: grid;
+  width: min(286px, calc(100% - 56px));
+  min-height: 142px;
+  align-content: center;
+  justify-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 18px;
+  background: rgba(20, 24, 27, 0.9);
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.34);
+  color: #fff;
+  gap: 5px;
+  padding: 18px;
+  pointer-events: none;
+  text-align: center;
+  transform: translate(-50%, -50%);
+  animation: expiry-pop 2.3s ease both;
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+}
+
+.scan-expiry-modal span,
+.scan-expiry-modal strong,
+.scan-expiry-modal em {
+  display: block;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  letter-spacing: 0;
+}
+
+.scan-expiry-modal span {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.scan-expiry-modal strong {
+  color: #fff;
+  font-size: 31px;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.scan-expiry-modal em {
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 700;
 }
 
 .scan-actions {
