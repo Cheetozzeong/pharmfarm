@@ -135,7 +135,18 @@ type ReturnSummary = {
   stockAfter: number;
 };
 
-type ApiState = "checking" | "connected" | "demo" | "unauthorized";
+type CameraConstraintSet = MediaTrackConstraintSet & {
+  exposureMode?: string;
+  focusMode?: string;
+  whiteBalanceMode?: string;
+};
+
+type ApiState =
+  | "checking"
+  | "connected"
+  | "demo"
+  | "unauthorized"
+  | "forbidden";
 
 const apiBase = (
   import.meta.env.VITE_PHARMFARM_API_BASE ??
@@ -145,6 +156,16 @@ const apiBase = (
 const storageKeys = {
   accessToken: "pharmfarm.accessToken",
   refreshToken: "pharmfarm.refreshToken",
+};
+
+type TokenResponse = {
+  accessToken?: string;
+  refreshToken?: string;
+  token?: string;
+  data?: {
+    accessToken?: string;
+    refreshToken?: string;
+  };
 };
 
 const demoWholesalers: Wholesaler[] = [
@@ -269,29 +290,130 @@ function createScannerReader() {
   ]);
 
   return new BrowserMultiFormatReader(hints, {
-    delayBetweenScanAttempts: 120,
-    delayBetweenScanSuccess: 650,
+    delayBetweenScanAttempts: 80,
+    delayBetweenScanSuccess: 220,
     tryPlayVideoTimeout: 5000,
   });
 }
 
 function getCameraConstraints(): MediaStreamConstraints {
+  const advanced: CameraConstraintSet[] = [
+    {
+      exposureMode: "continuous",
+      focusMode: "continuous",
+      whiteBalanceMode: "continuous",
+    },
+  ];
+
   return {
     audio: false,
     video: {
       facingMode: { ideal: "environment" },
-      width: { ideal: 1920 },
-      height: { ideal: 1080 },
+      width: { ideal: 1920, min: 1280 },
+      height: { ideal: 1080, min: 720 },
+      frameRate: { ideal: 30, min: 15 },
+      advanced,
     },
   };
+}
+
+function getStoredAccessToken() {
+  return localStorage.getItem(storageKeys.accessToken);
+}
+
+function getStoredRefreshToken() {
+  return localStorage.getItem(storageKeys.refreshToken);
+}
+
+function hasStoredAuthTokens() {
+  return Boolean(getStoredAccessToken() || getStoredRefreshToken());
+}
+
+function clearAuthTokens() {
+  localStorage.removeItem(storageKeys.accessToken);
+  localStorage.removeItem(storageKeys.refreshToken);
+}
+
+function storeTokenResponse(raw: TokenResponse) {
+  const accessToken = raw.accessToken ?? raw.token ?? raw.data?.accessToken;
+  const refreshToken = raw.refreshToken ?? raw.data?.refreshToken;
+
+  if (!accessToken) return false;
+
+  localStorage.setItem(storageKeys.accessToken, accessToken);
+  if (refreshToken) {
+    localStorage.setItem(storageKeys.refreshToken, refreshToken);
+  }
+  return true;
+}
+
+async function parseJsonResponse<T>(response: Response): Promise<T> {
+  if (response.status === 204) return undefined as T;
+
+  const text = await response.text();
+  if (!text) return undefined as T;
+
+  return JSON.parse(text) as T;
+}
+
+async function rawApiFetch<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const headers = new Headers(options.headers);
+
+  if (
+    !headers.has("Content-Type") &&
+    options.body &&
+    !(options.body instanceof FormData)
+  ) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const response = await fetch(`${apiBase}${path}`, {
+    ...options,
+    headers,
+  });
+
+  if (response.status === 401) {
+    throw new Error("UNAUTHORIZED");
+  }
+  if (response.status === 403) {
+    throw new Error("FORBIDDEN");
+  }
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  return parseJsonResponse<T>(response);
+}
+
+async function refreshAccessToken() {
+  const refreshToken = getStoredRefreshToken();
+  if (!refreshToken) return false;
+
+  try {
+    const data = await rawApiFetch<TokenResponse>("/auth/reissue", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${refreshToken}`,
+      },
+      body: JSON.stringify({ refreshToken }),
+    });
+    return storeTokenResponse(data);
+  } catch {
+    clearAuthTokens();
+    return false;
+  }
 }
 
 async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
+  retryOnUnauthorized = true,
 ): Promise<T> {
-  const token = localStorage.getItem(storageKeys.accessToken);
   const headers = new Headers(options.headers);
+  const token = getStoredAccessToken();
 
   if (
     !headers.has("Content-Type") &&
@@ -309,28 +431,50 @@ async function apiFetch<T>(
     headers,
   });
 
-  if (response.status === 401 || response.status === 403) {
+  if (response.status === 401) {
+    if (
+      retryOnUnauthorized &&
+      path !== "/auth/login" &&
+      path !== "/auth/reissue"
+    ) {
+      const refreshed = await refreshAccessToken();
+      if (refreshed) {
+        return apiFetch<T>(path, options, false);
+      }
+    }
+    clearAuthTokens();
     throw new Error("UNAUTHORIZED");
+  }
+  if (response.status === 403) {
+    throw new Error("FORBIDDEN");
   }
   if (!response.ok) {
     throw new Error(`HTTP ${response.status}`);
   }
-  if (response.status === 204) return undefined as T;
 
-  return (await response.json()) as T;
+  return parseJsonResponse<T>(response);
 }
 
 async function login(loginId: string, password: string) {
-  const data = await apiFetch<{
-    accessToken: string;
-    refreshToken?: string;
-  }>("/auth/login", {
-    method: "POST",
-    body: JSON.stringify({ loginId, password }),
-  });
-  localStorage.setItem(storageKeys.accessToken, data.accessToken);
-  if (data.refreshToken) {
-    localStorage.setItem(storageKeys.refreshToken, data.refreshToken);
+  let data: TokenResponse;
+
+  try {
+    data = await rawApiFetch<TokenResponse>("/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ loginId, password }),
+    });
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === "UNAUTHORIZED" || error.message === "FORBIDDEN")
+    ) {
+      throw new Error("아이디 또는 비밀번호를 확인해 주세요.");
+    }
+    throw error;
+  }
+
+  if (!storeTokenResponse(data)) {
+    throw new Error("로그인 응답에 accessToken이 없습니다.");
   }
 }
 
@@ -345,14 +489,18 @@ function normalizeWholesaler(raw: unknown, index: number): Wholesaler {
 
 function normalizeStock(raw: unknown, index: number): StockItem {
   const item = raw as Record<string, unknown>;
-  const quantity = Number(item.quantity ?? item.count ?? item.stockQuantity ?? 0);
+  const quantity = Number(
+    item.quantity ?? item.count ?? item.stockQuantity ?? 0,
+  );
   const price = Number(item.price ?? item.unitPrice ?? item.upperPrice ?? 0);
 
   return {
     id: String(item.id ?? item.stockId ?? index),
     pc: String(item.pc ?? item.standardCode ?? ""),
     insuranceCode: String(item.insuranceCode ?? item.productCode ?? ""),
-    name: String(item.name ?? item.drugName ?? item.productName ?? "미확인 약품"),
+    name: String(
+      item.name ?? item.drugName ?? item.productName ?? "미확인 약품",
+    ),
     quantity,
     price,
     matchStatus: normalizeMatchStatus(item.matchStatus),
@@ -408,7 +556,9 @@ function normalizeLookup(raw: unknown, qr: QrFields): ReturnLookup {
       exp: String(item.exp ?? qr.exp),
       drugName: String(item.drugName ?? item.name ?? "미확인 약품"),
       sellerCandidates,
-      returnableQuantity: Number(item.returnableQuantity ?? item.stockQuantity ?? 0),
+      returnableQuantity: Number(
+        item.returnableQuantity ?? item.stockQuantity ?? 0,
+      ),
       stockQuantity: Number(item.stockQuantity ?? item.returnableQuantity ?? 0),
     };
   }
@@ -448,7 +598,7 @@ function parseQrPayload(rawValue: string): QrFields {
   const format = queryFields ? "query" : gs1Fields ? "gs1" : "text";
 
   const result: QrFields = {
-    pc: fields.pc,
+    pc: normalizePc(fields.pc),
     sn: fields.sn,
     lot: fields.lot,
     exp: normalizeExp(fields.exp),
@@ -463,6 +613,19 @@ function parseQrPayload(rawValue: string): QrFields {
   if (!result.exp) result.errors.push("EXP 없음");
 
   return result;
+}
+
+function normalizePc(value: string) {
+  const compact = value.trim();
+  const digits = compact.replace(/\D/g, "");
+
+  if (digits.length === compact.length) {
+    return digits.length === 14 && digits.startsWith("0")
+      ? digits.slice(1)
+      : digits;
+  }
+
+  return compact;
 }
 
 function parseQueryQr(raw: string) {
@@ -507,24 +670,129 @@ function parseGs1Qr(raw: string) {
     };
   }
 
-  return null;
+  return parseCompactGs1(raw);
+}
+
+function parseCompactGs1(raw: string) {
+  const compact = raw
+    .replace(/^\][A-Za-z0-9]{2}/, "")
+    .replace(/\u001d/g, "\x1d")
+    .replace(/[ \n\r\t]+/g, "");
+
+  const pcIndex = findFixedGs1Ai(compact, "01", 0, 14);
+  const pcEnd = pcIndex >= 0 ? pcIndex + 16 : 0;
+  const expIndex = findFixedGs1Ai(compact, "17", pcEnd, 6);
+  const expEnd = expIndex >= 0 ? expIndex + 8 : pcEnd;
+  const lot = readVariableGs1Ai(compact, "10", expEnd);
+  const sn = readVariableGs1Ai(compact, "21", expEnd);
+  const result = {
+    pc: pcIndex >= 0 ? compact.slice(pcIndex + 2, pcIndex + 16) : "",
+    sn,
+    lot,
+    exp: expIndex >= 0 ? compact.slice(expIndex + 2, expIndex + 8) : "",
+  };
+
+  return result.pc || result.sn || result.lot || result.exp ? result : null;
+}
+
+function findFixedGs1Ai(
+  raw: string,
+  ai: string,
+  start: number,
+  valueLength: number,
+) {
+  for (
+    let index = Math.max(0, start);
+    index <= raw.length - valueLength - 2;
+    index += 1
+  ) {
+    if (raw.slice(index, index + 2) !== ai) continue;
+
+    const value = raw.slice(index + 2, index + 2 + valueLength);
+    if (/^\d+$/.test(value)) return index;
+  }
+
+  return -1;
+}
+
+function readVariableGs1Ai(raw: string, ai: string, start: number) {
+  const index = raw.indexOf(ai, Math.max(0, start));
+  if (index < 0) return "";
+
+  const valueStart = index + 2;
+  const separatorIndex = raw.indexOf("\x1d", valueStart);
+  const nextAiIndex =
+    separatorIndex >= 0 ? separatorIndex : findNextGs1Ai(raw, valueStart);
+  const valueEnd = nextAiIndex >= 0 ? nextAiIndex : raw.length;
+
+  return raw.slice(valueStart, valueEnd).replace(/\x1d/g, "").trim();
+}
+
+function findNextGs1Ai(raw: string, start: number) {
+  for (let index = start + 1; index < raw.length - 1; index += 1) {
+    const ai = raw.slice(index, index + 2);
+
+    if (ai === "01" && /^\d{14}/.test(raw.slice(index + 2, index + 16))) {
+      return index;
+    }
+    if (ai === "17" && /^\d{6}/.test(raw.slice(index + 2, index + 8))) {
+      return index;
+    }
+    if (ai === "10" || ai === "21") {
+      return index;
+    }
+  }
+
+  return -1;
 }
 
 function parseTextQr(raw: string) {
-  const read = (key: string) => {
-    const match = raw.match(new RegExp(`${key}\\s*[:=]\\s*([^\\s,;|]+)`, "i"));
-    return match?.[1] ?? "";
+  const values = readLabeledQrText(raw);
+  const read = (keys: string[]) => {
+    for (const key of keys) {
+      const value = values.get(key);
+      if (value) return value;
+    }
+    return "";
   };
 
   return {
-    pc: read("pc"),
-    sn: read("sn"),
-    lot: read("lot"),
-    exp: read("exp"),
+    pc: read(["pc", "gtin"]),
+    sn: read(["sn", "serial"]),
+    lot: read(["lot"]),
+    exp: read(["exp", "expiry", "expiration"]),
   };
 }
 
+function readLabeledQrText(raw: string) {
+  const labelMatches = [
+    ...raw.matchAll(
+      /\b(PC|GTIN|SN|SERIAL|LOT|EXP|EXPIRY|EXPIRATION)\b\s*[:=]\s*/gi,
+    ),
+  ];
+  const values = new Map<string, string>();
+
+  labelMatches.forEach((match, index) => {
+    const label = match[1].toLowerCase();
+    const start = (match.index ?? 0) + match[0].length;
+    const end = labelMatches[index + 1]?.index ?? raw.length;
+    const value = raw.slice(start, end).replace(/^[\s,;|]+|[\s,;|]+$/g, "");
+
+    if (value) {
+      values.set(label, value);
+    }
+  });
+
+  return values;
+}
+
 function normalizeExp(value: string) {
+  const humanDate = value.trim().match(/^(\d{4})\D+(\d{1,2})\D+(\d{1,2})\D*$/);
+
+  if (humanDate) {
+    return `${humanDate[1]}-${humanDate[2].padStart(2, "0")}-${humanDate[3].padStart(2, "0")}`;
+  }
+
   const digits = value.replace(/\D/g, "");
   if (digits.length === 6)
     return `20${digits.slice(0, 2)}-${digits.slice(2, 4)}-${digits.slice(4)}`;
@@ -587,7 +855,9 @@ function MobileApp() {
   const lastDetectedRef = useRef({ value: "", at: 0 });
   const modeRef = useRef<Mode>("receipt");
 
-  const [screen, setScreen] = useState<Screen>("wholesaler");
+  const [screen, setScreen] = useState<Screen>(() =>
+    hasStoredAuthTokens() ? "wholesaler" : "account",
+  );
   const [mode, setMode] = useState<Mode>("receipt");
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraError, setCameraError] = useState("");
@@ -614,7 +884,9 @@ function MobileApp() {
   const [returnQuantity, setReturnQuantity] = useState(10);
   const [returnMemo, setReturnMemo] = useState("유통기한 임박 반품");
   const [selectedCandidateId, setSelectedCandidateId] = useState("");
-  const [returnSummary, setReturnSummary] = useState<ReturnSummary | null>(null);
+  const [returnSummary, setReturnSummary] = useState<ReturnSummary | null>(
+    null,
+  );
   const [sampleCursor, setSampleCursor] = useState(0);
 
   useEffect(() => {
@@ -623,8 +895,9 @@ function MobileApp() {
 
   const selectedWholesaler = useMemo(
     () =>
-      wholesalers.find((wholesaler) => wholesaler.id === selectedWholesalerId) ??
-      null,
+      wholesalers.find(
+        (wholesaler) => wholesaler.id === selectedWholesalerId,
+      ) ?? null,
     [selectedWholesalerId, wholesalers],
   );
 
@@ -666,7 +939,7 @@ function MobileApp() {
   const returnWholesalerName =
     returnLookup?.matchType === "CONFIRMED"
       ? returnLookup.wholesalerName
-      : selectedCandidate?.sellerName ?? "";
+      : (selectedCandidate?.sellerName ?? "");
   const returnMax =
     returnLookup?.matchType === "CONFIRMED" ||
     returnLookup?.matchType === "ESTIMATED"
@@ -680,8 +953,15 @@ function MobileApp() {
 
   const setApiFallback = useCallback((error: unknown) => {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
+      clearAuthTokens();
       setApiState("unauthorized");
       setApiMessage("로그인이 필요합니다.");
+      setScreen("account");
+      return;
+    }
+    if (error instanceof Error && error.message === "FORBIDDEN") {
+      setApiState("forbidden");
+      setApiMessage("현재 계정 권한으로는 실행할 수 없습니다.");
       return;
     }
     setApiState("demo");
@@ -689,6 +969,12 @@ function MobileApp() {
   }, []);
 
   const refreshFromBackend = useCallback(async () => {
+    if (!hasStoredAuthTokens()) {
+      setApiState("unauthorized");
+      setApiMessage("로그인이 필요합니다.");
+      return false;
+    }
+
     setApiState("checking");
     try {
       const [wholesalerData, stockData] = await Promise.all([
@@ -699,14 +985,39 @@ function MobileApp() {
       setStocks(stockData.map(normalizeStock));
       setApiState("connected");
       setApiMessage("BE 연결됨");
+      return true;
     } catch (error) {
       setApiFallback(error);
+      return false;
     }
   }, [setApiFallback]);
 
+  const bootstrapAuth = useCallback(async () => {
+    if (!hasStoredAuthTokens()) {
+      setApiState("unauthorized");
+      setApiMessage("로그인이 필요합니다.");
+      setScreen("account");
+      return;
+    }
+
+    setApiState("checking");
+    setApiMessage("자동 로그인 확인 중");
+    try {
+      await apiFetch<unknown>("/auth/me");
+      const connected = await refreshFromBackend();
+      if (connected) {
+        setApiState("connected");
+        setApiMessage("자동 로그인됨");
+      }
+      setScreen((current) => (current === "account" ? "wholesaler" : current));
+    } catch (error) {
+      setApiFallback(error);
+    }
+  }, [refreshFromBackend, setApiFallback]);
+
   useEffect(() => {
-    refreshFromBackend();
-  }, [refreshFromBackend]);
+    void bootstrapAuth();
+  }, [bootstrapAuth]);
 
   const stopCamera = useCallback(() => {
     scannerControlsRef.current?.stop();
@@ -731,7 +1042,7 @@ function MobileApp() {
       if (alreadyReceived || duplicated) {
         setLastScanName("이미 스캔된 SN");
         setScanNotice("이미 입고됐거나 현재 목록에 있는 QR입니다.");
-        return;
+        return true;
       }
 
       const drug = resolveDrug(qr.pc);
@@ -745,6 +1056,7 @@ function MobileApp() {
           ? "기준 데이터 미등록 QR입니다. 매칭 결과에서 보정이 필요합니다."
           : `${drug.name} 입고 스캔 완료 · 목록에 추가했습니다.`,
       );
+      return true;
     },
     [receiptQueue, traces],
   );
@@ -768,7 +1080,9 @@ function MobileApp() {
         if (lookup.matchType === "CONFIRMED") {
           setLastScanName(`${lookup.drugName} · 확정`);
           setScanNotice("입고 이력에서 도매처를 확정했습니다.");
-          setReturnQuantity(Math.max(1, Math.min(10, lookup.returnableQuantity)));
+          setReturnQuantity(
+            Math.max(1, Math.min(10, lookup.returnableQuantity)),
+          );
           setScreen("returnConfirmed");
           return;
         }
@@ -776,12 +1090,16 @@ function MobileApp() {
           setLastScanName(`${lookup.drugName} · 추정`);
           setScanNotice("구매 내역 기준 판매처 후보를 찾았습니다.");
           setSelectedCandidateId(lookup.sellerCandidates[0]?.id ?? "");
-          setReturnQuantity(Math.max(1, Math.min(10, lookup.returnableQuantity)));
+          setReturnQuantity(
+            Math.max(1, Math.min(10, lookup.returnableQuantity)),
+          );
           setScreen("returnEstimated");
           return;
         }
         setLastScanName("판매처 후보 없음");
-        setScanNotice("입고 이력과 구매 내역에서 판매처 후보를 찾지 못했습니다.");
+        setScanNotice(
+          "입고 이력과 구매 내역에서 판매처 후보를 찾지 못했습니다.",
+        );
         setScreen("returnNone");
       } catch (error) {
         setApiFallback(error);
@@ -790,17 +1108,23 @@ function MobileApp() {
         if (lookup.matchType === "CONFIRMED") {
           setLastScanName(`${lookup.drugName} · 확정`);
           setScanNotice("데모 데이터의 입고 이력에서 도매처를 확정했습니다.");
-          setReturnQuantity(Math.max(1, Math.min(10, lookup.returnableQuantity)));
+          setReturnQuantity(
+            Math.max(1, Math.min(10, lookup.returnableQuantity)),
+          );
           setScreen("returnConfirmed");
         } else if (lookup.matchType === "ESTIMATED") {
           setLastScanName(`${lookup.drugName} · 추정`);
           setScanNotice("데모 구매 내역 기준 판매처 후보를 찾았습니다.");
           setSelectedCandidateId(lookup.sellerCandidates[0]?.id ?? "");
-          setReturnQuantity(Math.max(1, Math.min(10, lookup.returnableQuantity)));
+          setReturnQuantity(
+            Math.max(1, Math.min(10, lookup.returnableQuantity)),
+          );
           setScreen("returnEstimated");
         } else {
           setLastScanName("판매처 후보 없음");
-          setScanNotice("입고 이력과 구매 내역에서 판매처 후보를 찾지 못했습니다.");
+          setScanNotice(
+            "입고 이력과 구매 내역에서 판매처 후보를 찾지 못했습니다.",
+          );
           setScreen("returnNone");
         }
       }
@@ -814,19 +1138,20 @@ function MobileApp() {
       if (qr.errors.length > 0) {
         setLastScanName(qr.errors.join(", "));
         setScanNotice("QR 값은 읽었지만 필수 필드를 파싱하지 못했습니다.");
-        return;
+        return false;
       }
 
       if (modeRef.current === "return") {
         void lookupReturn(qr);
+        return true;
       } else {
         if (!selectedWholesaler) {
           setLastScanName("도매처 선택 필요");
           setScanNotice("입고 QR을 처리하려면 먼저 도매처를 선택해야 합니다.");
           setScreen("wholesaler");
-          return;
+          return false;
         }
-        addReceiptQr(qr);
+        return addReceiptQr(qr);
       }
     },
     [addReceiptQr, lookupReturn, selectedWholesaler],
@@ -861,12 +1186,14 @@ function MobileApp() {
 
             const now = Date.now();
             const lastDetected = lastDetectedRef.current;
-            if (value === lastDetected.value && now - lastDetected.at < 1500) {
+            if (value === lastDetected.value && now - lastDetected.at < 900) {
               return;
             }
 
-            lastDetectedRef.current = { value, at: now };
-            handlePayload(value);
+            const accepted = handlePayload(value);
+            if (accepted) {
+              lastDetectedRef.current = { value, at: now };
+            }
           },
         );
 
@@ -880,7 +1207,9 @@ function MobileApp() {
         setCameraError(
           error instanceof Error ? error.message : "카메라 시작 실패",
         );
-        setScanNotice("카메라를 시작하지 못했습니다. 권한과 HTTPS 환경을 확인해 주세요.");
+        setScanNotice(
+          "카메라를 시작하지 못했습니다. 권한과 HTTPS 환경을 확인해 주세요.",
+        );
         setCameraActive(false);
       }
     }
@@ -909,7 +1238,9 @@ function MobileApp() {
       setCameraActive(false);
     }
     setMode(nextMode);
-    setScreen(nextMode === "receipt" && !selectedWholesaler ? "wholesaler" : "scan");
+    setScreen(
+      nextMode === "receipt" && !selectedWholesaler ? "wholesaler" : "scan",
+    );
     setCameraActive(false);
     setScanNotice(
       nextMode === "receipt"
@@ -1003,7 +1334,10 @@ function MobileApp() {
     setScreen("receiptDone");
   }
 
-  function commitReceiptDemo(items: ReceiptQueueItem[], wholesaler: Wholesaler) {
+  function commitReceiptDemo(
+    items: ReceiptQueueItem[],
+    wholesaler: Wholesaler,
+  ) {
     setTraces((current) => [
       ...items.map((item) => ({
         id: createId("R"),
@@ -1068,7 +1402,10 @@ function MobileApp() {
     setScreen("returnDone");
   }
 
-  function commitReturnDemo(lookup: Exclude<ReturnLookup, { matchType: "NONE" }>, quantity: number) {
+  function commitReturnDemo(
+    lookup: Exclude<ReturnLookup, { matchType: "NONE" }>,
+    quantity: number,
+  ) {
     setStocks((current) =>
       current.map((stock) =>
         stock.pc === lookup.pc
@@ -1090,9 +1427,16 @@ function MobileApp() {
   async function submitLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
+      setApiState("checking");
+      setApiMessage("로그인 중");
       await login(loginId, password);
-      await refreshFromBackend();
-      setScreen("scan");
+      const connected = await refreshFromBackend();
+      if (connected) {
+        setApiState("connected");
+        setApiMessage("로그인 완료");
+      }
+      setPassword("");
+      setScreen("wholesaler");
     } catch (error) {
       setApiState("unauthorized");
       setApiMessage(
@@ -1102,8 +1446,7 @@ function MobileApp() {
   }
 
   function logout() {
-    localStorage.removeItem(storageKeys.accessToken);
-    localStorage.removeItem(storageKeys.refreshToken);
+    clearAuthTokens();
     setApiState("unauthorized");
     setApiMessage("로그인이 필요합니다.");
     setScreen("account");
@@ -1190,7 +1533,9 @@ function MobileApp() {
           <ReturnConfirmedScreen
             lookup={returnLookup}
             onNext={() => {
-              setReturnQuantity(Math.max(1, Math.min(returnQuantity, returnMax)));
+              setReturnQuantity(
+                Math.max(1, Math.min(returnQuantity, returnMax)),
+              );
               setScreen("returnQty");
             }}
           />
@@ -1262,15 +1607,16 @@ function MobileApp() {
           apiState={apiState}
           loginId={loginId}
           password={password}
-          onBack={() => setScreen("scan")}
+          onBack={
+            hasStoredAuthTokens() ? () => setScreen("wholesaler") : undefined
+          }
           onLoginId={setLoginId}
           onLogout={logout}
           onPassword={setPassword}
-          onRefresh={refreshFromBackend}
+          onRefresh={bootstrapAuth}
           onSubmit={submitLogin}
         />
       )}
-
     </main>
   );
 }
@@ -1283,7 +1629,9 @@ function lookupReturnDemo(
   const trace = traces.find((item) => item.pc === qr.pc && item.sn === qr.sn);
 
   if (trace) {
-    const stock = stocks.find((item) => item.insuranceCode === trace.insuranceCode);
+    const stock = stocks.find(
+      (item) => item.insuranceCode === trace.insuranceCode,
+    );
     return {
       matchType: "CONFIRMED",
       pc: qr.pc,
@@ -1324,8 +1672,7 @@ function lookupReturnDemo(
     lot: qr.lot,
     exp: qr.exp,
     drugName: "미확인 약품",
-    message:
-      "입고·구매 내역에 근거가 없어 반품 대상으로 등록할 수 없습니다.",
+    message: "입고·구매 내역에 근거가 없어 반품 대상으로 등록할 수 없습니다.",
   };
 }
 
@@ -1362,18 +1709,6 @@ function screenClass(screen: Screen, mode: Mode) {
     return `is-dark is-${mode}`;
   }
   return "is-light";
-}
-
-function StatusBar({ dark = true }: { dark?: boolean }) {
-  return (
-    <div className={`status-bar ${dark ? "is-dark-text" : ""}`}>
-      <span>9:41</span>
-      <span className="system">
-        <span>5G</span>
-        <span className="battery" />
-      </span>
-    </div>
-  );
 }
 
 function ScanScreen({
@@ -1416,7 +1751,6 @@ function ScanScreen({
 
   return (
     <>
-      <StatusBar dark={false} />
       <div className="scan-top">
         {isReceipt ? (
           <button
@@ -1450,7 +1784,7 @@ function ScanScreen({
           playsInline
         />
         <button
-          className="scan-box"
+          className={`scan-box ${cameraActive ? "is-active" : ""}`}
           style={{ "--accent": accent } as CSSProperties}
           type="button"
           onClick={cameraActive ? undefined : onToggleCamera}
@@ -1530,6 +1864,8 @@ function apiStateLabel(state: ApiState) {
       return "온라인";
     case "unauthorized":
       return "인증";
+    case "forbidden":
+      return "권한";
     case "checking":
       return "확인";
     default:
@@ -1554,7 +1890,6 @@ function WholesalerScreen({
 }) {
   return (
     <>
-      <StatusBar />
       <Header title="도매처 선택" onBack={onBack} />
       <div className="search-field">
         <span className="search-icon" />
@@ -1609,7 +1944,6 @@ function ReceiptReviewScreen({
 }) {
   return (
     <>
-      <StatusBar />
       <Header
         title="입고 확인"
         note={selectedWholesaler?.name ?? ""}
@@ -1618,7 +1952,12 @@ function ReceiptReviewScreen({
       <section className="scroll-body">
         <div className="metrics">
           <Metric label="스캔 건수" value={`${queue.length}`} unit="건" />
-          <Metric label="예상 재고 증가" value={`+${increase}`} unit="개" blue />
+          <Metric
+            label="예상 재고 증가"
+            value={`+${increase}`}
+            unit="개"
+            blue
+          />
         </div>
         <div className="list-card">
           {queue.slice(0, 4).map((item) => (
@@ -1629,7 +1968,9 @@ function ReceiptReviewScreen({
             />
           ))}
         </div>
-        {queue.length > 4 && <div className="more">+ {queue.length - 4}건 더 보기</div>}
+        {queue.length > 4 && (
+          <div className="more">+ {queue.length - 4}건 더 보기</div>
+        )}
       </section>
       <BottomBar>
         <button className="primary-btn" type="button" onClick={onNext}>
@@ -1658,11 +1999,11 @@ function ReceiptMatchScreen({
 
   return (
     <>
-      <StatusBar />
       <Header title="매칭 결과" onBack={onBack} />
       <section className="scroll-body">
         <p className="guide-copy">
-          기준 데이터 연결 상태입니다. 가상생성·미등록 항목은 CMS에서 보정할 수 있어요.
+          기준 데이터 연결 상태입니다. 가상생성·미등록 항목은 CMS에서 보정할 수
+          있어요.
         </p>
         <MatchBox title="정상매칭" count={normal.length} color="#0064FF" />
         <MatchBox title="이름매칭" count={name.length} color="#6B4EE6" />
@@ -1704,7 +2045,8 @@ function ReturnConfirmedScreen({
   return (
     <ReturnSheet height="confirmed">
       <span className="state-badge confirmed">
-        <span />확정 · 입고 이력 있음
+        <span />
+        확정 · 입고 이력 있음
       </span>
       <h1>{lookup.drugName}</h1>
       <p className="code-line">
@@ -1719,7 +2061,11 @@ function ReturnConfirmedScreen({
         <div className="triple">
           <MiniMetric label="제품총수량" value={lookup.productTotalQuantity} />
           <MiniMetric label="반품 누적" value={lookup.returnedQuantity} />
-          <MiniMetric label="반품 가능" value={lookup.returnableQuantity} blue />
+          <MiniMetric
+            label="반품 가능"
+            value={lookup.returnableQuantity}
+            blue
+          />
         </div>
       </div>
       <button className="primary-btn push" type="button" onClick={onNext}>
@@ -1743,13 +2089,17 @@ function ReturnEstimatedScreen({
   return (
     <ReturnSheet height="estimated">
       <span className="state-badge estimated">
-        <span />추정 · 입고 이력 없음
+        <span />
+        추정 · 입고 이력 없음
       </span>
       <h1>{lookup.drugName}</h1>
       <p className="guide-copy">
-        입고 이력은 없지만, 구매 내역 기준으로 아래 판매처가 추정됩니다. 하나를 선택해 주세요.
+        입고 이력은 없지만, 구매 내역 기준으로 아래 판매처가 추정됩니다. 하나를
+        선택해 주세요.
       </p>
-      <div className="section-label">판매처 후보 {lookup.sellerCandidates.length}</div>
+      <div className="section-label">
+        판매처 후보 {lookup.sellerCandidates.length}
+      </div>
       <div className="candidate-list">
         {lookup.sellerCandidates.map((candidate) => (
           <ChoiceRow
@@ -1775,8 +2125,8 @@ function ReturnNoneScreen({ onClose }: { onClose: () => void }) {
         <div className="none-icon" />
         <h1>판매처 후보를 찾지 못했습니다</h1>
         <p>
-          입고·구매 내역에 근거가 없어 반품 대상으로 등록할 수 없습니다. 구매 내역을 먼저
-          동기화하거나 코드를 다시 확인해 주세요.
+          입고·구매 내역에 근거가 없어 반품 대상으로 등록할 수 없습니다. 구매
+          내역을 먼저 동기화하거나 코드를 다시 확인해 주세요.
         </p>
       </div>
       <div className="stack">
@@ -1818,7 +2168,6 @@ function ReturnQtyScreen({
 }) {
   return (
     <>
-      <StatusBar />
       <Header title="반품 수량" onBack={onBack} />
       <section className="scroll-body">
         <div className="drug-card">
@@ -1888,7 +2237,6 @@ function DoneScreen({
   const isReceipt = kind === "receipt";
   return (
     <>
-      <StatusBar />
       <section className="done-body">
         <div className="done-icon" />
         <h1>{isReceipt ? "입고 완료" : "반품 완료"}</h1>
@@ -1900,8 +2248,14 @@ function DoneScreen({
         <div className="summary-card">
           {isReceipt ? (
             <>
-              <SummaryLine label="도매처" value={receiptSummary?.wholesalerName} />
-              <SummaryLine label="입고 품목" value={`${receiptSummary?.count ?? 0}종`} />
+              <SummaryLine
+                label="도매처"
+                value={receiptSummary?.wholesalerName}
+              />
+              <SummaryLine
+                label="입고 품목"
+                value={`${receiptSummary?.count ?? 0}종`}
+              />
               <SummaryLine
                 label="재고 증가"
                 value={`+${receiptSummary?.increase ?? 0}개`}
@@ -1916,7 +2270,10 @@ function DoneScreen({
           ) : (
             <>
               <SummaryLine label="약품" value={returnSummary?.drugName} />
-              <SummaryLine label="도매처" value={returnSummary?.wholesalerName} />
+              <SummaryLine
+                label="도매처"
+                value={returnSummary?.wholesalerName}
+              />
               <SummaryLine
                 label="반품 수량"
                 value={`-${returnSummary?.quantity ?? 0}개`}
@@ -1951,7 +2308,6 @@ function StocksScreen({
 }) {
   return (
     <>
-      <StatusBar />
       <Header title="재고 목록" onBack={onBack} />
       <section className="scroll-body">
         <div className="list-card">
@@ -1960,7 +2316,8 @@ function StocksScreen({
               <div>
                 <strong>{stock.name}</strong>
                 <span>
-                  {stock.insuranceCode} · 예상 {currency(stock.quantity * stock.price)}원
+                  {stock.insuranceCode} · 예상{" "}
+                  {currency(stock.quantity * stock.price)}원
                 </span>
               </div>
               <span className={`badge ${statusClass(stock.matchStatus)}`}>
@@ -1993,7 +2350,7 @@ function AccountScreen({
   apiState: ApiState;
   loginId: string;
   password: string;
-  onBack: () => void;
+  onBack?: () => void;
   onLoginId: (value: string) => void;
   onLogout: () => void;
   onPassword: (value: string) => void;
@@ -2002,7 +2359,6 @@ function AccountScreen({
 }) {
   return (
     <>
-      <StatusBar />
       <Header title="계정" onBack={onBack} />
       <section className="scroll-body">
         <div className="account-card">
@@ -2015,7 +2371,10 @@ function AccountScreen({
         <form className="login-form" onSubmit={onSubmit}>
           <label>
             <span>아이디</span>
-            <input value={loginId} onChange={(event) => onLoginId(event.target.value)} />
+            <input
+              value={loginId}
+              onChange={(event) => onLoginId(event.target.value)}
+            />
           </label>
           <label>
             <span>비밀번호</span>
@@ -2071,7 +2430,9 @@ function BottomBar({
   children: ReactNode;
   stack?: boolean;
 }) {
-  return <footer className={`bottom-bar ${stack ? "stack" : ""}`}>{children}</footer>;
+  return (
+    <footer className={`bottom-bar ${stack ? "stack" : ""}`}>{children}</footer>
+  );
 }
 
 function ChoiceRow({
@@ -2122,13 +2483,7 @@ function Metric({
   );
 }
 
-function DrugRow({
-  delta,
-  item,
-}: {
-  delta: number;
-  item: ReceiptQueueItem;
-}) {
+function DrugRow({ delta, item }: { delta: number; item: ReceiptQueueItem }) {
   return (
     <div className="drug-row">
       <div>
@@ -2243,7 +2598,9 @@ function SummaryLine({
   return (
     <div>
       <span>{label}</span>
-      <strong className={blue ? "blue" : red ? "red" : ""}>{value ?? "-"}</strong>
+      <strong className={blue ? "blue" : red ? "red" : ""}>
+        {value ?? "-"}
+      </strong>
     </div>
   );
 }
@@ -2522,6 +2879,8 @@ function CmsApp({
   const page = getCmsPage(path);
   const [apiState, setApiState] = useState<ApiState>("checking");
   const [apiMessage, setApiMessage] = useState("CMS 데이터 확인 중");
+  const [loginId, setLoginId] = useState("");
+  const [password, setPassword] = useState("");
   const [masters, setMasters] = useState(demoCmsMasters);
   const [stocks, setStocks] = useState(initialStocks);
   const [importJobs, setImportJobs] = useState(demoImportJobs);
@@ -2532,12 +2891,14 @@ function CmsApp({
   const [deductionFailures, setDeductionFailures] = useState(
     demoDeductionFailures,
   );
-  const [selectedMasterId, setSelectedMasterId] = useState(demoCmsMasters[2].id);
+  const [selectedMasterId, setSelectedMasterId] = useState(
+    demoCmsMasters[2].id,
+  );
   const [selectedStockId, setSelectedStockId] = useState(initialStocks[0].id);
   const [adjustQuantity, setAdjustQuantity] = useState(5);
-  const [adjustDirection, setAdjustDirection] = useState<"INCREASE" | "DECREASE">(
-    "INCREASE",
-  );
+  const [adjustDirection, setAdjustDirection] = useState<
+    "INCREASE" | "DECREASE"
+  >("INCREASE");
   const [adjustMemo, setAdjustMemo] = useState("실사 후 수량 보정");
 
   const selectedMaster =
@@ -2547,8 +2908,14 @@ function CmsApp({
 
   const cmsFallback = useCallback((error: unknown) => {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
+      clearAuthTokens();
       setApiState("unauthorized");
-      setApiMessage("CMS API 인증이 필요합니다.");
+      setApiMessage("CMS 로그인이 필요합니다.");
+      return;
+    }
+    if (error instanceof Error && error.message === "FORBIDDEN") {
+      setApiState("forbidden");
+      setApiMessage("현재 계정에 CMS 실행 권한이 없습니다.");
       return;
     }
     setApiState("demo");
@@ -2556,16 +2923,27 @@ function CmsApp({
   }, []);
 
   const refreshCms = useCallback(async () => {
+    if (!hasStoredAuthTokens()) {
+      setApiState("unauthorized");
+      setApiMessage("CMS 로그인이 필요합니다.");
+      return false;
+    }
+
     setApiState("checking");
     try {
-      const [masterResult, stockResult, purchaseResult, syncResult, failureResult] =
-        await Promise.allSettled([
-          apiFetch<unknown>("/drug-masters"),
-          apiFetch<unknown>("/stocks"),
-          apiFetch<unknown>("/purchase-histories"),
-          apiFetch<unknown>("/purchase-histories/sync-jobs"),
-          apiFetch<unknown>("/prescription-deductions/failed"),
-        ]);
+      const [
+        masterResult,
+        stockResult,
+        purchaseResult,
+        syncResult,
+        failureResult,
+      ] = await Promise.allSettled([
+        apiFetch<unknown>("/drug-masters"),
+        apiFetch<unknown>("/stocks"),
+        apiFetch<unknown>("/purchase-histories"),
+        apiFetch<unknown>("/purchase-histories/sync-jobs"),
+        apiFetch<unknown>("/prescription-deductions/failed"),
+      ]);
 
       if (masterResult.status === "fulfilled") {
         setMasters(arrayPayload(masterResult.value).map(normalizeCmsMaster));
@@ -2597,18 +2975,47 @@ function CmsApp({
 
       if (rejected?.status === "rejected") {
         cmsFallback(rejected.reason);
+        return false;
       } else {
         setApiState("connected");
         setApiMessage("CMS API 연결됨");
+        return true;
       }
     } catch (error) {
       cmsFallback(error);
+      return false;
     }
   }, [cmsFallback]);
 
   useEffect(() => {
     void refreshCms();
   }, [refreshCms]);
+
+  async function submitCmsLogin(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      setApiState("checking");
+      setApiMessage("CMS 로그인 중");
+      await login(loginId, password);
+      const connected = await refreshCms();
+      if (connected) {
+        setApiState("connected");
+        setApiMessage("CMS 로그인 완료");
+      }
+      setPassword("");
+    } catch (error) {
+      setApiState("unauthorized");
+      setApiMessage(
+        error instanceof Error ? error.message : "CMS 로그인에 실패했습니다.",
+      );
+    }
+  }
+
+  function logoutCms() {
+    clearAuthTokens();
+    setApiState("unauthorized");
+    setApiMessage("CMS 로그인이 필요합니다.");
+  }
 
   async function uploadMasterCsv(kind: "drug" | "price", file: File | null) {
     if (!file) return;
@@ -2730,7 +3137,8 @@ function CmsApp({
         method: "POST",
         body: JSON.stringify({
           resolutionType,
-          stockId: resolutionType === "EXISTING_STOCK" ? selectedStock?.id : undefined,
+          stockId:
+            resolutionType === "EXISTING_STOCK" ? selectedStock?.id : undefined,
           memo: "CMS 수동 처리",
         }),
       });
@@ -2753,60 +3161,76 @@ function CmsApp({
         <CmsHeader
           apiMessage={apiMessage}
           apiState={apiState}
+          onLogout={hasStoredAuthTokens() ? logoutCms : undefined}
           page={page}
           onRefresh={refreshCms}
         />
-        {page === "dashboard" && (
-          <CmsDashboard
-            importJobs={importJobs}
-            stocks={stocks}
-            masters={masters}
-            syncJobs={syncJobs}
-            navigate={navigate}
+        {apiState === "unauthorized" ? (
+          <CmsLoginPage
+            apiBase={apiBase}
+            apiMessage={apiMessage}
+            apiState={apiState}
+            loginId={loginId}
+            password={password}
+            onLoginId={setLoginId}
+            onPassword={setPassword}
+            onSubmit={submitCmsLogin}
           />
-        )}
-        {page === "master" && (
-          <CmsMasterPage
-            masters={masters}
-            selectedMaster={selectedMaster}
-            onRematch={rematchMaster}
-            onSave={saveMaster}
-            onSelect={setSelectedMasterId}
-            onUpload={uploadMasterCsv}
-          />
-        )}
-        {page === "import" && (
-          <CmsImportPage jobs={importJobs} onUpload={uploadMasterCsv} />
-        )}
-        {page === "inventory" && (
-          <CmsInventoryPage
-            adjustDirection={adjustDirection}
-            adjustMemo={adjustMemo}
-            adjustQuantity={adjustQuantity}
-            selectedStock={selectedStock}
-            stocks={stocks}
-            onAdjust={adjustStock}
-            onAdjustDirection={setAdjustDirection}
-            onAdjustMemo={setAdjustMemo}
-            onAdjustQuantity={(value) =>
-              setAdjustQuantity(Math.max(1, Math.min(999, value)))
-            }
-            onSelect={setSelectedStockId}
-          />
-        )}
-        {page === "dispense" && (
-          <CmsDispensePage
-            failures={deductionFailures}
-            stocks={stocks}
-            onResolve={resolveDeduction}
-          />
-        )}
-        {page === "purchase" && (
-          <CmsPurchasePage
-            histories={purchaseHistories}
-            syncJobs={syncJobs}
-            onSync={startPurchaseSync}
-          />
+        ) : (
+          <>
+            {page === "dashboard" && (
+              <CmsDashboard
+                importJobs={importJobs}
+                stocks={stocks}
+                masters={masters}
+                syncJobs={syncJobs}
+                navigate={navigate}
+              />
+            )}
+            {page === "master" && (
+              <CmsMasterPage
+                masters={masters}
+                selectedMaster={selectedMaster}
+                onRematch={rematchMaster}
+                onSave={saveMaster}
+                onSelect={setSelectedMasterId}
+                onUpload={uploadMasterCsv}
+              />
+            )}
+            {page === "import" && (
+              <CmsImportPage jobs={importJobs} onUpload={uploadMasterCsv} />
+            )}
+            {page === "inventory" && (
+              <CmsInventoryPage
+                adjustDirection={adjustDirection}
+                adjustMemo={adjustMemo}
+                adjustQuantity={adjustQuantity}
+                selectedStock={selectedStock}
+                stocks={stocks}
+                onAdjust={adjustStock}
+                onAdjustDirection={setAdjustDirection}
+                onAdjustMemo={setAdjustMemo}
+                onAdjustQuantity={(value) =>
+                  setAdjustQuantity(Math.max(1, Math.min(999, value)))
+                }
+                onSelect={setSelectedStockId}
+              />
+            )}
+            {page === "dispense" && (
+              <CmsDispensePage
+                failures={deductionFailures}
+                stocks={stocks}
+                onResolve={resolveDeduction}
+              />
+            )}
+            {page === "purchase" && (
+              <CmsPurchasePage
+                histories={purchaseHistories}
+                syncJobs={syncJobs}
+                onSync={startPurchaseSync}
+              />
+            )}
+          </>
         )}
       </main>
     </div>
@@ -2826,14 +3250,21 @@ function normalizeCmsMaster(raw: unknown, index: number): CmsMaster {
   const item = raw as Record<string, unknown>;
   return {
     id: String(item.id ?? item.masterId ?? index),
-    standardCode: String(item.standardCode ?? item.pc ?? item.standard_code ?? ""),
+    standardCode: String(
+      item.standardCode ?? item.pc ?? item.standard_code ?? "",
+    ),
     insuranceCode: String(
       item.insuranceCode ?? item.productCode ?? item.insurance_code ?? "",
     ),
-    name: String(item.name ?? item.drugName ?? item.koreanName ?? "미확인 약품"),
+    name: String(
+      item.name ?? item.drugName ?? item.koreanName ?? "미확인 약품",
+    ),
     spec: String(item.spec ?? item.drugSpec ?? item.standard ?? "-"),
     productTotalQuantity: Number(
-      item.productTotalQuantity ?? item.totalQuantity ?? item.packageQuantity ?? 0,
+      item.productTotalQuantity ??
+        item.totalQuantity ??
+        item.packageQuantity ??
+        0,
     ),
     price: Number(item.price ?? item.upperPrice ?? item.maxPrice ?? 0),
     status: normalizeMatchStatus(item.matchStatus ?? item.status),
@@ -2875,7 +3306,8 @@ function normalizeCmsFailure(raw: unknown, index: number): CmsDeductionFailure {
     lineNo: Number(item.lineNo ?? item.lineNumber ?? 0),
     drugName: String(item.drugName ?? item.name ?? "미확인 약품"),
     totalQuantity: Number(item.totalQuantity ?? item.quantity ?? 0),
-    status: String(item.status ?? "FAILED") === "RESOLVED" ? "RESOLVED" : "FAILED",
+    status:
+      String(item.status ?? "FAILED") === "RESOLVED" ? "RESOLVED" : "FAILED",
     reason: String(item.reason ?? item.message ?? "자동 차감 실패"),
   };
 }
@@ -2931,11 +3363,13 @@ function CmsSidebar({
 function CmsHeader({
   apiMessage,
   apiState,
+  onLogout,
   page,
   onRefresh,
 }: {
   apiMessage: string;
   apiState: ApiState;
+  onLogout?: () => void;
   page: CmsPage;
   onRefresh: () => void;
 }) {
@@ -2951,12 +3385,77 @@ function CmsHeader({
     <header className="cms-header">
       <div>
         <strong>{titles[page]}</strong>
-        <span>{apiStateLabel(apiState)} · {apiMessage}</span>
+        <span>
+          {apiStateLabel(apiState)} · {apiMessage}
+        </span>
       </div>
-      <button type="button" onClick={onRefresh}>
-        연결 확인
-      </button>
+      <div className="cms-header-actions">
+        <button type="button" onClick={onRefresh}>
+          연결 확인
+        </button>
+        {onLogout && (
+          <button type="button" onClick={onLogout}>
+            로그아웃
+          </button>
+        )}
+      </div>
     </header>
+  );
+}
+
+function CmsLoginPage({
+  apiBase,
+  apiMessage,
+  apiState,
+  loginId,
+  password,
+  onLoginId,
+  onPassword,
+  onSubmit,
+}: {
+  apiBase: string;
+  apiMessage: string;
+  apiState: ApiState;
+  loginId: string;
+  password: string;
+  onLoginId: (value: string) => void;
+  onPassword: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <section className="cms-content cms-login">
+      <form className="cms-login-card" onSubmit={onSubmit}>
+        <div>
+          <span>CMS 로그인</span>
+          <strong>실제 API 계정으로 접속</strong>
+          <em>
+            {apiStateLabel(apiState)} · {apiMessage || "로그인이 필요합니다."}
+          </em>
+        </div>
+        <label>
+          <span>API Base</span>
+          <input readOnly value={apiBase} />
+        </label>
+        <label>
+          <span>아이디</span>
+          <input
+            value={loginId}
+            onChange={(event) => onLoginId(event.target.value)}
+          />
+        </label>
+        <label>
+          <span>비밀번호</span>
+          <input
+            type="password"
+            value={password}
+            onChange={(event) => onPassword(event.target.value)}
+          />
+        </label>
+        <button className="cms-primary" type="submit">
+          로그인
+        </button>
+      </form>
+    </section>
   );
 }
 
@@ -2981,12 +3480,25 @@ function CmsDashboard({
     <section className="cms-content">
       <div className="cms-kpis">
         <CmsKpi label="보유 재고 품목" value={`${stocks.length}`} unit="종" />
-        <CmsKpi label="총 보유 수량" value={currency(stockQuantity)} unit="개" />
-        <CmsKpi label="정상 매칭" value={`${normalCount}`} unit="건" tone="blue" />
+        <CmsKpi
+          label="총 보유 수량"
+          value={currency(stockQuantity)}
+          unit="개"
+        />
+        <CmsKpi
+          label="정상 매칭"
+          value={`${normalCount}`}
+          unit="건"
+          tone="blue"
+        />
         <CmsKpi label="보정 필요" value={`${needsCare}`} unit="건" tone="red" />
       </div>
       <div className="cms-grid two">
-        <CmsPanel title="기준 데이터 Import 현황" action="전체 보기" onAction={() => navigate("/cms/import")}>
+        <CmsPanel
+          title="기준 데이터 Import 현황"
+          action="전체 보기"
+          onAction={() => navigate("/cms/import")}
+        >
           {importJobs.map((job) => (
             <CmsJobRow key={job.id} job={job} />
           ))}
@@ -3001,10 +3513,22 @@ function CmsDashboard({
           <CmsMiniList
             items={[
               ["정상매칭", `${normalCount}건`],
-              ["이름매칭", `${masters.filter((item) => item.status === "NAME_MATCH").length}건`],
-              ["가상생성", `${masters.filter((item) => item.status === "VIRTUAL").length}건`],
-              ["미등록", `${masters.filter((item) => item.status === "MISSING").length}건`],
-              ["진행 중 Import", runningJob ? `${runningJob.progress}%` : "없음"],
+              [
+                "이름매칭",
+                `${masters.filter((item) => item.status === "NAME_MATCH").length}건`,
+              ],
+              [
+                "가상생성",
+                `${masters.filter((item) => item.status === "VIRTUAL").length}건`,
+              ],
+              [
+                "미등록",
+                `${masters.filter((item) => item.status === "MISSING").length}건`,
+              ],
+              [
+                "진행 중 Import",
+                runningJob ? `${runningJob.progress}%` : "없음",
+              ],
               ["구매내역 동기화", syncJobs[0]?.status ?? "-"],
             ]}
           />
@@ -3035,15 +3559,21 @@ function CmsMasterPage({
         <div className="cms-toolbar">
           <div className="cms-pills">
             <span>전체 {masters.length}</span>
-            <span>정상 {masters.filter((item) => item.status === "NORMAL").length}</span>
-            <span>보정 {masters.filter((item) => item.status !== "NORMAL").length}</span>
+            <span>
+              정상 {masters.filter((item) => item.status === "NORMAL").length}
+            </span>
+            <span>
+              보정 {masters.filter((item) => item.status !== "NORMAL").length}
+            </span>
           </div>
           <label className="cms-upload-btn">
             CSV Import
             <input
               type="file"
               accept=".csv,text/csv"
-              onChange={(event) => onUpload("drug", event.target.files?.[0] ?? null)}
+              onChange={(event) =>
+                onUpload("drug", event.target.files?.[0] ?? null)
+              }
             />
           </label>
         </div>
@@ -3084,7 +3614,11 @@ function CmsMasterPage({
           </span>
           <h2>{selectedMaster.name}</h2>
           <CmsField label="표준코드" value={selectedMaster.standardCode} mono />
-          <CmsField label="보험코드" value={selectedMaster.insuranceCode || "미입력"} mono />
+          <CmsField
+            label="보험코드"
+            value={selectedMaster.insuranceCode || "미입력"}
+            mono
+          />
           <div className="cms-field-grid">
             <CmsField label="약품규격" value={selectedMaster.spec} />
             <CmsField
@@ -3092,7 +3626,10 @@ function CmsMasterPage({
               value={`${selectedMaster.productTotalQuantity}`}
             />
           </div>
-          <CmsField label="가격" value={`${currency(selectedMaster.price)}원`} />
+          <CmsField
+            label="가격"
+            value={`${currency(selectedMaster.price)}원`}
+          />
           <div className="cms-actions">
             <button type="button" onClick={() => onRematch(selectedMaster)}>
               매칭 재시도
@@ -3124,7 +3661,9 @@ function CmsImportPage({
           <input
             type="file"
             accept=".csv,text/csv"
-            onChange={(event) => onUpload("drug", event.target.files?.[0] ?? null)}
+            onChange={(event) =>
+              onUpload("drug", event.target.files?.[0] ?? null)
+            }
           />
         </label>
         <label>
@@ -3133,7 +3672,9 @@ function CmsImportPage({
           <input
             type="file"
             accept=".csv,text/csv"
-            onChange={(event) => onUpload("price", event.target.files?.[0] ?? null)}
+            onChange={(event) =>
+              onUpload("price", event.target.files?.[0] ?? null)
+            }
           />
         </label>
       </div>
@@ -3185,7 +3726,10 @@ function CmsInventoryPage({
   onAdjustQuantity: (value: number) => void;
   onSelect: (id: string) => void;
 }) {
-  const stockValue = stocks.reduce((sum, item) => sum + item.quantity * item.price, 0);
+  const stockValue = stocks.reduce(
+    (sum, item) => sum + item.quantity * item.price,
+    0,
+  );
   const signedQuantity =
     adjustDirection === "INCREASE" ? adjustQuantity : -adjustQuantity;
   return (
@@ -3195,10 +3739,16 @@ function CmsInventoryPage({
           <CmsKpi label="보유 품목" value={`${stocks.length}`} unit="종" />
           <CmsKpi
             label="총 보유 수량"
-            value={currency(stocks.reduce((sum, item) => sum + item.quantity, 0))}
+            value={currency(
+              stocks.reduce((sum, item) => sum + item.quantity, 0),
+            )}
             unit="개"
           />
-          <CmsKpi label="예상 재고 금액" value={currency(stockValue)} unit="원" />
+          <CmsKpi
+            label="예상 재고 금액"
+            value={currency(stockValue)}
+            unit="원"
+          />
         </div>
         <div className="cms-table inventory">
           <div className="cms-tr cms-th">
@@ -3250,21 +3800,32 @@ function CmsInventoryPage({
             </button>
           </div>
           <div className="cms-stepper">
-            <button type="button" onClick={() => onAdjustQuantity(adjustQuantity - 1)}>
+            <button
+              type="button"
+              onClick={() => onAdjustQuantity(adjustQuantity - 1)}
+            >
               -
             </button>
             <strong>{adjustQuantity}</strong>
-            <button type="button" onClick={() => onAdjustQuantity(adjustQuantity + 1)}>
+            <button
+              type="button"
+              onClick={() => onAdjustQuantity(adjustQuantity + 1)}
+            >
               +
             </button>
           </div>
           <label className="cms-input">
             <span>조정 사유</span>
-            <input value={adjustMemo} onChange={(event) => onAdjustMemo(event.target.value)} />
+            <input
+              value={adjustMemo}
+              onChange={(event) => onAdjustMemo(event.target.value)}
+            />
           </label>
           <div className="cms-after">
             <span>조정 후 재고</span>
-            <strong>{Math.max(0, selectedStock.quantity + signedQuantity)}개</strong>
+            <strong>
+              {Math.max(0, selectedStock.quantity + signedQuantity)}개
+            </strong>
           </div>
           <button className="cms-primary" type="button" onClick={onAdjust}>
             조정 저장
@@ -3297,11 +3858,14 @@ function CmsDispensePage({
                 <div>
                   <strong>{failure.drugName}</strong>
                   <span>
-                    {failure.prescriptionCode} · line {failure.lineNo} · {failure.reason}
+                    {failure.prescriptionCode} · line {failure.lineNo} ·{" "}
+                    {failure.reason}
                   </span>
                 </div>
                 <b>{failure.totalQuantity}개</b>
-                <span className={`cms-badge ${failure.status === "FAILED" ? "missing" : "normal"}`}>
+                <span
+                  className={`cms-badge ${failure.status === "FAILED" ? "missing" : "normal"}`}
+                >
                   {failure.status}
                 </span>
               </div>
@@ -3314,13 +3878,22 @@ function CmsDispensePage({
               <CmsField label="대상" value={failures[0].drugName} />
               <CmsField label="기존 재고 후보" value={stocks[0]?.name ?? "-"} />
               <div className="cms-actions vertical">
-                <button type="button" onClick={() => onResolve(failures[0], "EXISTING_STOCK")}>
+                <button
+                  type="button"
+                  onClick={() => onResolve(failures[0], "EXISTING_STOCK")}
+                >
                   기존 재고로 차감
                 </button>
-                <button type="button" onClick={() => onResolve(failures[0], "VIRTUAL_DRUG")}>
+                <button
+                  type="button"
+                  onClick={() => onResolve(failures[0], "VIRTUAL_DRUG")}
+                >
                   가상 약 생성 후 차감
                 </button>
-                <button type="button" onClick={() => onResolve(failures[0], "UNREGISTERED_DRUG")}>
+                <button
+                  type="button"
+                  onClick={() => onResolve(failures[0], "UNREGISTERED_DRUG")}
+                >
                   등록안된약 처리
                 </button>
               </div>
@@ -3346,7 +3919,11 @@ function CmsPurchasePage({
   return (
     <section className="cms-content">
       <div className="cms-grid two">
-        <CmsPanel title="바로팜 구매내역 동기화" action="동기화 시작" onAction={onSync}>
+        <CmsPanel
+          title="바로팜 구매내역 동기화"
+          action="동기화 시작"
+          onAction={onSync}
+        >
           {syncJobs.map((job) => (
             <div className="cms-sync-card" key={job.id}>
               <div>
@@ -3369,7 +3946,8 @@ function CmsPurchasePage({
                 <div>
                   <strong>{history.orderItemName}</strong>
                   <span>
-                    {history.sellerName} · {history.transactionDate} · {history.source}
+                    {history.sellerName} · {history.transactionDate} ·{" "}
+                    {history.source}
                   </span>
                 </div>
                 <b>{history.quantity}개</b>
@@ -3443,8 +4021,8 @@ function CmsJobRow({ job }: { job: CmsImportJob }) {
         <span style={{ width: `${job.progress}%` }} />
       </div>
       <small>
-        {currency(job.processedRows)} / {currency(job.totalRows)} 행 · 신규 {job.newCount} ·
-        수정 {job.updatedCount} · 중복 {job.duplicateCount}
+        {currency(job.processedRows)} / {currency(job.totalRows)} 행 · 신규{" "}
+        {job.newCount} · 수정 {job.updatedCount} · 중복 {job.duplicateCount}
       </small>
     </div>
   );
