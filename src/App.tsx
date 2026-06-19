@@ -5,6 +5,7 @@ import {
   type IScannerControls,
 } from "@zxing/browser";
 import { BarcodeFormat, DecodeHintType } from "@zxing/library";
+import pharmfarmLogo from "../logo_1.png";
 
 type Screen =
   | "scan"
@@ -38,13 +39,28 @@ type Wholesaler = {
   meta: string;
 };
 
+type PriceMaster = {
+  id: string;
+  productCode: string;
+  productName: string;
+  spec: string;
+  unit: string;
+  maxPrice: number;
+};
+
 type DrugMaster = {
   pc: string;
+  drugMasterId?: string;
   insuranceCode: string;
+  priceMasterId?: string;
+  priceMasters?: PriceMaster[];
   name: string;
   productTotalQuantity: number;
   price: number;
   matchStatus: MatchStatus;
+  virtualDrugName?: string;
+  virtualInsuranceCode?: string;
+  insuranceCodeExists?: boolean | null;
 };
 
 type ReceiptQueueItem = {
@@ -273,19 +289,6 @@ const demoPurchaseHistories: SellerCandidate[] = [
   },
 ];
 
-const receiptSamples = [
-  "pc=8806400017004&sn=SN8842&lot=LOT202606&exp=2027-12-31",
-  "pc=8806526045210&sn=SN3310&lot=LOT202605&exp=2027-11-30",
-  "pc=8899000000201&sn=SN7720&lot=LOT202604&exp=2027-10-31",
-  "pc=0000000000000&sn=SN0021&lot=LOT0000&exp=2027-01-31",
-];
-
-const returnSamples = [
-  "pc=8806400017004&sn=SN8842&lot=LOT202606&exp=2027-12-31",
-  "pc=8800000000000&sn=SN-EST001&lot=LOT202505&exp=2027-05-31",
-  "pc=0000000000000&sn=SN-NONE&lot=LOT000&exp=2027-01-01",
-];
-
 function createScannerReader() {
   const hints = new Map<DecodeHintType, unknown>();
   hints.set(DecodeHintType.TRY_HARDER, true);
@@ -484,6 +487,24 @@ async function login(loginId: string, password: string) {
   }
 }
 
+async function requestVirtualInsuranceCode() {
+  const data = await apiFetch<unknown>("/insurance-codes/generate-virtual", {
+    method: "POST",
+  });
+  const item = asRecord(data);
+  const insuranceCode = String(
+    item.insuranceCode ?? item.virtualInsuranceCode ?? item.code ?? "",
+  );
+  if (!insuranceCode) throw new Error("가상 보험코드 응답이 비어 있습니다.");
+  return insuranceCode;
+}
+
+async function checkInsuranceCodeExists(insuranceCode: string) {
+  const params = new URLSearchParams({ insuranceCode });
+  const data = await apiFetch<unknown>(`/insurance-codes/exists?${params}`);
+  return Boolean(asRecord(data).exists);
+}
+
 function normalizeWholesaler(raw: unknown, index: number): Wholesaler {
   const item = raw as Record<string, unknown>;
   return {
@@ -491,6 +512,18 @@ function normalizeWholesaler(raw: unknown, index: number): Wholesaler {
     name: String(item.name ?? item.wholesalerName ?? item.sellerName ?? "-"),
     meta: String(item.meta ?? item.typeName ?? item.address ?? "공통"),
   };
+}
+
+function mergeWholesalers(current: Wholesaler[], incoming: Wholesaler[]) {
+  const next = new Map(
+    current.map((wholesaler) => [wholesaler.id, wholesaler]),
+  );
+
+  incoming.forEach((wholesaler) => {
+    next.set(wholesaler.id, wholesaler);
+  });
+
+  return [...next.values()];
 }
 
 function normalizeStock(raw: unknown, index: number): StockItem {
@@ -513,6 +546,140 @@ function normalizeStock(raw: unknown, index: number): StockItem {
   };
 }
 
+function asRecord(raw: unknown): Record<string, unknown> {
+  return raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+}
+
+function unwrapObjectPayload(raw: unknown): Record<string, unknown> {
+  const item = asRecord(raw);
+
+  for (const key of ["data", "result", "payload", "item"]) {
+    const value = item[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return asRecord(value);
+    }
+  }
+
+  return item;
+}
+
+function firstArrayPayload(raw: unknown, keys: string[]) {
+  if (Array.isArray(raw)) return raw;
+
+  const item = asRecord(raw);
+  for (const key of keys) {
+    const value = item[key];
+    if (Array.isArray(value)) return value;
+  }
+
+  return [];
+}
+
+function optionalId(value: string | number | undefined | null) {
+  if (value === undefined || value === null || value === "") return undefined;
+  const numericValue = Number(value);
+  return Number.isNaN(numericValue) ? String(value) : numericValue;
+}
+
+function normalizePriceMaster(raw: unknown, index: number): PriceMaster {
+  const item = asRecord(raw);
+  return {
+    id: String(item.id ?? item.priceMasterId ?? item.productCode ?? index),
+    productCode: String(
+      item.productCode ?? item.insuranceCode ?? item.code ?? "",
+    ),
+    productName: String(
+      item.productName ??
+        item.name ??
+        item.drugName ??
+        item["제품명"] ??
+        "미확인 약품",
+    ),
+    spec: String(item.spec ?? item.standard ?? item.drugSpec ?? "-"),
+    unit: String(item.unit ?? "-"),
+    maxPrice: Number(
+      item.maxPrice ??
+        item.price ??
+        item.upperPrice ??
+        item.ceilingPrice ??
+        item["상한금액표금액"] ??
+        item["상한금액표 금액"] ??
+        0,
+    ),
+  };
+}
+
+function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
+  const item = unwrapObjectPayload(raw);
+  const priceMasters = firstArrayPayload(item, [
+    "priceMasters",
+    "priceMasterCandidates",
+    "candidates",
+    "items",
+    "content",
+    "data",
+  ]).map(normalizePriceMaster);
+  const firstPrice = priceMasters[0];
+  const rawDrugMasterId = item.drugMasterId ?? item.masterId ?? item.id;
+  const insuranceCode = String(
+    item.insuranceCode ?? item.productCode ?? item["제품코드(개정후)"] ?? "",
+  );
+  const name = String(
+    item.drugName ??
+      item.name ??
+      item.koreanName ??
+      item.koreanProductName ??
+      item["한글상품명"] ??
+      firstPrice?.productName ??
+      "미확인 약품",
+  );
+  const productTotalQuantity = Number(
+    item.totalQuantity ??
+      item.productTotalQuantity ??
+      item.packageQuantity ??
+      item["제품총수량"] ??
+      0,
+  );
+  const hasDrugMaster = Boolean(
+    rawDrugMasterId ||
+    insuranceCode ||
+    productTotalQuantity > 0 ||
+    (name && name !== "미확인 약품"),
+  );
+  const exactPrice = priceMasters.find(
+    (price) => price.productCode && price.productCode === insuranceCode,
+  );
+  const selectedPrice =
+    exactPrice ?? (priceMasters.length === 1 ? firstPrice : undefined);
+  const matchStatus: MatchStatus = selectedPrice
+    ? exactPrice
+      ? "NORMAL"
+      : "NAME_MATCH"
+    : priceMasters.length > 0
+      ? "NAME_MATCH"
+      : !hasDrugMaster
+        ? "MISSING"
+        : "VIRTUAL";
+
+  return {
+    pc: String(item.pc ?? item.standardCode ?? qr.pc),
+    drugMasterId:
+      rawDrugMasterId === undefined || rawDrugMasterId === null
+        ? undefined
+        : String(rawDrugMasterId),
+    insuranceCode: selectedPrice?.productCode ?? insuranceCode,
+    priceMasterId: selectedPrice?.id,
+    priceMasters,
+    name: selectedPrice?.productName ?? name,
+    productTotalQuantity,
+    price: selectedPrice?.maxPrice ?? Number(item.price ?? item.maxPrice ?? 0),
+    matchStatus,
+    virtualDrugName: selectedPrice ? "" : name,
+    virtualInsuranceCode: selectedPrice ? "" : insuranceCode,
+    insuranceCodeExists: null,
+  };
+}
+
 function normalizeMatchStatus(value: unknown): MatchStatus {
   const raw = String(value ?? "NORMAL").toUpperCase();
   if (raw.includes("NAME") || raw.includes("이름")) return "NAME_MATCH";
@@ -522,8 +689,17 @@ function normalizeMatchStatus(value: unknown): MatchStatus {
 }
 
 function normalizeLookup(raw: unknown, qr: QrFields): ReturnLookup {
-  const item = raw as Record<string, unknown>;
-  const matchType = String(item.matchType ?? item.type ?? "NONE").toUpperCase();
+  const item = unwrapObjectPayload(raw);
+  const rawMatchType = String(
+    item.matchType ?? item.type ?? item.resultType ?? item.status ?? "NONE",
+  ).toUpperCase();
+  const matchType = rawMatchType.includes("CONFIRM")
+    ? "CONFIRMED"
+    : rawMatchType.includes("ESTIMAT") ||
+        rawMatchType.includes("CANDIDATE") ||
+        rawMatchType.includes("PURCHASE")
+      ? "ESTIMATED"
+      : "NONE";
 
   if (matchType === "CONFIRMED") {
     const productTotalQuantity = Number(
@@ -551,9 +727,13 @@ function normalizeLookup(raw: unknown, qr: QrFields): ReturnLookup {
   }
 
   if (matchType === "ESTIMATED") {
-    const sellerCandidates = Array.isArray(item.sellerCandidates)
-      ? item.sellerCandidates.map(normalizeCandidate)
-      : [];
+    const sellerCandidates = firstArrayPayload(item, [
+      "sellerCandidates",
+      "purchaseHistoryCandidates",
+      "candidates",
+      "purchaseHistories",
+      "histories",
+    ]).map(normalizeCandidate);
     return {
       matchType: "ESTIMATED",
       pc: String(item.pc ?? qr.pc),
@@ -576,10 +756,21 @@ function normalizeLookup(raw: unknown, qr: QrFields): ReturnLookup {
     lot: qr.lot,
     exp: qr.exp,
     drugName: String(item.drugName ?? item.name ?? "미확인 약품"),
-    message: String(
-      item.message ??
-        "입고·구매 내역에 근거가 없어 반품 대상으로 등록할 수 없습니다.",
-    ),
+    message: String(item.message ?? "입고 내역이 확인되지 않는 상품입니다."),
+  };
+}
+
+function noReceiptHistoryLookup(
+  lookup: ReturnLookup,
+): Extract<ReturnLookup, { matchType: "NONE" }> {
+  return {
+    matchType: "NONE",
+    pc: lookup.pc,
+    sn: lookup.sn,
+    lot: lookup.lot,
+    exp: lookup.exp,
+    drugName: lookup.drugName,
+    message: "입고 내역이 확인되지 않는 상품입니다.",
   };
 }
 
@@ -900,6 +1091,16 @@ function currency(value: number) {
   return new Intl.NumberFormat("ko-KR").format(value);
 }
 
+function clampReturnQuantity(value: number, max: number) {
+  if (max <= 0) return 0;
+  const normalized = Number.isFinite(value) ? Math.trunc(value) : 0;
+  return Math.max(1, Math.min(max, normalized));
+}
+
+function normalizeSearchText(value: string) {
+  return value.replace(/\s+/g, "").toLowerCase();
+}
+
 function MobileApp() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scanAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -918,21 +1119,28 @@ function MobileApp() {
   );
   const [mode, setMode] = useState<Mode>("receipt");
   const [cameraActive, setCameraActive] = useState(false);
+  const [cameraRestartKey, setCameraRestartKey] = useState(0);
   const [cameraError, setCameraError] = useState("");
   const [apiState, setApiState] = useState<ApiState>("checking");
   const [apiMessage, setApiMessage] = useState("");
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
-  const [wholesalers, setWholesalers] = useState(demoWholesalers);
+  const [wholesalers, setWholesalers] = useState<Wholesaler[]>([]);
+  const [wholesalerSearchResults, setWholesalerSearchResults] = useState<
+    Wholesaler[]
+  >([]);
+  const [wholesalerSearchStatus, setWholesalerSearchStatus] = useState<
+    "idle" | "short" | "loading" | "done" | "error"
+  >("idle");
   const [selectedWholesalerId, setSelectedWholesalerId] = useState("");
-  const [pendingWholesalerId, setPendingWholesalerId] = useState(
-    demoWholesalers[0].id,
-  );
+  const [pendingWholesalerId, setPendingWholesalerId] = useState("");
   const [stocks, setStocks] = useState(initialStocks);
+  const [stocksLoading, setStocksLoading] = useState(false);
+  const [stocksMessage, setStocksMessage] = useState("");
   const [traces, setTraces] = useState(initialTraces);
   const [receiptQueue, setReceiptQueue] = useState<ReceiptQueueItem[]>([]);
-  const [lastScanName, setLastScanName] = useState("타이레놀정 500mg");
-  const [scanNotice, setScanNotice] = useState(
+  const [lastScanName, setLastScanName] = useState("QR 스캔 대기");
+  const [, setScanNotice] = useState(
     "카메라를 시작하면 QR이 자동으로 인식됩니다.",
   );
   const [receiptSummary, setReceiptSummary] = useState<ReceiptSummary | null>(
@@ -945,9 +1153,16 @@ function MobileApp() {
   const [returnSummary, setReturnSummary] = useState<ReturnSummary | null>(
     null,
   );
-  const [sampleCursor, setSampleCursor] = useState(0);
   const [scanExpiryNotice, setScanExpiryNotice] =
     useState<ScanExpiryNotice | null>(null);
+
+  const resetWholesalerSelection = useCallback(() => {
+    setSelectedWholesalerId("");
+    setPendingWholesalerId("");
+    setWholesalerSearchResults([]);
+    setWholesalerSearchStatus("idle");
+    setWholesalers([]);
+  }, []);
 
   useEffect(() => {
     modeRef.current = mode;
@@ -1142,13 +1357,24 @@ function MobileApp() {
   const pendingWholesaler = useMemo(
     () =>
       wholesalers.find((wholesaler) => wholesaler.id === pendingWholesalerId) ??
-      wholesalers[0],
+      null,
     [pendingWholesalerId, wholesalers],
   );
 
+  const isReceiptItemReady = useCallback((item: ReceiptQueueItem) => {
+    if (item.qr.errors.length > 0) return false;
+    if (item.drug.priceMasterId) return true;
+
+    return Boolean(
+      item.drug.virtualDrugName?.trim() &&
+      item.drug.virtualInsuranceCode?.trim() &&
+      item.drug.insuranceCodeExists !== true,
+    );
+  }, []);
+
   const eligibleReceiptItems = useMemo(
-    () => receiptQueue.filter((item) => item.drug.matchStatus !== "MISSING"),
-    [receiptQueue],
+    () => receiptQueue.filter(isReceiptItemReady),
+    [isReceiptItemReady, receiptQueue],
   );
 
   const receiptIncrease = useMemo(
@@ -1206,29 +1432,96 @@ function MobileApp() {
     setApiMessage("BE 연결 실패 · 데모 데이터 표시");
   }, []);
 
-  const refreshFromBackend = useCallback(async () => {
+  const loadStocks = useCallback(async () => {
     if (!hasStoredAuthTokens()) {
       setApiState("unauthorized");
       setApiMessage("로그인이 필요합니다.");
+      setStocksMessage("로그인이 필요합니다.");
       return false;
     }
 
-    setApiState("checking");
+    setStocksLoading(true);
+    setStocksMessage("재고 목록을 불러오는 중입니다.");
     try {
-      const [wholesalerData, stockData] = await Promise.all([
-        apiFetch<unknown[]>("/wholesalers"),
-        apiFetch<unknown[]>("/stocks"),
-      ]);
-      setWholesalers(wholesalerData.map(normalizeWholesaler));
-      setStocks(stockData.map(normalizeStock));
+      const stockData = await apiFetch<unknown>("/stocks");
+      const nextStocks = arrayPayload(stockData).map(normalizeStock);
+      setStocks(nextStocks);
+      setStocksMessage(`${nextStocks.length}건의 재고를 불러왔습니다.`);
       setApiState("connected");
-      setApiMessage("BE 연결됨");
+      setApiMessage("재고 목록 연동 완료");
       return true;
     } catch (error) {
+      setStocksMessage("재고 목록 API 연결에 실패했습니다.");
       setApiFallback(error);
       return false;
+    } finally {
+      setStocksLoading(false);
     }
   }, [setApiFallback]);
+
+  const refreshFromBackend = useCallback(async () => {
+    setApiState("checking");
+    setApiMessage("BE 연결 확인 중");
+    return loadStocks();
+  }, [loadStocks]);
+
+  const validateReceiptQr = useCallback(async (qr: QrFields) => {
+    const response = await apiFetch<unknown>("/receipts/validate-qr", {
+      method: "POST",
+      body: JSON.stringify({ pc: qr.pc }),
+    });
+    const drug = normalizeReceiptValidation(response, qr);
+
+    if (drug.matchStatus === "MISSING" && !drug.virtualInsuranceCode) {
+      try {
+        drug.virtualInsuranceCode = await requestVirtualInsuranceCode();
+        drug.insuranceCode = drug.virtualInsuranceCode;
+        drug.matchStatus = "VIRTUAL";
+      } catch {
+        drug.virtualInsuranceCode = `3PF${qr.pc.slice(-6).padStart(6, "0")}`;
+        drug.insuranceCode = drug.virtualInsuranceCode;
+        drug.matchStatus = "VIRTUAL";
+      }
+    }
+
+    return drug;
+  }, []);
+
+  const searchWholesalers = useCallback(
+    async (keyword: string) => {
+      const trimmed = keyword.trim();
+
+      if (normalizeSearchText(trimmed).length < 2) {
+        setWholesalerSearchResults([]);
+        setWholesalerSearchStatus(trimmed ? "short" : "idle");
+        return;
+      }
+
+      setWholesalerSearchStatus("loading");
+      try {
+        const params = new URLSearchParams({ keyword: trimmed });
+        const response = await apiFetch<unknown>(`/wholesalers?${params}`);
+        const results = arrayPayload(response).map(normalizeWholesaler);
+
+        setWholesalerSearchResults(results);
+        setWholesalers((current) => mergeWholesalers(current, results));
+        setWholesalerSearchStatus("done");
+        setApiState("connected");
+        setApiMessage("도매처 검색 완료");
+      } catch (error) {
+        setApiFallback(error);
+        const fallbackResults = demoWholesalers.filter((wholesaler) =>
+          normalizeSearchText(`${wholesaler.name} ${wholesaler.meta}`).includes(
+            normalizeSearchText(trimmed),
+          ),
+        );
+        setWholesalerSearchResults(fallbackResults);
+        setWholesalers((current) => mergeWholesalers(current, fallbackResults));
+        setWholesalerSearchStatus("error");
+      }
+    },
+    [setApiFallback],
+  );
 
   const bootstrapAuth = useCallback(async () => {
     if (!hasStoredAuthTokens()) {
@@ -1247,11 +1540,13 @@ function MobileApp() {
         setApiState("connected");
         setApiMessage("자동 로그인됨");
       }
-      setScreen((current) => (current === "account" ? "wholesaler" : current));
+      resetWholesalerSelection();
+      setMode("receipt");
+      setScreen("wholesaler");
     } catch (error) {
       setApiFallback(error);
     }
-  }, [refreshFromBackend, setApiFallback]);
+  }, [refreshFromBackend, resetWholesalerSelection, setApiFallback]);
 
   useEffect(() => {
     void bootstrapAuth();
@@ -1268,8 +1563,89 @@ function MobileApp() {
     }
   }, []);
 
+  const patchReceiptDrug = useCallback(
+    (itemId: string, patch: Partial<DrugMaster>) => {
+      setReceiptQueue((current) =>
+        current.map((item) =>
+          item.id === itemId
+            ? { ...item, drug: { ...item.drug, ...patch } }
+            : item,
+        ),
+      );
+    },
+    [],
+  );
+
+  const selectReceiptPriceMaster = useCallback(
+    (itemId: string, priceMasterId: string) => {
+      setReceiptQueue((current) =>
+        current.map((item) => {
+          if (item.id !== itemId) return item;
+
+          const price = item.drug.priceMasters?.find(
+            (candidate) => candidate.id === priceMasterId,
+          );
+          if (!price) return item;
+
+          return {
+            ...item,
+            drug: {
+              ...item.drug,
+              insuranceCode: price.productCode,
+              priceMasterId: price.id,
+              name: price.productName,
+              price: price.maxPrice,
+              matchStatus:
+                item.drug.insuranceCode === price.productCode
+                  ? "NORMAL"
+                  : "NAME_MATCH",
+              virtualDrugName: "",
+              virtualInsuranceCode: "",
+              insuranceCodeExists: null,
+            },
+          };
+        }),
+      );
+    },
+    [],
+  );
+
+  const generateVirtualForReceiptItem = useCallback(
+    async (itemId: string) => {
+      try {
+        const insuranceCode = await requestVirtualInsuranceCode();
+        patchReceiptDrug(itemId, {
+          virtualInsuranceCode: insuranceCode,
+          insuranceCodeExists: null,
+        });
+        setApiState("connected");
+        setApiMessage("가상 보험코드 생성 완료");
+      } catch (error) {
+        setApiFallback(error);
+      }
+    },
+    [patchReceiptDrug, setApiFallback],
+  );
+
+  const checkVirtualForReceiptItem = useCallback(
+    async (itemId: string, insuranceCode: string) => {
+      const trimmed = insuranceCode.trim();
+      if (!trimmed) return;
+
+      try {
+        const exists = await checkInsuranceCodeExists(trimmed);
+        patchReceiptDrug(itemId, { insuranceCodeExists: exists });
+        setApiState("connected");
+        setApiMessage(exists ? "보험코드 중복" : "사용 가능한 보험코드");
+      } catch (error) {
+        setApiFallback(error);
+      }
+    },
+    [patchReceiptDrug, setApiFallback],
+  );
+
   const addReceiptQr = useCallback(
-    (qr: QrFields) => {
+    async (qr: QrFields) => {
       const alreadyReceived = traces.some(
         (trace) => trace.pc === qr.pc && trace.sn === qr.sn,
       );
@@ -1283,7 +1659,19 @@ function MobileApp() {
         return true;
       }
 
-      const drug = resolveDrug(qr.pc);
+      setLastScanName("기준 데이터 조회 중");
+      setScanNotice("QR의 PC로 1번/2번 기준 데이터를 검증하고 있습니다.");
+
+      let drug: DrugMaster;
+      try {
+        drug = await validateReceiptQr(qr);
+        setApiState("connected");
+        setApiMessage("QR 검증 완료");
+      } catch (error) {
+        setApiFallback(error);
+        drug = resolveDrug(qr.pc);
+      }
+
       setReceiptQueue((current) => [
         { id: createId("Q"), qr, drug },
         ...current,
@@ -1291,12 +1679,12 @@ function MobileApp() {
       setLastScanName(drug.name);
       setScanNotice(
         drug.matchStatus === "MISSING"
-          ? "기준 데이터 미등록 QR입니다. 매칭 결과에서 보정이 필요합니다."
+          ? "기준 데이터 미등록 QR입니다. 가상약 정보 입력 후 입고할 수 있습니다."
           : `${drug.name} 입고 스캔 완료 · 목록에 추가했습니다.`,
       );
       return true;
     },
-    [receiptQueue, traces],
+    [receiptQueue, setApiFallback, traces, validateReceiptQr],
   );
 
   const lookupReturn = useCallback(
@@ -1308,61 +1696,71 @@ function MobileApp() {
           method: "POST",
           body: JSON.stringify({
             pc: qr.pc,
-            sn: qr.sn,
-            lot: qr.lot,
-            exp: qr.exp,
+            ...(qr.sn ? { sn: qr.sn } : {}),
+            ...(qr.lot ? { lot: qr.lot } : {}),
+            ...(qr.exp ? { exp: qr.exp } : {}),
           }),
         });
         const lookup = normalizeLookup(response, qr);
-        setReturnLookup(lookup);
         if (lookup.matchType === "CONFIRMED") {
+          setReturnLookup(lookup);
           setLastScanName(`${lookup.drugName} · 확정`);
           setScanNotice("입고 이력에서 도매처를 확정했습니다.");
           setReturnQuantity(
-            Math.max(1, Math.min(10, lookup.returnableQuantity)),
+            clampReturnQuantity(
+              lookup.returnableQuantity,
+              lookup.returnableQuantity,
+            ),
           );
           setScreen("returnConfirmed");
           return;
         }
         if (lookup.matchType === "ESTIMATED") {
-          setLastScanName(`${lookup.drugName} · 추정`);
-          setScanNotice("구매 내역 기준 판매처 후보를 찾았습니다.");
-          setSelectedCandidateId(lookup.sellerCandidates[0]?.id ?? "");
-          setReturnQuantity(
-            Math.max(1, Math.min(10, lookup.returnableQuantity)),
-          );
-          setScreen("returnEstimated");
+          const noHistoryLookup = noReceiptHistoryLookup(lookup);
+          setReturnLookup(noHistoryLookup);
+          setLastScanName(`${lookup.drugName} · 입고 이력 없음`);
+          setScanNotice(noHistoryLookup.message);
+          setScreen("returnNone");
           return;
         }
-        setLastScanName("판매처 후보 없음");
-        setScanNotice(
-          "입고 이력과 구매 내역에서 판매처 후보를 찾지 못했습니다.",
-        );
+        setReturnLookup(lookup);
+        setLastScanName("입고 이력 없음");
+        setScanNotice(lookup.message);
         setScreen("returnNone");
       } catch (error) {
         setApiFallback(error);
+        setApiMessage(
+          error instanceof Error
+            ? `반품 조회 API 실패 · ${error.message}`
+            : "반품 조회 API 호출 실패",
+        );
+        setScanNotice(
+          error instanceof Error
+            ? `반품 조회 API 실패: ${error.message}`
+            : "반품 조회 API 호출에 실패했습니다.",
+        );
         const lookup = lookupReturnDemo(qr, traces, stocks);
-        setReturnLookup(lookup);
         if (lookup.matchType === "CONFIRMED") {
+          setReturnLookup(lookup);
           setLastScanName(`${lookup.drugName} · 확정`);
           setScanNotice("데모 데이터의 입고 이력에서 도매처를 확정했습니다.");
           setReturnQuantity(
-            Math.max(1, Math.min(10, lookup.returnableQuantity)),
+            clampReturnQuantity(
+              lookup.returnableQuantity,
+              lookup.returnableQuantity,
+            ),
           );
           setScreen("returnConfirmed");
         } else if (lookup.matchType === "ESTIMATED") {
-          setLastScanName(`${lookup.drugName} · 추정`);
-          setScanNotice("데모 구매 내역 기준 판매처 후보를 찾았습니다.");
-          setSelectedCandidateId(lookup.sellerCandidates[0]?.id ?? "");
-          setReturnQuantity(
-            Math.max(1, Math.min(10, lookup.returnableQuantity)),
-          );
-          setScreen("returnEstimated");
+          const noHistoryLookup = noReceiptHistoryLookup(lookup);
+          setReturnLookup(noHistoryLookup);
+          setLastScanName(`${lookup.drugName} · 입고 이력 없음`);
+          setScanNotice(noHistoryLookup.message);
+          setScreen("returnNone");
         } else {
-          setLastScanName("판매처 후보 없음");
-          setScanNotice(
-            "입고 이력과 구매 내역에서 판매처 후보를 찾지 못했습니다.",
-          );
+          setReturnLookup(lookup);
+          setLastScanName("입고 이력 없음");
+          setScanNotice(lookup.message);
           setScreen("returnNone");
         }
       }
@@ -1373,27 +1771,85 @@ function MobileApp() {
   const handlePayload = useCallback(
     (payload: string) => {
       const qr = parseQrPayload(payload);
+
+      if (modeRef.current === "return") {
+        if (!qr.pc) {
+          setLastScanName("PC 없음");
+          setScanNotice("반품 조회에는 최소 PC 값이 필요합니다.");
+          return null;
+        }
+        void lookupReturn(qr);
+        return qr;
+      }
+
       if (qr.errors.length > 0) {
         setLastScanName(qr.errors.join(", "));
-        setScanNotice("QR 값은 읽었지만 필수 필드를 파싱하지 못했습니다.");
+        setScanNotice("QR 값은 읽었지만 입고 필수 필드를 파싱하지 못했습니다.");
         return null;
       }
 
-      if (modeRef.current === "return") {
-        void lookupReturn(qr);
-        return qr;
-      } else {
-        if (!selectedWholesaler) {
-          setLastScanName("도매처 선택 필요");
-          setScanNotice("입고 QR을 처리하려면 먼저 도매처를 선택해야 합니다.");
-          setScreen("wholesaler");
-          return null;
-        }
-        return addReceiptQr(qr) ? qr : null;
+      if (!selectedWholesaler) {
+        setLastScanName("도매처 선택 필요");
+        setScanNotice("입고 QR을 처리하려면 먼저 도매처를 선택해야 합니다.");
+        setScreen("wholesaler");
+        return null;
       }
+      const alreadyReceived = traces.some(
+        (trace) => trace.pc === qr.pc && trace.sn === qr.sn,
+      );
+      const duplicated = receiptQueue.some(
+        (item) => item.qr.pc === qr.pc && item.qr.sn === qr.sn,
+      );
+
+      if (alreadyReceived || duplicated) {
+        setLastScanName("이미 스캔된 SN");
+        setScanNotice("이미 입고됐거나 현재 목록에 있는 QR입니다.");
+        return null;
+      }
+
+      void addReceiptQr(qr);
+      return qr;
     },
-    [addReceiptQr, lookupReturn, selectedWholesaler],
+    [addReceiptQr, lookupReturn, receiptQueue, selectedWholesaler, traces],
   );
+
+  const activateCamera = useCallback(() => {
+    lastDetectedRef.current = { value: "", at: 0 };
+    unlockScanAudio();
+    unlockExpiryAudio();
+    setCameraActive(true);
+  }, [unlockExpiryAudio, unlockScanAudio]);
+
+  const refreshCamera = useCallback(() => {
+    lastDetectedRef.current = { value: "", at: 0 };
+    setCameraError("");
+    setScanNotice("카메라를 새로고침하고 있습니다.");
+    unlockScanAudio();
+    unlockExpiryAudio();
+    stopCamera();
+    setCameraActive(true);
+    setCameraRestartKey((value) => value + 1);
+  }, [stopCamera, unlockExpiryAudio, unlockScanAudio]);
+
+  useEffect(() => {
+    if (screen !== "scan") {
+      if (cameraActive) setCameraActive(false);
+      return;
+    }
+
+    if (mode === "receipt" && !selectedWholesaler) {
+      if (cameraActive) setCameraActive(false);
+      return;
+    }
+
+    if (!cameraActive) activateCamera();
+  }, [activateCamera, mode, screen, selectedWholesaler?.id]);
+
+  useEffect(() => {
+    if (screen === "stocks") {
+      void loadStocks();
+    }
+  }, [loadStocks, screen]);
 
   useEffect(() => {
     if (!cameraActive) {
@@ -1462,6 +1918,7 @@ function MobileApp() {
     };
   }, [
     cameraActive,
+    cameraRestartKey,
     handlePayload,
     playScanSound,
     presentScanExpiry,
@@ -1470,17 +1927,18 @@ function MobileApp() {
 
   function chooseMode(nextMode: Mode) {
     if (nextMode === mode) return;
+    const hasReceiptDraft = receiptQueue.length > 0;
     if (
       mode === "receipt" &&
-      (receiptQueue.length > 0 || cameraActive) &&
+      hasReceiptDraft &&
       !window.confirm(
-        "모드를 변경하면 현재 스캔한 입고 목록이 삭제되고 카메라가 중지됩니다. 계속할까요?",
+        "모드를 변경하면 현재 스캔한 입고 목록이 삭제됩니다. 계속할까요?",
       )
     ) {
       return;
     }
     if (mode === "receipt") {
-      setReceiptQueue([]);
+      if (hasReceiptDraft) setReceiptQueue([]);
       setCameraActive(false);
     }
     setMode(nextMode);
@@ -1496,17 +1954,21 @@ function MobileApp() {
   }
 
   function openWholesalerPicker() {
+    const hasReceiptDraft = receiptQueue.length > 0;
     if (
-      (cameraActive || receiptQueue.length > 0) &&
+      hasReceiptDraft &&
       !window.confirm(
-        "도매처를 변경하면 현재 스캔한 입고 목록이 삭제되고 카메라가 중지됩니다. 계속할까요?",
+        "도매처를 변경하면 현재 스캔한 입고 목록이 삭제됩니다. 계속할까요?",
       )
     ) {
       return;
     }
 
-    if (cameraActive || receiptQueue.length > 0) {
+    if (cameraActive) {
       setCameraActive(false);
+    }
+
+    if (hasReceiptDraft) {
       setReceiptQueue([]);
       setLastScanName("도매처 선택 필요");
       setScanNotice("도매처를 다시 선택하면 새 입고 스캔을 시작합니다.");
@@ -1524,29 +1986,12 @@ function MobileApp() {
     setScanNotice("반품 모드입니다. QR을 스캔하면 판매처를 조회합니다.");
   }
 
-  function useSample() {
-    const samples = mode === "receipt" ? receiptSamples : returnSamples;
-    const sample = samples[sampleCursor % samples.length];
-    setSampleCursor((value) => value + 1);
-    setScanNotice("샘플 QR을 처리하고 있습니다.");
-    unlockExpiryAudio();
-    const acceptedQr = handlePayload(sample);
-    if (acceptedQr) {
-      playScanSound();
-      presentScanExpiry(acceptedQr);
-    }
-  }
-
   function toggleCamera() {
-    setCameraActive((current) => {
-      const next = !current;
-      if (next) {
-        lastDetectedRef.current = { value: "", at: 0 };
-        unlockScanAudio();
-        unlockExpiryAudio();
-      }
-      return next;
-    });
+    if (cameraActive) {
+      setCameraActive(false);
+    } else {
+      activateCamera();
+    }
   }
 
   function startReceipt() {
@@ -1566,6 +2011,15 @@ function MobileApp() {
       sn: item.qr.sn,
       lot: item.qr.lot,
       exp: item.qr.exp,
+      drugMasterId: optionalId(item.drug.drugMasterId),
+      insuranceCode: item.drug.insuranceCode || undefined,
+      priceMasterId: optionalId(item.drug.priceMasterId),
+      virtualDrugName: item.drug.priceMasterId
+        ? null
+        : item.drug.virtualDrugName || item.drug.name,
+      virtualInsuranceCode: item.drug.priceMasterId
+        ? null
+        : item.drug.virtualInsuranceCode || item.drug.insuranceCode,
     }));
 
     try {
@@ -1628,7 +2082,7 @@ function MobileApp() {
       return;
     }
 
-    const quantity = Math.max(1, Math.min(returnQuantity, returnMax));
+    const quantity = clampReturnQuantity(returnQuantity, returnMax);
     if (quantity <= 0) return;
 
     try {
@@ -1699,6 +2153,8 @@ function MobileApp() {
         setApiMessage("로그인 완료");
       }
       setPassword("");
+      resetWholesalerSelection();
+      setMode("receipt");
       setScreen("wholesaler");
     } catch (error) {
       setApiState("unauthorized");
@@ -1708,17 +2164,34 @@ function MobileApp() {
     }
   }
 
+  function logoutMobile() {
+    clearAuthTokens();
+    setCameraActive(false);
+    setApiState("unauthorized");
+    setApiMessage("로그아웃됨");
+    setPassword("");
+    resetWholesalerSelection();
+    setReceiptQueue([]);
+    setLastScanName("QR 스캔 대기");
+    setScreen("account");
+  }
+
   return (
     <main className={`phone ${screenClass(screen, mode)}`}>
       {screen === "wholesaler" && (
         <WholesalerScreen
           pendingId={pendingWholesalerId}
+          searchResults={wholesalerSearchResults}
+          searchStatus={wholesalerSearchStatus}
           wholesalers={wholesalers}
           onBack={selectedWholesaler ? () => setScreen("scan") : undefined}
           onChoose={setPendingWholesalerId}
           onReturnFirst={startReturnFirst}
+          onSearch={searchWholesalers}
           onStart={() => {
+            if (!pendingWholesaler) return;
             setSelectedWholesalerId(pendingWholesaler.id);
+            setMode("receipt");
             setLastScanName("스캔 준비 완료");
             setScanNotice(`${pendingWholesaler.name} 입고 스캔을 시작합니다.`);
             setScreen("scan");
@@ -1734,20 +2207,16 @@ function MobileApp() {
           cameraError={cameraError}
           mode={mode}
           queueCount={receiptQueue.length}
-          scanNotice={scanNotice}
           lastScanName={lastScanName}
           selectedWholesaler={selectedWholesaler}
           videoRef={videoRef}
-          onAccount={() => setScreen("account")}
+          onLogout={logoutMobile}
           onMode={chooseMode}
           onReview={() => {
-            if (mode === "receipt") {
-              if (startReceipt()) setScreen("receiptReview");
-            } else {
-              useSample();
-            }
+            if (startReceipt()) setScreen("receiptReview");
           }}
-          onSample={useSample}
+          onRefreshCamera={refreshCamera}
+          onStocks={() => setScreen("stocks")}
           onToggleCamera={toggleCamera}
           onWholesaler={openWholesalerPicker}
         />
@@ -1768,7 +2237,23 @@ function MobileApp() {
           eligibleCount={eligibleReceiptItems.length}
           queue={receiptQueue}
           onBack={() => setScreen("receiptReview")}
+          onCheckVirtual={checkVirtualForReceiptItem}
           onCommit={commitReceipt}
+          onGenerateVirtual={generateVirtualForReceiptItem}
+          onSelectPrice={selectReceiptPriceMaster}
+          onVirtualCode={(itemId, value) =>
+            patchReceiptDrug(itemId, {
+              virtualInsuranceCode: value,
+              insuranceCode: value,
+              insuranceCodeExists: null,
+            })
+          }
+          onVirtualName={(itemId, value) =>
+            patchReceiptDrug(itemId, {
+              virtualDrugName: value,
+              name: value || "미확인 약품",
+            })
+          }
         />
       )}
 
@@ -1788,10 +2273,9 @@ function MobileApp() {
         returnLookup?.matchType === "CONFIRMED" && (
           <ReturnConfirmedScreen
             lookup={returnLookup}
+            onClose={() => setScreen("scan")}
             onNext={() => {
-              setReturnQuantity(
-                Math.max(1, Math.min(returnQuantity, returnMax)),
-              );
+              setReturnQuantity(clampReturnQuantity(returnMax, returnMax));
               setScreen("returnQty");
             }}
           />
@@ -1799,16 +2283,17 @@ function MobileApp() {
 
       {screen === "returnEstimated" &&
         returnLookup?.matchType === "ESTIMATED" && (
-          <ReturnEstimatedScreen
-            lookup={returnLookup}
-            selectedCandidateId={selectedCandidateId}
-            onChoose={setSelectedCandidateId}
-            onNext={() => setScreen("returnQty")}
+          <ReturnNoneScreen
+            lookup={noReceiptHistoryLookup(returnLookup)}
+            onClose={() => setScreen("scan")}
           />
         )}
 
       {screen === "returnNone" && (
-        <ReturnNoneScreen onClose={() => setScreen("scan")} />
+        <ReturnNoneScreen
+          lookup={returnLookup?.matchType === "NONE" ? returnLookup : null}
+          onClose={() => setScreen("scan")}
+        />
       )}
 
       {screen === "returnQty" &&
@@ -1832,7 +2317,7 @@ function MobileApp() {
             onCommit={commitReturn}
             onMemo={setReturnMemo}
             onQuantity={(next) =>
-              setReturnQuantity(Math.max(1, Math.min(returnMax || 1, next)))
+              setReturnQuantity(clampReturnQuantity(next, returnMax))
             }
           />
         )}
@@ -1853,7 +2338,13 @@ function MobileApp() {
       )}
 
       {screen === "stocks" && (
-        <StocksScreen stocks={stocks} onBack={() => setScreen("scan")} />
+        <StocksScreen
+          loading={stocksLoading}
+          message={stocksMessage}
+          stocks={stocks}
+          onBack={() => setScreen("scan")}
+          onRefresh={loadStocks}
+        />
       )}
 
       {screen === "account" && (
@@ -1981,13 +2472,13 @@ function ScanScreen({
   lastScanName,
   mode,
   queueCount,
-  scanNotice,
   selectedWholesaler,
   videoRef,
-  onAccount,
+  onLogout,
   onMode,
+  onRefreshCamera,
   onReview,
-  onSample,
+  onStocks,
   onToggleCamera,
   onWholesaler,
 }: {
@@ -1998,18 +2489,20 @@ function ScanScreen({
   lastScanName: string;
   mode: Mode;
   queueCount: number;
-  scanNotice: string;
   selectedWholesaler: Wholesaler | null;
   videoRef: RefObject<HTMLVideoElement>;
-  onAccount: () => void;
+  onLogout: () => void;
   onMode: (mode: Mode) => void;
+  onRefreshCamera: () => void;
   onReview: () => void;
-  onSample: () => void;
+  onStocks: () => void;
   onToggleCamera: () => void;
   onWholesaler: () => void;
 }) {
   const isReceipt = mode === "receipt";
   const accent = isReceipt ? "#4D9AFF" : "#FFB44D";
+  const canUseCamera = !isReceipt || Boolean(selectedWholesaler);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   return (
     <>
@@ -2026,19 +2519,66 @@ function ScanScreen({
         ) : (
           <strong className="dark-title">반품</strong>
         )}
-        {isReceipt && queueCount > 0 ? (
-          <button className="count-chip" type="button" onClick={onReview}>
-            <b>{queueCount}</b>
-            <span>장</span>
+        <div className="scan-menu-wrap">
+          <button
+            className="count-chip status-menu-btn"
+            type="button"
+            onClick={() => setMenuOpen((current) => !current)}
+          >
+            {isReceipt && queueCount > 0 ? (
+              <>
+                <b>{queueCount}</b>
+                <span>장</span>
+              </>
+            ) : (
+              <span>상태</span>
+            )}
           </button>
-        ) : (
-          <button className="circle-help" type="button" onClick={onAccount}>
-            ?
-          </button>
-        )}
+          {menuOpen && (
+            <div className="scan-dropdown">
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onStocks();
+                }}
+              >
+                품목 확인 페이지
+              </button>
+              <button
+                type="button"
+                disabled={!isReceipt || queueCount === 0}
+                onClick={() => {
+                  setMenuOpen(false);
+                  onReview();
+                }}
+              >
+                입고 확인 리스트
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onLogout();
+                }}
+              >
+                로그아웃
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       <section className="scanner-zone">
+        {canUseCamera && (
+          <button
+            className="camera-refresh-btn"
+            type="button"
+            onClick={onRefreshCamera}
+          >
+            카메라 새로고침
+          </button>
+        )}
         <video
           ref={videoRef}
           className={`camera-video ${cameraActive ? "is-active" : ""}`}
@@ -2069,10 +2609,19 @@ function ScanScreen({
               : "입고 이력 또는 구매 내역에서 판매처를 찾아드려요"}
           </span>
         </div>
-        <div className={`scan-result ${cameraActive ? "is-live" : ""}`}>
-          <span>{cameraActive ? "스캔 대기 중" : "최근 상태"}</span>
-          <strong>{lastScanName}</strong>
-          <em>{scanNotice}</em>
+        <div className="scan-result-stack">
+          <div className="scan-result">
+            <strong>{lastScanName}</strong>
+          </div>
+          {isReceipt && queueCount > 0 && (
+            <button
+              className="scan-receipt-button"
+              type="button"
+              onClick={onReview}
+            >
+              입고 신청
+            </button>
+          )}
         </div>
       </section>
 
@@ -2084,19 +2633,10 @@ function ScanScreen({
       )}
 
       {(cameraError || apiMessage) && (
-        <button className="runtime-toast" type="button" onClick={onAccount}>
+        <div className="runtime-toast">
           {cameraError || `${apiStateLabel(apiState)} · ${apiMessage}`}
-        </button>
+        </div>
       )}
-
-      <div className="scan-actions">
-        <button type="button" onClick={onToggleCamera}>
-          {cameraActive ? "카메라 중지" : "카메라"}
-        </button>
-        <button type="button" onClick={onSample}>
-          샘플
-        </button>
-      </div>
 
       <div className="modebar">
         <div className="segment">
@@ -2137,50 +2677,105 @@ function apiStateLabel(state: ApiState) {
 
 function WholesalerScreen({
   pendingId,
+  searchResults,
+  searchStatus,
   wholesalers,
   onBack,
   onChoose,
   onReturnFirst,
+  onSearch,
   onStart,
 }: {
   pendingId: string;
+  searchResults: Wholesaler[];
+  searchStatus: "idle" | "short" | "loading" | "done" | "error";
   wholesalers: Wholesaler[];
   onBack?: () => void;
   onChoose: (id: string) => void;
   onReturnFirst: () => void;
+  onSearch: (keyword: string) => void;
   onStart: () => void;
 }) {
+  const selected = wholesalers.find((item) => item.id === pendingId);
+  const [query, setQuery] = useState("");
+  const normalizedQuery = normalizeSearchText(query);
+  const canSearch = normalizedQuery.length >= 2;
+
+  useEffect(() => {
+    if (!canSearch) {
+      onSearch(query);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      onSearch(query);
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [canSearch, onSearch, query]);
+
   return (
     <>
       <Header title="도매처 선택" onBack={onBack} />
-      <div className="search-field">
+      <label className="search-field">
         <span className="search-icon" />
-        <span>도매처 이름 검색</span>
-      </div>
+        <input
+          autoFocus
+          placeholder="도매처 이름 검색"
+          value={query}
+          onChange={(event) => setQuery(event.target.value)}
+        />
+      </label>
       <section className="scroll-body">
-        <div className="section-label">공통 도매처</div>
-        {wholesalers.slice(0, 3).map((wholesaler) => (
-          <ChoiceRow
-            key={wholesaler.id}
-            active={pendingId === wholesaler.id}
-            title={wholesaler.name}
-            detail={wholesaler.meta}
-            onClick={() => onChoose(wholesaler.id)}
-          />
-        ))}
-        <div className="section-label">약국 등록 도매처</div>
-        {wholesalers.slice(3).map((wholesaler) => (
-          <ChoiceRow
-            key={wholesaler.id}
-            active={pendingId === wholesaler.id}
-            title={wholesaler.name}
-            detail={wholesaler.meta}
-            onClick={() => onChoose(wholesaler.id)}
-          />
-        ))}
+        {selected && (
+          <div className="selected-wholesaler">
+            <span>선택됨</span>
+            <strong>{selected.name}</strong>
+            <em>{selected.meta}</em>
+          </div>
+        )}
+        <div className="section-label">
+          검색 결과 {canSearch ? searchResults.length : 0}
+        </div>
+        {!canSearch && (
+          <div className="empty-state compact">
+            <strong>2글자 이상 검색하세요</strong>
+          </div>
+        )}
+        {canSearch && (
+          <>
+            {searchStatus === "loading" && (
+              <div className="empty-state compact">
+                <strong>검색 중</strong>
+                <span>도매처 목록을 불러오고 있습니다.</span>
+              </div>
+            )}
+            {searchStatus !== "loading" &&
+              searchResults.map((wholesaler) => (
+                <ChoiceRow
+                  key={wholesaler.id}
+                  active={pendingId === wholesaler.id}
+                  title={wholesaler.name}
+                  detail={wholesaler.meta}
+                  onClick={() => onChoose(wholesaler.id)}
+                />
+              ))}
+            {searchStatus !== "loading" && searchResults.length === 0 && (
+              <div className="empty-state compact">
+                <strong>검색 결과가 없습니다</strong>
+                <span>도매처 등록과 수정은 관리자페이지에서 진행합니다.</span>
+              </div>
+            )}
+          </>
+        )}
       </section>
       <BottomBar stack>
-        <button className="primary-btn" type="button" onClick={onStart}>
+        <button
+          className="primary-btn"
+          type="button"
+          disabled={!selected}
+          onClick={onStart}
+        >
           이 도매처로 입고 시작
         </button>
         <button className="secondary-btn" type="button" onClick={onReturnFirst}>
@@ -2247,12 +2842,22 @@ function ReceiptMatchScreen({
   eligibleCount,
   queue,
   onBack,
+  onCheckVirtual,
   onCommit,
+  onGenerateVirtual,
+  onSelectPrice,
+  onVirtualCode,
+  onVirtualName,
 }: {
   eligibleCount: number;
   queue: ReceiptQueueItem[];
   onBack: () => void;
+  onCheckVirtual: (itemId: string, insuranceCode: string) => void;
   onCommit: () => void;
+  onGenerateVirtual: (itemId: string) => void;
+  onSelectPrice: (itemId: string, priceMasterId: string) => void;
+  onVirtualCode: (itemId: string, value: string) => void;
+  onVirtualName: (itemId: string, value: string) => void;
 }) {
   const normal = queue.filter((item) => item.drug.matchStatus === "NORMAL");
   const name = queue.filter((item) => item.drug.matchStatus === "NAME_MATCH");
@@ -2282,6 +2887,118 @@ function ReceiptMatchScreen({
           item={missing[0]}
           danger
         />
+        <div className="receipt-fix-list">
+          {queue.map((item) => (
+            <div className="receipt-fix-card" key={item.id}>
+              {(() => {
+                const priceCandidateCount = item.drug.priceMasters?.length ?? 0;
+                const hasPriceCandidates = priceCandidateCount > 0;
+
+                return (
+                  <>
+                    <div className="receipt-fix-head">
+                      <div>
+                        <strong>{item.drug.name}</strong>
+                        <span>
+                          PC {shortCode(item.qr.pc)} · SN {item.qr.sn}
+                        </span>
+                      </div>
+                      <span
+                        className={`badge ${statusClass(item.drug.matchStatus)}`}
+                      >
+                        {statusText(item.drug.matchStatus)}
+                      </span>
+                    </div>
+                    {hasPriceCandidates && (
+                      <div className="candidate-chips">
+                        {item.drug.priceMasters?.map((price) => (
+                          <button
+                            key={price.id}
+                            className={
+                              item.drug.priceMasterId === price.id
+                                ? "is-active"
+                                : ""
+                            }
+                            type="button"
+                            onClick={() => onSelectPrice(item.id, price.id)}
+                          >
+                            {price.productName} · {price.productCode}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {!item.drug.priceMasterId && hasPriceCandidates && (
+                      <p className="candidate-help">
+                        검증 API에서 받은 가격 후보입니다. 실제 입고할 약 정보를
+                        선택하면 입고 확정에 포함됩니다.
+                      </p>
+                    )}
+                    {!item.drug.priceMasterId && !hasPriceCandidates && (
+                      <div className="virtual-fields">
+                        <label>
+                          <span>가상약명</span>
+                          <input
+                            value={item.drug.virtualDrugName ?? item.drug.name}
+                            onChange={(event) =>
+                              onVirtualName(item.id, event.target.value)
+                            }
+                          />
+                        </label>
+                        <label>
+                          <span>가상 보험코드</span>
+                          <input
+                            value={
+                              item.drug.virtualInsuranceCode ??
+                              item.drug.insuranceCode
+                            }
+                            onChange={(event) =>
+                              onVirtualCode(item.id, event.target.value)
+                            }
+                          />
+                        </label>
+                        <div className="virtual-actions">
+                          <button
+                            type="button"
+                            onClick={() => onGenerateVirtual(item.id)}
+                          >
+                            자동 생성
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() =>
+                              onCheckVirtual(
+                                item.id,
+                                item.drug.virtualInsuranceCode ??
+                                  item.drug.insuranceCode,
+                              )
+                            }
+                          >
+                            중복 확인
+                          </button>
+                          <span
+                            className={
+                              item.drug.insuranceCodeExists === true
+                                ? "is-duplicated"
+                                : item.drug.insuranceCodeExists === false
+                                  ? "is-available"
+                                  : ""
+                            }
+                          >
+                            {item.drug.insuranceCodeExists === true
+                              ? "중복"
+                              : item.drug.insuranceCodeExists === false
+                                ? "사용 가능"
+                                : "확인 대기"}
+                          </span>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+          ))}
+        </div>
       </section>
       <BottomBar>
         <button
@@ -2299,9 +3016,11 @@ function ReceiptMatchScreen({
 
 function ReturnConfirmedScreen({
   lookup,
+  onClose,
   onNext,
 }: {
   lookup: Extract<ReturnLookup, { matchType: "CONFIRMED" }>;
+  onClose: () => void;
   onNext: () => void;
 }) {
   return (
@@ -2310,16 +3029,16 @@ function ReturnConfirmedScreen({
         <span />
         확정 · 입고 이력 있음
       </span>
+      <div className="seller-card">
+        <span>확정 도매처</span>
+        <strong>{lookup.wholesalerName}</strong>
+      </div>
       <h1>{lookup.drugName}</h1>
       <p className="code-line">
         PC {lookup.pc.slice(0, 4)}... · {lookup.sn} · {lookup.lot} · EXP{" "}
         {lookup.exp.slice(0, 7)}
       </p>
       <div className="info-card">
-        <div className="kv">
-          <span>도매처 (확정)</span>
-          <strong>{lookup.wholesalerName}</strong>
-        </div>
         <div className="triple">
           <MiniMetric label="제품총수량" value={lookup.productTotalQuantity} />
           <MiniMetric label="반품 누적" value={lookup.returnedQuantity} />
@@ -2333,62 +3052,38 @@ function ReturnConfirmedScreen({
       <button className="primary-btn push" type="button" onClick={onNext}>
         반품 수량 입력
       </button>
-    </ReturnSheet>
-  );
-}
-
-function ReturnEstimatedScreen({
-  lookup,
-  selectedCandidateId,
-  onChoose,
-  onNext,
-}: {
-  lookup: Extract<ReturnLookup, { matchType: "ESTIMATED" }>;
-  selectedCandidateId: string;
-  onChoose: (id: string) => void;
-  onNext: () => void;
-}) {
-  return (
-    <ReturnSheet height="estimated">
-      <span className="state-badge estimated">
-        <span />
-        추정 · 입고 이력 없음
-      </span>
-      <h1>{lookup.drugName}</h1>
-      <p className="guide-copy">
-        입고 이력은 없지만, 구매 내역 기준으로 아래 판매처가 추정됩니다. 하나를
-        선택해 주세요.
-      </p>
-      <div className="section-label">
-        판매처 후보 {lookup.sellerCandidates.length}
-      </div>
-      <div className="candidate-list">
-        {lookup.sellerCandidates.map((candidate) => (
-          <ChoiceRow
-            key={candidate.id}
-            active={selectedCandidateId === candidate.id}
-            title={candidate.sellerName}
-            detail={`${candidate.transactionDate} · ${candidate.orderItemName} · ${candidate.quantity}개`}
-            onClick={() => onChoose(candidate.id)}
-          />
-        ))}
-      </div>
-      <button className="primary-btn" type="button" onClick={onNext}>
-        선택한 판매처로 진행
+      <button
+        className="secondary-btn return-close-btn"
+        type="button"
+        onClick={onClose}
+      >
+        닫기
       </button>
     </ReturnSheet>
   );
 }
 
-function ReturnNoneScreen({ onClose }: { onClose: () => void }) {
+function ReturnNoneScreen({
+  lookup,
+  onClose,
+}: {
+  lookup: Extract<ReturnLookup, { matchType: "NONE" }> | null;
+  onClose: () => void;
+}) {
+  const drugName =
+    lookup?.drugName && lookup.drugName !== "미확인 약품"
+      ? lookup.drugName
+      : "";
+
   return (
     <ReturnSheet height="none">
       <div className="none-body">
         <div className="none-icon" />
-        <h1>판매처 후보를 찾지 못했습니다</h1>
+        <h1>{lookup?.message ?? "입고 내역이 확인되지 않는 상품입니다."}</h1>
         <p>
-          입고·구매 내역에 근거가 없어 반품 대상으로 등록할 수 없습니다. 구매
-          내역을 먼저 동기화하거나 코드를 다시 확인해 주세요.
+          {drugName
+            ? `${drugName}은 입고 이력이 확인되지 않아 반품을 진행할 수 없습니다.`
+            : "입고 이력이 확인되지 않아 반품을 진행할 수 없습니다."}
         </p>
       </div>
       <div className="stack">
@@ -2446,11 +3141,29 @@ function ReturnQtyScreen({
             반품 수량 <b>(최대 {max})</b>
           </span>
           <div className="qty-row">
-            <button type="button" onClick={() => onQuantity(quantity - 1)}>
+            <button
+              type="button"
+              disabled={max <= 0 || quantity <= 1}
+              onClick={() => onQuantity(quantity - 1)}
+            >
               -
             </button>
-            <strong>{quantity}</strong>
-            <button type="button" onClick={() => onQuantity(quantity + 1)}>
+            <input
+              inputMode="numeric"
+              pattern="[0-9]*"
+              placeholder="0"
+              value={quantity > 0 ? String(quantity) : ""}
+              disabled={max <= 0}
+              onChange={(event) => {
+                const next = Number(event.target.value.replace(/\D/g, ""));
+                onQuantity(next);
+              }}
+            />
+            <button
+              type="button"
+              disabled={max <= 0 || quantity >= max}
+              onClick={() => onQuantity(quantity + 1)}
+            >
               +
             </button>
           </div>
@@ -2473,10 +3186,10 @@ function ReturnQtyScreen({
         <button
           className="primary-btn"
           type="button"
-          disabled={max <= 0}
+          disabled={max <= 0 || quantity <= 0}
           onClick={onCommit}
         >
-          {quantity}개 반품하기
+          {Math.max(0, quantity)}개 반품하기
         </button>
       </BottomBar>
     </>
@@ -2562,33 +3275,65 @@ function DoneScreen({
 }
 
 function StocksScreen({
+  loading,
+  message,
   stocks,
   onBack,
+  onRefresh,
 }: {
+  loading: boolean;
+  message: string;
   stocks: StockItem[];
   onBack: () => void;
+  onRefresh: () => Promise<boolean>;
 }) {
   return (
     <>
-      <Header title="재고 목록" onBack={onBack} />
+      <Header title="재고 목록" note={`${stocks.length}건`} onBack={onBack} />
       <section className="scroll-body">
-        <div className="list-card">
-          {stocks.map((stock) => (
-            <div className="stock-row" key={stock.id}>
-              <div>
-                <strong>{stock.name}</strong>
-                <span>
-                  {stock.insuranceCode} · 예상{" "}
-                  {currency(stock.quantity * stock.price)}원
-                </span>
-              </div>
-              <span className={`badge ${statusClass(stock.matchStatus)}`}>
-                {statusText(stock.matchStatus)}
-              </span>
-              <b>{stock.quantity}개</b>
-            </div>
-          ))}
+        <div className="list-toolbar">
+          <span>{message || "서버 재고 목록을 표시합니다."}</span>
+          <button
+            type="button"
+            disabled={loading}
+            onClick={() => {
+              void onRefresh();
+            }}
+          >
+            새로고침
+          </button>
         </div>
+        {loading && (
+          <div className="empty-state compact">
+            <strong>재고 목록 불러오는 중</strong>
+            <span>/stocks API에서 현재 재고를 가져오고 있습니다.</span>
+          </div>
+        )}
+        {!loading && stocks.length === 0 && (
+          <div className="empty-state compact">
+            <strong>재고가 없습니다</strong>
+            <span>입고를 확정하거나 CMS에서 재고를 확인해 주세요.</span>
+          </div>
+        )}
+        {stocks.length > 0 && (
+          <div className="list-card">
+            {stocks.map((stock) => (
+              <div className="stock-row" key={stock.id}>
+                <div>
+                  <strong>{stock.name}</strong>
+                  <span>
+                    {stock.insuranceCode} · 예상{" "}
+                    {currency(stock.quantity * stock.price)}원
+                  </span>
+                </div>
+                <span className={`badge ${statusClass(stock.matchStatus)}`}>
+                  {statusText(stock.matchStatus)}
+                </span>
+                <b>{stock.quantity}개</b>
+              </div>
+            ))}
+          </div>
+        )}
       </section>
     </>
   );
@@ -2619,6 +3364,13 @@ function AccountScreen({
     <>
       <Header title="계정" onBack={onBack} />
       <section className="scroll-body account-body">
+        <div className="login-brand">
+          <img src={pharmfarmLogo} alt="" />
+          <div>
+            <strong>PharmFarm</strong>
+            <span>약국 재고 관리</span>
+          </div>
+        </div>
         <div className="account-card">
           <span>API</span>
           <strong>{apiBase}</strong>
@@ -2660,13 +3412,11 @@ function Header({
   title: string;
   onBack?: () => void;
 }) {
+  const hasBack = Boolean(onBack);
+
   return (
-    <header className="page-header">
-      {onBack ? (
-        <button className="back-btn" type="button" onClick={onBack} />
-      ) : (
-        <span className="back-spacer" />
-      )}
+    <header className={`page-header ${hasBack ? "has-back" : "no-back"}`}>
+      {onBack && <button className="back-btn" type="button" onClick={onBack} />}
       <strong>{title}</strong>
       {note && <span>{note}</span>}
     </header>
@@ -2738,9 +3488,7 @@ function DrugRow({ delta, item }: { delta: number; item: ReceiptQueueItem }) {
     <div className="drug-row">
       <div>
         <strong>{item.drug.name}</strong>
-        <span>
-          PC {item.qr.pc.slice(0, 4)}... · {item.qr.sn}
-        </span>
+        <span>{receiptDrugDetail(item)}</span>
       </div>
       <b>{delta > 0 ? `+${delta}` : "-"}</b>
       <span className={`badge ${statusClass(item.drug.matchStatus)}`}>
@@ -2748,6 +3496,28 @@ function DrugRow({ delta, item }: { delta: number; item: ReceiptQueueItem }) {
       </span>
     </div>
   );
+}
+
+function receiptDrugDetail(item: ReceiptQueueItem) {
+  const parts = [`PC ${shortCode(item.qr.pc)}`, `SN ${item.qr.sn}`];
+  const candidateCount = item.drug.priceMasters?.length ?? 0;
+
+  if (item.drug.priceMasterId) {
+    parts.push(item.drug.insuranceCode || "보험코드 없음");
+    parts.push(`가격 ${currency(item.drug.price)}원`);
+  } else if (candidateCount > 0) {
+    parts.push(`가격 후보 ${candidateCount}건`);
+    if (item.drug.insuranceCode) parts.push(item.drug.insuranceCode);
+  } else if (item.drug.virtualInsuranceCode || item.drug.insuranceCode) {
+    parts.push(
+      `가상 ${item.drug.virtualInsuranceCode || item.drug.insuranceCode}`,
+    );
+  } else {
+    parts.push("보험코드 보정 필요");
+  }
+
+  parts.push(`총수량 ${item.drug.productTotalQuantity}`);
+  return parts.join(" · ");
 }
 
 function MatchBox({
@@ -2860,6 +3630,7 @@ type CmsPage =
   | "master"
   | "import"
   | "inventory"
+  | "wholesaler"
   | "dispense"
   | "purchase";
 
@@ -2878,7 +3649,13 @@ type CmsImportJob = {
   id: string;
   dataType: "1번" | "2번";
   fileName: string;
-  status: "PENDING" | "RUNNING" | "SUCCESS" | "FAILED";
+  status:
+    | "PENDING"
+    | "RUNNING"
+    | "SUCCESS"
+    | "FAILED"
+    | "AUTH_FAILED"
+    | "PARTIAL_AUTH_FAILED";
   progress: number;
   processedRows: number;
   totalRows: number;
@@ -2887,6 +3664,13 @@ type CmsImportJob = {
   inactiveCount: number;
   duplicateCount: number;
   failedCount: number;
+  message: string;
+};
+
+type CmsCookieState = {
+  registered: boolean;
+  status: "VALID" | "AUTH_FAILED" | "UNKNOWN";
+  maskedCookie: string;
   message: string;
 };
 
@@ -3042,6 +3826,13 @@ const demoPurchaseSyncJobs: CmsSyncJob[] = [
   },
 ];
 
+const demoCookieState: CmsCookieState = {
+  registered: true,
+  status: "AUTH_FAILED",
+  maskedCookie: "baropharm_session=••••••••••••••••",
+  message: "cookie 인증 만료 · 재등록 필요",
+};
+
 const demoCmsPurchaseHistories: CmsPurchaseHistory[] = [
   {
     id: "PH-100",
@@ -3111,6 +3902,7 @@ function getCmsPage(path: string): CmsPage {
     segment === "master" ||
     segment === "import" ||
     segment === "inventory" ||
+    segment === "wholesaler" ||
     segment === "dispense" ||
     segment === "purchase"
   ) {
@@ -3131,9 +3923,23 @@ function CmsApp({
   const [apiMessage, setApiMessage] = useState("CMS 데이터 확인 중");
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
+  const [masterQuery, setMasterQuery] = useState("");
+  const [includeInactive, setIncludeInactive] = useState(false);
   const [masters, setMasters] = useState(demoCmsMasters);
   const [stocks, setStocks] = useState(initialStocks);
+  const [wholesalers, setWholesalers] = useState<Wholesaler[]>([]);
+  const [cmsWholesalerSearchStatus, setCmsWholesalerSearchStatus] = useState<
+    "idle" | "short" | "loading" | "done" | "error"
+  >("idle");
+  const [wholesalerQuery, setWholesalerQuery] = useState("");
+  const [newWholesalerName, setNewWholesalerName] = useState("");
+  const [selectedWholesalerId, setSelectedWholesalerId] = useState("");
+  const [editingWholesalerName, setEditingWholesalerName] = useState("");
   const [importJobs, setImportJobs] = useState(demoImportJobs);
+  const [cookieState, setCookieState] = useState(demoCookieState);
+  const [cookieInput, setCookieInput] = useState("");
+  const [syncStartDate, setSyncStartDate] = useState("2022-07-25");
+  const [syncEndDate, setSyncEndDate] = useState("2025-07-25");
   const [purchaseHistories, setPurchaseHistories] = useState(
     demoCmsPurchaseHistories,
   );
@@ -3144,17 +3950,32 @@ function CmsApp({
   const [selectedMasterId, setSelectedMasterId] = useState(
     demoCmsMasters[2].id,
   );
+  const [selectedFailureId, setSelectedFailureId] = useState(
+    demoDeductionFailures[0]?.id ?? "",
+  );
   const [selectedStockId, setSelectedStockId] = useState(initialStocks[0].id);
   const [adjustQuantity, setAdjustQuantity] = useState(5);
   const [adjustDirection, setAdjustDirection] = useState<
     "INCREASE" | "DECREASE"
   >("INCREASE");
   const [adjustMemo, setAdjustMemo] = useState("실사 후 수량 보정");
+  const [mergeInsuranceCode, setMergeInsuranceCode] = useState("643102120");
+  const [prescriptionId, setPrescriptionId] = useState("");
 
   const selectedMaster =
     masters.find((master) => master.id === selectedMasterId) ?? masters[0];
   const selectedStock =
     stocks.find((stock) => stock.id === selectedStockId) ?? stocks[0];
+  const selectedWholesaler =
+    wholesalers.find((wholesaler) => wholesaler.id === selectedWholesalerId) ??
+    wholesalers[0];
+  const selectedFailure =
+    deductionFailures.find((failure) => failure.id === selectedFailureId) ??
+    deductionFailures[0];
+
+  useEffect(() => {
+    setEditingWholesalerName(selectedWholesaler?.name ?? "");
+  }, [selectedWholesaler?.name]);
 
   const cmsFallback = useCallback((error: unknown) => {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
@@ -3181,15 +4002,23 @@ function CmsApp({
 
     setApiState("checking");
     try {
+      const masterParams = new URLSearchParams();
+      if (masterQuery.trim()) masterParams.set("q", masterQuery.trim());
+      if (includeInactive) masterParams.set("includeInactive", "true");
+      const masterPath = `/drug-masters${
+        masterParams.toString() ? `?${masterParams}` : ""
+      }`;
       const [
         masterResult,
         stockResult,
+        cookieResult,
         purchaseResult,
         syncResult,
         failureResult,
       ] = await Promise.allSettled([
-        apiFetch<unknown>("/drug-masters"),
+        apiFetch<unknown>(masterPath),
         apiFetch<unknown>("/stocks"),
+        apiFetch<unknown>("/baropharm/cookie"),
         apiFetch<unknown>("/purchase-histories"),
         apiFetch<unknown>("/purchase-histories/sync-jobs"),
         apiFetch<unknown>("/prescription-deductions/failed"),
@@ -3200,6 +4029,9 @@ function CmsApp({
       }
       if (stockResult.status === "fulfilled") {
         setStocks(arrayPayload(stockResult.value).map(normalizeStock));
+      }
+      if (cookieResult.status === "fulfilled") {
+        setCookieState(normalizeCmsCookie(cookieResult.value));
       }
       if (purchaseResult.status === "fulfilled") {
         setPurchaseHistories(
@@ -3218,6 +4050,7 @@ function CmsApp({
       const rejected = [
         masterResult,
         stockResult,
+        cookieResult,
         purchaseResult,
         syncResult,
         failureResult,
@@ -3235,7 +4068,7 @@ function CmsApp({
       cmsFallback(error);
       return false;
     }
-  }, [cmsFallback]);
+  }, [cmsFallback, includeInactive, masterQuery]);
 
   useEffect(() => {
     void refreshCms();
@@ -3267,38 +4100,56 @@ function CmsApp({
     setApiMessage("CMS 로그인이 필요합니다.");
   }
 
+  const refreshImportJob = useCallback(
+    async (jobId: string) => {
+      try {
+        const response = await apiFetch<unknown>(`/import-jobs/${jobId}`);
+        const nextJob = normalizeCmsImportJob(response, 0);
+        setImportJobs((current) =>
+          current.map((job) => (job.id === jobId ? nextJob : job)),
+        );
+      } catch (error) {
+        cmsFallback(error);
+      }
+    },
+    [cmsFallback],
+  );
+
+  useEffect(() => {
+    const activeJobs = importJobs.filter(
+      (job) => job.status === "PENDING" || job.status === "RUNNING",
+    );
+    if (activeJobs.length === 0 || !hasStoredAuthTokens()) return;
+
+    const timer = window.setInterval(() => {
+      activeJobs.forEach((job) => {
+        void refreshImportJob(job.id);
+      });
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [importJobs, refreshImportJob]);
+
   async function uploadMasterCsv(kind: "drug" | "price", file: File | null) {
     if (!file) return;
     const formData = new FormData();
     formData.append("file", file);
     try {
-      await apiFetch(
+      const response = await apiFetch<unknown>(
         kind === "drug" ? "/drug-masters/import" : "/price-masters/import",
         {
           method: "POST",
           body: formData,
         },
       );
+      const job = normalizeCmsImportJob(response, 0, {
+        dataType: kind === "drug" ? "1번" : "2번",
+        fileName: file.name,
+      });
       setApiState("connected");
       setApiMessage(`${file.name} import job 생성 완료`);
-      setImportJobs((current) => [
-        {
-          id: createId("J"),
-          dataType: kind === "drug" ? "1번" : "2번",
-          fileName: file.name,
-          status: "PENDING",
-          progress: 0,
-          processedRows: 0,
-          totalRows: 0,
-          newCount: 0,
-          updatedCount: 0,
-          inactiveCount: 0,
-          duplicateCount: 0,
-          failedCount: 0,
-          message: "서버 job 생성됨",
-        },
-        ...current,
-      ]);
+      setImportJobs((current) => [job, ...current]);
+      void refreshImportJob(job.id);
     } catch (error) {
       cmsFallback(error);
     }
@@ -3333,6 +4184,109 @@ function CmsApp({
     }
   }
 
+  function updateMaster(masterId: string, patch: Partial<CmsMaster>) {
+    setMasters((current) =>
+      current.map((master) =>
+        master.id === masterId ? { ...master, ...patch } : master,
+      ),
+    );
+  }
+
+  const searchCmsWholesalers = useCallback(
+    async (keyword: string) => {
+      const trimmed = keyword.trim();
+
+      if (normalizeSearchText(trimmed).length < 2) {
+        setWholesalers([]);
+        setSelectedWholesalerId("");
+        setCmsWholesalerSearchStatus(trimmed ? "short" : "idle");
+        return;
+      }
+
+      setCmsWholesalerSearchStatus("loading");
+      try {
+        const params = new URLSearchParams({ keyword: trimmed });
+        const response = await apiFetch<unknown>(`/wholesalers?${params}`);
+        const results = arrayPayload(response).map(normalizeWholesaler);
+
+        setWholesalers(results);
+        setSelectedWholesalerId((current) =>
+          results.some((wholesaler) => wholesaler.id === current)
+            ? current
+            : (results[0]?.id ?? ""),
+        );
+        setCmsWholesalerSearchStatus("done");
+        setApiState("connected");
+        setApiMessage("도매처 검색 완료");
+      } catch (error) {
+        cmsFallback(error);
+        const fallbackResults = demoWholesalers.filter((wholesaler) =>
+          normalizeSearchText(`${wholesaler.name} ${wholesaler.meta}`).includes(
+            normalizeSearchText(trimmed),
+          ),
+        );
+
+        setWholesalers(fallbackResults);
+        setSelectedWholesalerId(fallbackResults[0]?.id ?? "");
+        setCmsWholesalerSearchStatus("error");
+      }
+    },
+    [cmsFallback],
+  );
+
+  async function createCmsWholesaler() {
+    const trimmed = newWholesalerName.trim();
+    if (!trimmed) return;
+
+    try {
+      const response = await apiFetch<unknown>("/wholesalers", {
+        method: "POST",
+        body: JSON.stringify({ name: trimmed, wholesalerName: trimmed }),
+      });
+      const wholesaler = normalizeWholesaler(response, wholesalers.length);
+      setWholesalers((current) => [wholesaler, ...current]);
+      setSelectedWholesalerId(wholesaler.id);
+      setNewWholesalerName("");
+      setApiState("connected");
+      setApiMessage("도매처 등록 완료");
+    } catch (error) {
+      cmsFallback(error);
+      const wholesaler = {
+        id: createId("W"),
+        name: trimmed,
+        meta: "약국 등록 · 임시",
+      };
+      setWholesalers((current) => [wholesaler, ...current]);
+      setSelectedWholesalerId(wholesaler.id);
+      setNewWholesalerName("");
+    }
+  }
+
+  async function saveCmsWholesaler() {
+    if (!selectedWholesaler) return;
+    const trimmed = editingWholesalerName.trim();
+    if (!trimmed) return;
+
+    try {
+      await apiFetch(`/wholesalers/${selectedWholesaler.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: trimmed, wholesalerName: trimmed }),
+      });
+      setApiState("connected");
+      setApiMessage("도매처 수정 완료");
+    } catch (error) {
+      cmsFallback(error);
+    }
+
+    setWholesalers((current) =>
+      current.map((wholesaler) =>
+        wholesaler.id === selectedWholesaler.id
+          ? { ...wholesaler, name: trimmed }
+          : wholesaler,
+      ),
+    );
+  }
+
   async function adjustStock() {
     if (!selectedStock) return;
     const signedQuantity =
@@ -3362,17 +4316,92 @@ function CmsApp({
     }
   }
 
-  async function startPurchaseSync() {
+  async function mergeVirtualStock() {
+    if (!selectedStock || !mergeInsuranceCode.trim()) return;
+
     try {
-      await apiFetch("/purchase-histories/sync", {
+      await apiFetch(`/stocks/${selectedStock.id}/merge-virtual`, {
         method: "POST",
         body: JSON.stringify({
-          startDate: "2022-07-25",
-          endDate: "2025-07-25",
+          insuranceCode: mergeInsuranceCode.trim(),
+          memo: "CMS 가상 재고 보험코드 보정",
+        }),
+      });
+      setApiState("connected");
+      setApiMessage("가상 재고 병합/전환 요청 완료");
+      void refreshCms();
+    } catch (error) {
+      cmsFallback(error);
+    }
+  }
+
+  async function startPurchaseSync() {
+    try {
+      const response = await apiFetch<unknown>("/purchase-histories/sync", {
+        method: "POST",
+        body: JSON.stringify({
+          startDate: syncStartDate,
+          endDate: syncEndDate,
         }),
       });
       setApiState("connected");
       setApiMessage("바로팜 구매내역 동기화 job 생성 완료");
+      const job = normalizeCmsSyncJob(response, 0);
+      setSyncJobs((current) => [job, ...current]);
+    } catch (error) {
+      cmsFallback(error);
+    }
+  }
+
+  async function registerBaropharmCookie() {
+    if (!cookieInput.trim()) return;
+
+    try {
+      await apiFetch("/baropharm/cookie", {
+        method: "POST",
+        body: JSON.stringify({ cookie: cookieInput.trim() }),
+      });
+      setCookieInput("");
+      setCookieState({
+        registered: true,
+        status: "VALID",
+        maskedCookie: "baropharm_session=••••••••••••••••",
+        message: "cookie 등록 완료",
+      });
+      setApiState("connected");
+      setApiMessage("바로팜 cookie 등록 완료");
+    } catch (error) {
+      cmsFallback(error);
+    }
+  }
+
+  async function resumePurchaseSync(jobId: string) {
+    try {
+      const response = await apiFetch<unknown>(
+        `/purchase-histories/sync-jobs/${jobId}/resume`,
+        { method: "POST" },
+      );
+      const nextJob = normalizeCmsSyncJob(response, 0);
+      setSyncJobs((current) =>
+        current.map((job) => (job.id === jobId ? nextJob : job)),
+      );
+      setApiState("connected");
+      setApiMessage("구매내역 동기화 재개 요청 완료");
+    } catch (error) {
+      cmsFallback(error);
+    }
+  }
+
+  async function deductPrescriptionStock() {
+    if (!prescriptionId.trim()) return;
+
+    try {
+      await apiFetch(`/prescriptions/${prescriptionId.trim()}/deduct-stock`, {
+        method: "POST",
+      });
+      setApiState("connected");
+      setApiMessage("처방전 재고 차감 요청 완료");
+      void refreshCms();
     } catch (error) {
       cmsFallback(error);
     }
@@ -3439,8 +4468,13 @@ function CmsApp({
             )}
             {page === "master" && (
               <CmsMasterPage
+                includeInactive={includeInactive}
+                masterQuery={masterQuery}
                 masters={masters}
                 selectedMaster={selectedMaster}
+                onIncludeInactive={setIncludeInactive}
+                onMasterChange={updateMaster}
+                onQuery={setMasterQuery}
                 onRematch={rematchMaster}
                 onSave={saveMaster}
                 onSelect={setSelectedMasterId}
@@ -3455,6 +4489,7 @@ function CmsApp({
                 adjustDirection={adjustDirection}
                 adjustMemo={adjustMemo}
                 adjustQuantity={adjustQuantity}
+                mergeInsuranceCode={mergeInsuranceCode}
                 selectedStock={selectedStock}
                 stocks={stocks}
                 onAdjust={adjustStock}
@@ -3463,21 +4498,56 @@ function CmsApp({
                 onAdjustQuantity={(value) =>
                   setAdjustQuantity(Math.max(1, Math.min(999, value)))
                 }
+                onMergeInsuranceCode={setMergeInsuranceCode}
+                onMergeVirtual={mergeVirtualStock}
                 onSelect={setSelectedStockId}
+              />
+            )}
+            {page === "wholesaler" && (
+              <CmsWholesalerPage
+                editingName={editingWholesalerName}
+                newName={newWholesalerName}
+                query={wholesalerQuery}
+                searchStatus={cmsWholesalerSearchStatus}
+                selectedWholesaler={selectedWholesaler}
+                wholesalers={wholesalers}
+                onCreate={createCmsWholesaler}
+                onEditingName={setEditingWholesalerName}
+                onNewName={setNewWholesalerName}
+                onQuery={setWholesalerQuery}
+                onSave={saveCmsWholesaler}
+                onSearch={searchCmsWholesalers}
+                onSelect={setSelectedWholesalerId}
               />
             )}
             {page === "dispense" && (
               <CmsDispensePage
                 failures={deductionFailures}
+                prescriptionId={prescriptionId}
+                selectedFailure={selectedFailure}
+                selectedStockId={selectedStockId}
                 stocks={stocks}
+                onDeduct={deductPrescriptionStock}
+                onPrescriptionId={setPrescriptionId}
                 onResolve={resolveDeduction}
+                onSelectFailure={setSelectedFailureId}
+                onSelectStock={setSelectedStockId}
               />
             )}
             {page === "purchase" && (
               <CmsPurchasePage
+                cookieInput={cookieInput}
+                cookieState={cookieState}
                 histories={purchaseHistories}
+                syncEndDate={syncEndDate}
                 syncJobs={syncJobs}
+                syncStartDate={syncStartDate}
+                onCookieInput={setCookieInput}
+                onRegisterCookie={registerBaropharmCookie}
+                onResume={resumePurchaseSync}
                 onSync={startPurchaseSync}
+                onSyncEndDate={setSyncEndDate}
+                onSyncStartDate={setSyncStartDate}
               />
             )}
           </>
@@ -3548,6 +4618,76 @@ function normalizeCmsSyncJob(raw: unknown, index: number): CmsSyncJob {
   };
 }
 
+function normalizeCmsImportJob(
+  raw: unknown,
+  index: number,
+  fallback?: { dataType: "1번" | "2번"; fileName: string },
+): CmsImportJob {
+  const item = asRecord(raw);
+  const status = String(item.status ?? "PENDING") as CmsImportJob["status"];
+  const processedRows = Number(
+    item.processedRows ?? item.currentRows ?? item.doneRows ?? 0,
+  );
+  const totalRows = Number(item.totalRows ?? item.totalCount ?? 0);
+  const progress = Number(
+    item.progress ??
+      item.progressRate ??
+      (totalRows > 0 ? Math.round((processedRows / totalRows) * 100) : 0),
+  );
+
+  return {
+    id: String(item.id ?? item.jobId ?? index),
+    dataType: String(
+      item.dataType ?? item.masterType ?? fallback?.dataType,
+    ).includes("2")
+      ? "2번"
+      : "1번",
+    fileName: String(
+      item.fileName ?? item.originalFileName ?? fallback?.fileName ?? "-",
+    ),
+    status,
+    progress,
+    processedRows,
+    totalRows,
+    newCount: Number(item.newCount ?? item.createdCount ?? 0),
+    updatedCount: Number(item.updatedCount ?? item.modifiedCount ?? 0),
+    inactiveCount: Number(item.inactiveCount ?? item.deactivatedCount ?? 0),
+    duplicateCount: Number(
+      item.duplicateCount ?? item.duplicateExcludedCount ?? 0,
+    ),
+    failedCount: Number(item.failedCount ?? item.errorCount ?? 0),
+    message: String(item.message ?? item.failureReason ?? status),
+  };
+}
+
+function normalizeCmsCookie(raw: unknown): CmsCookieState {
+  const item = asRecord(raw);
+  const registered = Boolean(
+    item.registered ?? item.exists ?? item.hasCookie ?? item.cookieRegistered,
+  );
+  const status = String(
+    item.status ?? (registered ? "VALID" : "UNKNOWN"),
+  ).toUpperCase();
+
+  return {
+    registered,
+    status:
+      status === "AUTH_FAILED"
+        ? "AUTH_FAILED"
+        : status === "VALID"
+          ? "VALID"
+          : "UNKNOWN",
+    maskedCookie: String(
+      item.maskedCookie ??
+        item.cookieMasked ??
+        (registered ? "baropharm_session=••••••••••••••••" : ""),
+    ),
+    message: String(
+      item.message ?? (registered ? "cookie 등록됨" : "바로팜 cookie 미등록"),
+    ),
+  };
+}
+
 function normalizeCmsFailure(raw: unknown, index: number): CmsDeductionFailure {
   const item = raw as Record<string, unknown>;
   return {
@@ -3574,13 +4714,13 @@ function CmsSidebar({
     ["master", "기준 데이터", "/cms/master"],
     ["import", "Import", "/cms/import"],
     ["inventory", "재고", "/cms/inventory"],
+    ["wholesaler", "도매처", "/cms/wholesaler"],
     ["dispense", "처방전 차감", "/cms/dispense"],
     ["purchase", "구매 내역", "/cms/purchase"],
   ];
   return (
     <aside className="cms-sidebar">
       <div className="cms-brand">
-        <span className="cms-logo" />
         <div>
           <strong>PharmFarm</strong>
           <em>CMS</em>
@@ -3628,6 +4768,7 @@ function CmsHeader({
     master: "기준 데이터",
     import: "기준 데이터 Import",
     inventory: "재고",
+    wholesaler: "도매처 관리",
     dispense: "처방전 차감 실패",
     purchase: "구매 내역",
   };
@@ -3675,6 +4816,13 @@ function CmsLoginPage({
   return (
     <section className="cms-content cms-login">
       <form className="cms-login-card" onSubmit={onSubmit}>
+        <div className="cms-login-brand">
+          <img src={pharmfarmLogo} alt="" />
+          <div>
+            <strong>PharmFarm</strong>
+            <span>CMS</span>
+          </div>
+        </div>
         <div>
           <span>CMS 로그인</span>
           <strong>실제 API 계정으로 접속</strong>
@@ -3789,15 +4937,25 @@ function CmsDashboard({
 }
 
 function CmsMasterPage({
+  includeInactive,
+  masterQuery,
   masters,
   selectedMaster,
+  onIncludeInactive,
+  onMasterChange,
+  onQuery,
   onRematch,
   onSave,
   onSelect,
   onUpload,
 }: {
+  includeInactive: boolean;
+  masterQuery: string;
   masters: CmsMaster[];
   selectedMaster?: CmsMaster;
+  onIncludeInactive: (value: boolean) => void;
+  onMasterChange: (masterId: string, patch: Partial<CmsMaster>) => void;
+  onQuery: (value: string) => void;
   onRematch: (master: CmsMaster) => void;
   onSave: (master: CmsMaster) => void;
   onSelect: (id: string) => void;
@@ -3816,6 +4974,22 @@ function CmsMasterPage({
               보정 {masters.filter((item) => item.status !== "NORMAL").length}
             </span>
           </div>
+          <label className="cms-search">
+            <span className="search-icon" />
+            <input
+              placeholder="표준코드 · 보험코드 · 약명 검색"
+              value={masterQuery}
+              onChange={(event) => onQuery(event.target.value)}
+            />
+          </label>
+          <label className="cms-check">
+            <input
+              type="checkbox"
+              checked={includeInactive}
+              onChange={(event) => onIncludeInactive(event.target.checked)}
+            />
+            비활성 포함
+          </label>
           <label className="cms-upload-btn">
             CSV Import
             <input
@@ -3863,19 +5037,47 @@ function CmsMasterPage({
             {statusText(selectedMaster.status)}
           </span>
           <h2>{selectedMaster.name}</h2>
-          <CmsField label="표준코드" value={selectedMaster.standardCode} mono />
-          <CmsField
-            label="보험코드"
-            value={selectedMaster.insuranceCode || "미입력"}
+          <CmsEditableField
+            label="표준코드"
+            value={selectedMaster.standardCode}
             mono
+            onChange={(value) =>
+              onMasterChange(selectedMaster.id, { standardCode: value })
+            }
+          />
+          <CmsEditableField
+            label="보험코드"
+            value={selectedMaster.insuranceCode}
+            mono
+            onChange={(value) =>
+              onMasterChange(selectedMaster.id, { insuranceCode: value })
+            }
           />
           <div className="cms-field-grid">
-            <CmsField label="약품규격" value={selectedMaster.spec} />
-            <CmsField
+            <CmsEditableField
+              label="약품규격"
+              value={selectedMaster.spec}
+              onChange={(value) =>
+                onMasterChange(selectedMaster.id, { spec: value })
+              }
+            />
+            <CmsEditableField
               label="제품총수량"
               value={`${selectedMaster.productTotalQuantity}`}
+              onChange={(value) =>
+                onMasterChange(selectedMaster.id, {
+                  productTotalQuantity: Number(value) || 0,
+                })
+              }
             />
           </div>
+          <CmsEditableField
+            label="한글상품명"
+            value={selectedMaster.name}
+            onChange={(value) =>
+              onMasterChange(selectedMaster.id, { name: value })
+            }
+          />
           <CmsField
             label="가격"
             value={`${currency(selectedMaster.price)}원`}
@@ -3957,23 +5159,29 @@ function CmsInventoryPage({
   adjustDirection,
   adjustMemo,
   adjustQuantity,
+  mergeInsuranceCode,
   selectedStock,
   stocks,
   onAdjust,
   onAdjustDirection,
   onAdjustMemo,
   onAdjustQuantity,
+  onMergeInsuranceCode,
+  onMergeVirtual,
   onSelect,
 }: {
   adjustDirection: "INCREASE" | "DECREASE";
   adjustMemo: string;
   adjustQuantity: number;
+  mergeInsuranceCode: string;
   selectedStock?: StockItem;
   stocks: StockItem[];
   onAdjust: () => void;
   onAdjustDirection: (value: "INCREASE" | "DECREASE") => void;
   onAdjustMemo: (value: string) => void;
   onAdjustQuantity: (value: number) => void;
+  onMergeInsuranceCode: (value: string) => void;
+  onMergeVirtual: () => void;
   onSelect: (id: string) => void;
 }) {
   const stockValue = stocks.reduce(
@@ -4080,31 +5288,211 @@ function CmsInventoryPage({
           <button className="cms-primary" type="button" onClick={onAdjust}>
             조정 저장
           </button>
+          <div className="cms-divider" />
+          <h2>가상 보험코드 보정</h2>
+          <label className="cms-input">
+            <span>전환/병합할 보험코드</span>
+            <input
+              value={mergeInsuranceCode}
+              onChange={(event) => onMergeInsuranceCode(event.target.value)}
+            />
+          </label>
+          <button
+            className="cms-primary"
+            type="button"
+            onClick={onMergeVirtual}
+          >
+            실제 코드로 전환/병합
+          </button>
         </aside>
       )}
     </section>
   );
 }
 
+function CmsWholesalerPage({
+  editingName,
+  newName,
+  query,
+  searchStatus,
+  selectedWholesaler,
+  wholesalers,
+  onCreate,
+  onEditingName,
+  onNewName,
+  onQuery,
+  onSave,
+  onSearch,
+  onSelect,
+}: {
+  editingName: string;
+  newName: string;
+  query: string;
+  searchStatus: "idle" | "short" | "loading" | "done" | "error";
+  selectedWholesaler?: Wholesaler;
+  wholesalers: Wholesaler[];
+  onCreate: () => void;
+  onEditingName: (value: string) => void;
+  onNewName: (value: string) => void;
+  onQuery: (value: string) => void;
+  onSave: () => void;
+  onSearch: (keyword: string) => void;
+  onSelect: (id: string) => void;
+}) {
+  const normalizedQuery = normalizeSearchText(query);
+  const canSearch = normalizedQuery.length >= 2;
+
+  useEffect(() => {
+    if (!canSearch) {
+      onSearch(query);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      onSearch(query);
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [canSearch, onSearch, query]);
+
+  return (
+    <section className="cms-content cms-split">
+      <div className="cms-table-card">
+        <div className="cms-toolbar">
+          <div className="cms-pills">
+            <span>검색 결과 {wholesalers.length}</span>
+            <span>{canSearch ? "keyword 적용" : "2글자 이상 필요"}</span>
+          </div>
+          <label className="cms-search">
+            <span className="search-icon" />
+            <input
+              placeholder="도매처명 검색"
+              value={query}
+              onChange={(event) => onQuery(event.target.value)}
+            />
+          </label>
+        </div>
+        <div className="cms-table wholesaler">
+          <div className="cms-tr cms-th">
+            <span>도매처명</span>
+            <span>구분</span>
+            <span>ID</span>
+          </div>
+          {searchStatus === "loading" && (
+            <p className="cms-empty table-empty">검색 중입니다.</p>
+          )}
+          {searchStatus !== "loading" &&
+            wholesalers.map((wholesaler) => (
+              <button
+                key={wholesaler.id}
+                className={`cms-tr ${selectedWholesaler?.id === wholesaler.id ? "is-selected" : ""}`}
+                type="button"
+                onClick={() => onSelect(wholesaler.id)}
+              >
+                <strong>{wholesaler.name}</strong>
+                <span>{wholesaler.meta}</span>
+                <span>{wholesaler.id}</span>
+              </button>
+            ))}
+          {!canSearch && (
+            <p className="cms-empty table-empty">
+              도매처명을 2글자 이상 입력하면 서버 검색을 실행합니다.
+            </p>
+          )}
+          {canSearch &&
+            searchStatus !== "loading" &&
+            wholesalers.length === 0 && (
+              <p className="cms-empty table-empty">검색 결과가 없습니다.</p>
+            )}
+        </div>
+      </div>
+      <aside className="cms-edit-panel">
+        <h2>도매처 등록</h2>
+        <label className="cms-input">
+          <span>도매처명</span>
+          <input
+            value={newName}
+            onChange={(event) => onNewName(event.target.value)}
+          />
+        </label>
+        <button className="cms-primary" type="button" onClick={onCreate}>
+          새 도매처 등록
+        </button>
+        <div className="cms-divider" />
+        <h2>선택 도매처 수정</h2>
+        {selectedWholesaler ? (
+          <>
+            <CmsField label="현재 구분" value={selectedWholesaler.meta} />
+            <label className="cms-input">
+              <span>도매처명</span>
+              <input
+                value={editingName}
+                onChange={(event) => onEditingName(event.target.value)}
+              />
+            </label>
+            <button className="cms-primary" type="button" onClick={onSave}>
+              수정 저장
+            </button>
+          </>
+        ) : (
+          <p className="cms-empty">수정할 도매처를 선택하세요.</p>
+        )}
+      </aside>
+    </section>
+  );
+}
+
 function CmsDispensePage({
   failures,
+  prescriptionId,
+  selectedFailure,
+  selectedStockId,
+  onDeduct,
+  onPrescriptionId,
   onResolve,
+  onSelectFailure,
+  onSelectStock,
   stocks,
 }: {
   failures: CmsDeductionFailure[];
+  prescriptionId: string;
+  selectedFailure?: CmsDeductionFailure;
+  selectedStockId: string;
+  onDeduct: () => void;
+  onPrescriptionId: (value: string) => void;
   stocks: StockItem[];
   onResolve: (
     failure: CmsDeductionFailure,
     resolutionType: "VIRTUAL_DRUG" | "EXISTING_STOCK" | "UNREGISTERED_DRUG",
   ) => void;
+  onSelectFailure: (id: string) => void;
+  onSelectStock: (id: string) => void;
 }) {
   return (
     <section className="cms-content">
+      <div className="cms-command-row">
+        <label className="cms-input inline">
+          <span>처방전 ID</span>
+          <input
+            placeholder="prescriptionId"
+            value={prescriptionId}
+            onChange={(event) => onPrescriptionId(event.target.value)}
+          />
+        </label>
+        <button className="cms-primary" type="button" onClick={onDeduct}>
+          처방전 분석 결과 차감
+        </button>
+      </div>
       <div className="cms-grid two">
         <CmsPanel title="처방전 차감 실패">
           <div className="cms-list">
             {failures.map((failure) => (
-              <div className="cms-list-row" key={failure.id}>
+              <button
+                className={`cms-list-row action ${selectedFailure?.id === failure.id ? "is-selected" : ""}`}
+                key={failure.id}
+                type="button"
+                onClick={() => onSelectFailure(failure.id)}
+              >
                 <div>
                   <strong>{failure.drugName}</strong>
                   <span>
@@ -4118,31 +5506,45 @@ function CmsDispensePage({
                 >
                   {failure.status}
                 </span>
-              </div>
+              </button>
             ))}
           </div>
         </CmsPanel>
         <CmsPanel title="수동 처리">
-          {failures[0] ? (
+          {selectedFailure ? (
             <>
-              <CmsField label="대상" value={failures[0].drugName} />
-              <CmsField label="기존 재고 후보" value={stocks[0]?.name ?? "-"} />
+              <CmsField label="대상" value={selectedFailure.drugName} />
+              <label className="cms-input">
+                <span>기존 재고 후보</span>
+                <select
+                  value={selectedStockId}
+                  onChange={(event) => onSelectStock(event.target.value)}
+                >
+                  {stocks.map((stock) => (
+                    <option key={stock.id} value={stock.id}>
+                      {stock.name} · 보유 {stock.quantity}
+                    </option>
+                  ))}
+                </select>
+              </label>
               <div className="cms-actions vertical">
                 <button
                   type="button"
-                  onClick={() => onResolve(failures[0], "EXISTING_STOCK")}
+                  onClick={() => onResolve(selectedFailure, "EXISTING_STOCK")}
                 >
                   기존 재고로 차감
                 </button>
                 <button
                   type="button"
-                  onClick={() => onResolve(failures[0], "VIRTUAL_DRUG")}
+                  onClick={() => onResolve(selectedFailure, "VIRTUAL_DRUG")}
                 >
                   가상 약 생성 후 차감
                 </button>
                 <button
                   type="button"
-                  onClick={() => onResolve(failures[0], "UNREGISTERED_DRUG")}
+                  onClick={() =>
+                    onResolve(selectedFailure, "UNREGISTERED_DRUG")
+                  }
                 >
                   등록안된약 처리
                 </button>
@@ -4158,22 +5560,94 @@ function CmsDispensePage({
 }
 
 function CmsPurchasePage({
+  cookieInput,
+  cookieState,
   histories,
+  syncEndDate,
   onSync,
+  onCookieInput,
+  onRegisterCookie,
+  onResume,
+  onSyncEndDate,
+  onSyncStartDate,
   syncJobs,
+  syncStartDate,
 }: {
+  cookieInput: string;
+  cookieState: CmsCookieState;
   histories: CmsPurchaseHistory[];
+  syncEndDate: string;
   syncJobs: CmsSyncJob[];
+  syncStartDate: string;
+  onCookieInput: (value: string) => void;
+  onRegisterCookie: () => void;
+  onResume: (jobId: string) => void;
   onSync: () => void;
+  onSyncEndDate: (value: string) => void;
+  onSyncStartDate: (value: string) => void;
 }) {
   return (
     <section className="cms-content">
-      <div className="cms-grid two">
+      <div className="cms-grid two purchase-top">
+        <CmsPanel title="바로팜 cookie">
+          <div
+            className={`cms-cookie-state ${
+              cookieState.status === "AUTH_FAILED" ? "warning" : ""
+            }`}
+          >
+            <strong>
+              {cookieState.registered ? "등록됨" : "미등록"} ·{" "}
+              {cookieState.status}
+            </strong>
+            <span>{cookieState.message}</span>
+            {cookieState.maskedCookie && <em>{cookieState.maskedCookie}</em>}
+          </div>
+          <label className="cms-input">
+            <span>새 cookie</span>
+            <input
+              placeholder="baropharm_session=...; other_cookie=..."
+              value={cookieInput}
+              onChange={(event) => onCookieInput(event.target.value)}
+            />
+          </label>
+          <button
+            className="cms-primary"
+            type="button"
+            onClick={onRegisterCookie}
+          >
+            cookie 등록 / 교체
+          </button>
+        </CmsPanel>
         <CmsPanel
-          title="바로팜 구매내역 동기화"
+          title="주문내역 동기화"
           action="동기화 시작"
           onAction={onSync}
         >
+          <div className="cms-field-grid">
+            <label className="cms-input">
+              <span>시작일</span>
+              <input
+                type="date"
+                value={syncStartDate}
+                onChange={(event) => onSyncStartDate(event.target.value)}
+              />
+            </label>
+            <label className="cms-input">
+              <span>종료일</span>
+              <input
+                type="date"
+                value={syncEndDate}
+                onChange={(event) => onSyncEndDate(event.target.value)}
+              />
+            </label>
+          </div>
+          <p className="cms-empty">
+            per_page=500 기준으로 전체 기간을 한 job에서 동기화합니다.
+          </p>
+        </CmsPanel>
+      </div>
+      <div className="cms-grid two">
+        <CmsPanel title="바로팜 구매내역 동기화">
           {syncJobs.map((job) => (
             <div className="cms-sync-card" key={job.id}>
               <div>
@@ -4186,6 +5660,12 @@ function CmsPurchasePage({
                 {job.lastSuccessPage}/{job.totalPages} page
               </b>
               <p>{job.message}</p>
+              {(job.status === "AUTH_FAILED" ||
+                job.status === "PARTIAL_AUTH_FAILED") && (
+                <button type="button" onClick={() => onResume(job.id)}>
+                  cookie 재등록 후 재개
+                </button>
+              )}
             </div>
           ))}
         </CmsPanel>
@@ -4304,6 +5784,29 @@ function CmsField({
     <label className="cms-field">
       <span>{label}</span>
       <strong className={mono ? "mono" : ""}>{value}</strong>
+    </label>
+  );
+}
+
+function CmsEditableField({
+  label,
+  mono,
+  value,
+  onChange,
+}: {
+  label: string;
+  mono?: boolean;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="cms-field">
+      <span>{label}</span>
+      <input
+        className={mono ? "mono" : ""}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      />
     </label>
   );
 }
