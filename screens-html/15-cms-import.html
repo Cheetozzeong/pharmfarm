@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>웹 CMS · 기준 데이터 Import</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<style>
+*{box-sizing:border-box;}
+html,body{margin:0;}
+body{font-family:Pretendard,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased;background:#EEF0F2;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px;}
+button{font-family:inherit;cursor:pointer;border:none;background:none;padding:0;color:inherit;}
+@keyframes scan{0%{top:9%}50%{top:84%}100%{top:9%}}
+@keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
+</style></head><body>
+<div style="width:1440px;height:900px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 14px 44px rgba(16,24,28,.16);border:1px solid #E6E9EB;display:flex;">
+        <aside style="width:248px;flex:none;background:#FAFBFB;border-right:1px solid #EEF1F2;display:flex;flex-direction:column;padding:22px 16px;">
+          <div style="display:flex;align-items:center;gap:11px;padding:0 8px 22px;">
+            <div style="width:34px;height:34px;border-radius:10px;background:#0064FF;position:relative;flex:none;"><span style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:15px;height:4px;background:#fff;border-radius:2px;"></span><span style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:4px;height:15px;background:#fff;border-radius:2px;"></span></div>
+            <div><div style="font:800 16px Pretendard;color:#14181B;letter-spacing:-.01em;">PharmFarm</div><div style="font:500 11px Pretendard;color:#9AA3AA;">CMS</div></div>
+          </div>
+          <nav style="display:flex;flex-direction:column;gap:3px;">
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#5A646D;font:600 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2.2" y="2.2" width="6" height="6" rx="1.6"></rect><rect x="9.8" y="2.2" width="6" height="6" rx="1.6"></rect><rect x="2.2" y="9.8" width="6" height="6" rx="1.6"></rect><rect x="9.8" y="9.8" width="6" height="6" rx="1.6"></rect></svg>대시보드</a>
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;background:#EFF5FF;color:#0050CC;font:700 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><ellipse cx="9" cy="4.2" rx="6" ry="2.3"></ellipse><path d="M3 4.2v9.6c0 1.2 2.7 2.2 6 2.2s6-1 6-2.2V4.2"></path><path d="M3 9c0 1.2 2.7 2.2 6 2.2s6-1 6-2.2"></path></svg>기준 데이터</a>
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#5A646D;font:600 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="2.8" y="5" width="12.4" height="10" rx="1.6"></rect><path d="M2.8 8.2h12.4M9 5v3.2"></path></svg>재고</a>
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#5A646D;font:600 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="6.4"></circle><path d="M9 5.4V9l2.6 1.6"></path></svg>입고 · 반품 이력</a>
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#5A646D;font:600 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.6 6h8.8l-.7 9H5.3z"></path><path d="M6.6 6a2.4 2.4 0 014.8 0"></path></svg>구매 내역</a>
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#5A646D;font:600 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="2.6" y="5.4" width="5" height="9.6" rx="1"></rect><rect x="10.4" y="3" width="5" height="12" rx="1"></rect></svg>도매처</a>
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#5A646D;font:600 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2.6" width="10" height="12.8" rx="1.6"></rect><path d="M6.6 6.4h4.8M6.6 9.4h4.8M6.6 12.4h2.8"></path></svg>처방전 차감</a>
+          </nav>
+          <div style="margin-top:auto;">
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#5A646D;font:600 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="9" r="2.4"></circle><circle cx="9" cy="9" r="6.3"></circle></svg>설정</a>
+            <div style="display:flex;align-items:center;gap:11px;padding:12px 8px 0;margin-top:10px;border-top:1px solid #EEF1F2;">
+              <div style="width:34px;height:34px;border-radius:10px;background:#EFF5FF;display:flex;align-items:center;justify-content:center;font:800 14px Pretendard;color:#0064FF;flex:none;">이</div>
+              <div style="min-width:0;"><div style="font:700 13px Pretendard;color:#14181B;">이층약국</div><div style="font:500 11px Pretendard;color:#9AA3AA;">주계정 · pharmacy01</div></div>
+            </div>
+          </div>
+        </aside>
+        <main style="flex:1;display:flex;flex-direction:column;min-width:0;">
+          <header style="height:66px;flex:none;border-bottom:1px solid #EEF1F2;display:flex;align-items:center;padding:0 28px;">
+            <span style="font:800 19px Pretendard;letter-spacing:-.01em;color:#14181B;">기준 데이터 Import</span>
+          </header>
+          <div style="flex:1;overflow:hidden;padding:24px 28px;background:#FAFBFB;">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:18px;">
+              <div style="background:#fff;border:1px solid #EEF1F2;border-radius:14px;padding:18px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;"><span style="padding:2px 8px;border-radius:6px;font:700 11px Pretendard;background:#EFF5FF;color:#0050CC;">1번</span><span style="font:700 14px Pretendard;color:#14181B;">표준코드 약품 마스터</span></div>
+                <div style="border:1.5px dashed #CFD6DB;border-radius:12px;padding:22px;display:flex;flex-direction:column;align-items:center;gap:8px;background:#FCFDFD;">
+                  <div style="width:40px;height:40px;border-radius:11px;background:#EFF5FF;display:flex;align-items:center;justify-content:center;"><span style="font:700 20px Pretendard;color:#0064FF;line-height:1;">＋</span></div>
+                  <div style="font:600 13px Pretendard;color:#14181B;">CSV 파일을 끌어다 놓거나 선택</div>
+                  <div style="font:500 11px Pretendard;color:#9AA3AA;">1번기준데이터.csv 형식 · 최대 30만 행</div>
+                </div>
+              </div>
+              <div style="background:#fff;border:1px solid #EEF1F2;border-radius:14px;padding:18px;">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:12px;"><span style="padding:2px 8px;border-radius:6px;font:700 11px Pretendard;background:#EFF5FF;color:#0050CC;">2번</span><span style="font:700 14px Pretendard;color:#14181B;">보험코드 / 가격 마스터</span></div>
+                <div style="border:1.5px dashed #CFD6DB;border-radius:12px;padding:22px;display:flex;flex-direction:column;align-items:center;gap:8px;background:#FCFDFD;">
+                  <div style="width:40px;height:40px;border-radius:11px;background:#EFF5FF;display:flex;align-items:center;justify-content:center;"><span style="font:700 20px Pretendard;color:#0064FF;line-height:1;">＋</span></div>
+                  <div style="font:600 13px Pretendard;color:#14181B;">CSV 파일을 끌어다 놓거나 선택</div>
+                  <div style="font:500 11px Pretendard;color:#9AA3AA;">2번 기준 데이터.csv 형식 · 공백/줄바꿈 자동 정규화</div>
+                </div>
+              </div>
+            </div>
+            <div style="display:grid;grid-template-columns:1.1fr 1fr;gap:16px;">
+              <div style="background:#fff;border:1px solid #EEF1F2;border-radius:14px;padding:18px 20px;">
+                <div style="font:700 15px Pretendard;color:#14181B;margin-bottom:16px;">진행 중 · 최근 Import</div>
+                <div style="margin-bottom:16px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;"><div style="display:flex;align-items:center;gap:8px;"><span style="padding:2px 8px;border-radius:6px;font:700 11px Pretendard;background:#EEF1F2;color:#515B64;">1번</span><span style="font:600 13px Pretendard;color:#14181B;">1번기준데이터.csv</span></div><span style="display:inline-flex;align-items:center;gap:6px;font:600 12px Pretendard;color:#0064FF;"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:#0064FF;animation:pulse 1.4s ease-in-out infinite;"></span>RUNNING</span></div>
+                  <div style="height:8px;border-radius:6px;background:#EEF1F2;overflow:hidden;"><div style="width:64%;height:100%;background:#0064FF;border-radius:6px;"></div></div>
+                  <div style="font:500 11px Pretendard;color:#9AA3AA;margin-top:6px;">192,400 / 300,000 행 · 64% · JDBC batch insert</div>
+                </div>
+                <div style="margin-bottom:16px;">
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;"><div style="display:flex;align-items:center;gap:8px;"><span style="padding:2px 8px;border-radius:6px;font:700 11px Pretendard;background:#EEF1F2;color:#515B64;">2번</span><span style="font:600 13px Pretendard;color:#14181B;">2번 기준 데이터.csv</span></div><span style="display:inline-flex;align-items:center;gap:6px;font:600 12px Pretendard;color:#0050CC;"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:#0064FF;"></span>SUCCESS</span></div>
+                  <div style="height:8px;border-radius:6px;background:#EEF1F2;overflow:hidden;"><div style="width:100%;height:100%;background:#0064FF;border-radius:6px;"></div></div>
+                  <div style="font:500 11px Pretendard;color:#9AA3AA;margin-top:6px;">신규 1,204 · 수정 88 · 비활성 6 · 중복제외 12</div>
+                </div>
+                <div>
+                  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;"><div style="display:flex;align-items:center;gap:8px;"><span style="padding:2px 8px;border-radius:6px;font:700 11px Pretendard;background:#EEF1F2;color:#515B64;">1번</span><span style="font:600 13px Pretendard;color:#14181B;">drug_master_0612.csv</span></div><span style="display:inline-flex;align-items:center;gap:6px;font:600 12px Pretendard;color:#9A2D20;"><span style="width:6px;height:6px;border-radius:50%;flex:none;background:#C13B2C;"></span>FAILED</span></div>
+                  <div style="height:8px;border-radius:6px;background:#EEF1F2;overflow:hidden;"><div style="width:38%;height:100%;background:#C13B2C;border-radius:6px;"></div></div>
+                  <div style="font:500 11px Pretendard;color:#9A2D20;margin-top:6px;">실패 14행 · master 미반영 · 재업로드 필요</div>
+                </div>
+              </div>
+              <div style="background:#fff;border:1px solid #EEF1F2;border-radius:14px;overflow:hidden;display:flex;flex-direction:column;">
+                <div style="padding:16px 20px;border-bottom:1px solid #F1F3F4;display:flex;align-items:center;justify-content:space-between;"><span style="font:700 15px Pretendard;color:#14181B;">실패 상세</span><span style="font:500 12px Pretendard;color:#9AA3AA;">drug_master_0612.csv</span></div>
+                <div style="display:grid;grid-template-columns:70px 110px 1fr;padding:11px 20px;background:#FAFBFB;border-bottom:1px solid #EEF1F2;font:700 11px Pretendard;letter-spacing:.03em;color:#8E98A1;"><span>행</span><span>컬럼</span><span>사유</span></div>
+                <div style="display:grid;grid-template-columns:70px 110px 1fr;padding:13px 20px;border-bottom:1px solid #F4F5F6;align-items:center;"><span style="font:600 12px 'SF Mono',ui-monospace,monospace;color:#14181B;">1,204</span><span style="font:500 12px Pretendard;color:#5A646D;">표준코드</span><span style="font:500 12px Pretendard;color:#9A2D20;">필수값 누락</span></div>
+                <div style="display:grid;grid-template-columns:70px 110px 1fr;padding:13px 20px;border-bottom:1px solid #F4F5F6;align-items:center;"><span style="font:600 12px 'SF Mono',ui-monospace,monospace;color:#14181B;">2,310</span><span style="font:500 12px Pretendard;color:#5A646D;">제품총수량</span><span style="font:500 12px Pretendard;color:#9A2D20;">숫자 형식 오류 (“30정”)</span></div>
+                <div style="display:grid;grid-template-columns:70px 110px 1fr;padding:13px 20px;border-bottom:1px solid #F4F5F6;align-items:center;"><span style="font:600 12px 'SF Mono',ui-monospace,monospace;color:#14181B;">5,002</span><span style="font:500 12px Pretendard;color:#5A646D;">표준코드</span><span style="font:500 12px Pretendard;color:#8A5A0E;">중복 키 · master 반영 제외</span></div>
+                <div style="display:grid;grid-template-columns:70px 110px 1fr;padding:13px 20px;align-items:center;"><span style="font:600 12px 'SF Mono',ui-monospace,monospace;color:#14181B;">8,771</span><span style="font:500 12px Pretendard;color:#5A646D;">제품코드(개정후)</span><span style="font:500 12px Pretendard;color:#9A2D20;">필수값 누락</span></div>
+                <div style="margin-top:auto;padding:14px 20px;border-top:1px solid #F1F3F4;background:#FCFDFD;"><span style="font:500 12px Pretendard;color:#8E98A1;">검증 실패 행은 master에 반영되지 않았습니다. Excel 수정 후 재업로드하세요.</span></div>
+              </div>
+            </div>
+          </div>
+        </main>
+      </div>
+</body></html>

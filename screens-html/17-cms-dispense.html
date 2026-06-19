@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>웹 CMS · 처방전 차감 실패</title>
+<link rel="preconnect" href="https://cdn.jsdelivr.net">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<style>
+*{box-sizing:border-box;}
+html,body{margin:0;}
+body{font-family:Pretendard,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;-webkit-font-smoothing:antialiased;background:#EEF0F2;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:40px;}
+button{font-family:inherit;cursor:pointer;border:none;background:none;padding:0;color:inherit;}
+@keyframes scan{0%{top:9%}50%{top:84%}100%{top:9%}}
+@keyframes pulse{0%,100%{opacity:.45}50%{opacity:1}}
+</style></head><body>
+<div style="position:relative;width:1440px;height:900px;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 14px 44px rgba(16,24,28,.16);border:1px solid #E6E9EB;display:flex;">
+        <aside style="width:248px;flex:none;background:#FAFBFB;border-right:1px solid #EEF1F2;display:flex;flex-direction:column;padding:22px 16px;">
+          <div style="display:flex;align-items:center;gap:11px;padding:0 8px 22px;">
+            <div style="width:34px;height:34px;border-radius:10px;background:#0064FF;position:relative;flex:none;"><span style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:15px;height:4px;background:#fff;border-radius:2px;"></span><span style="position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:4px;height:15px;background:#fff;border-radius:2px;"></span></div>
+            <div><div style="font:800 16px Pretendard;color:#14181B;letter-spacing:-.01em;">PharmFarm</div><div style="font:500 11px Pretendard;color:#9AA3AA;">CMS</div></div>
+          </div>
+          <nav style="display:flex;flex-direction:column;gap:3px;">
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#5A646D;font:600 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="2.2" y="2.2" width="6" height="6" rx="1.6"></rect><rect x="9.8" y="2.2" width="6" height="6" rx="1.6"></rect><rect x="2.2" y="9.8" width="6" height="6" rx="1.6"></rect><rect x="9.8" y="9.8" width="6" height="6" rx="1.6"></rect></svg>대시보드</a>
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#5A646D;font:600 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><ellipse cx="9" cy="4.2" rx="6" ry="2.3"></ellipse><path d="M3 4.2v9.6c0 1.2 2.7 2.2 6 2.2s6-1 6-2.2V4.2"></path><path d="M3 9c0 1.2 2.7 2.2 6 2.2s6-1 6-2.2"></path></svg>기준 데이터</a>
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#5A646D;font:600 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"><rect x="2.8" y="5" width="12.4" height="10" rx="1.6"></rect><path d="M2.8 8.2h12.4M9 5v3.2"></path></svg>재고</a>
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#5A646D;font:600 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="9" r="6.4"></circle><path d="M9 5.4V9l2.6 1.6"></path></svg>입고 · 반품 이력</a>
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#5A646D;font:600 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.6 6h8.8l-.7 9H5.3z"></path><path d="M6.6 6a2.4 2.4 0 014.8 0"></path></svg>구매 내역</a>
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#5A646D;font:600 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"><rect x="2.6" y="5.4" width="5" height="9.6" rx="1"></rect><rect x="10.4" y="3" width="5" height="12" rx="1"></rect></svg>도매처</a>
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;background:#EFF5FF;color:#0050CC;font:700 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2.6" width="10" height="12.8" rx="1.6"></rect><path d="M6.6 6.4h4.8M6.6 9.4h4.8M6.6 12.4h2.8"></path></svg>처방전 차감</a>
+          </nav>
+          <div style="margin-top:auto;">
+            <a style="display:flex;align-items:center;gap:12px;padding:11px 12px;border-radius:10px;color:#5A646D;font:600 14px Pretendard;text-decoration:none;"><svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="9" r="2.4"></circle><circle cx="9" cy="9" r="6.3"></circle></svg>설정</a>
+            <div style="display:flex;align-items:center;gap:11px;padding:12px 8px 0;margin-top:10px;border-top:1px solid #EEF1F2;">
+              <div style="width:34px;height:34px;border-radius:10px;background:#EFF5FF;display:flex;align-items:center;justify-content:center;font:800 14px Pretendard;color:#0064FF;flex:none;">이</div>
+              <div style="min-width:0;"><div style="font:700 13px Pretendard;color:#14181B;">이층약국</div><div style="font:500 11px Pretendard;color:#9AA3AA;">주계정 · pharmacy01</div></div>
+            </div>
+          </div>
+        </aside>
+        <main style="flex:1;display:flex;flex-direction:column;min-width:0;">
+          <header style="height:66px;flex:none;border-bottom:1px solid #EEF1F2;display:flex;align-items:center;padding:0 28px;">
+            <span style="font:800 19px Pretendard;letter-spacing:-.01em;color:#14181B;">처방전 차감</span>
+          </header>
+          <div style="flex:1;overflow:hidden;padding:24px 28px;background:#FAFBFB;">
+            <div style="display:flex;gap:8px;margin-bottom:18px;border-bottom:1px solid #EEF1F2;">
+              <span style="padding:0 4px 12px;font:600 13px Pretendard;color:#9AA3AA;">차감 완료</span>
+              <span style="padding:0 4px 12px;font:700 13px Pretendard;color:#0064FF;border-bottom:2px solid #0064FF;display:inline-flex;align-items:center;gap:6px;">실패 항목 <span style="padding:1px 7px;border-radius:999px;font:700 11px Pretendard;background:#FBE9E6;color:#9A2D20;">6</span></span>
+            </div>
+            <div style="background:#fff;border:1px solid #EEF1F2;border-radius:14px;overflow:hidden;">
+              <div style="display:grid;grid-template-columns:1fr 120px 90px 150px 110px 92px;padding:13px 20px;background:#FAFBFB;border-bottom:1px solid #EEF1F2;font:700 11px Pretendard;letter-spacing:.03em;color:#8E98A1;"><span>약명</span><span>보험코드</span><span style="text-align:right;">차감수량</span><span>처방코드</span><span style="text-align:center;">상태</span><span style="text-align:right;">처리</span></div>
+              <div style="display:grid;grid-template-columns:1fr 120px 90px 150px 110px 92px;padding:14px 20px;border-bottom:1px solid #F4F5F6;align-items:center;background:#FFFBF2;box-shadow:inset 3px 0 0 #0064FF;"><span style="font:600 13px Pretendard;color:#14181B;">리리카캡슐 75mg</span><span style="font:500 11px 'SF Mono',ui-monospace,monospace;color:#6B7681;">A77788899</span><span style="font:700 13px Pretendard;color:#14181B;text-align:right;">14</span><span style="font:500 11px 'SF Mono',ui-monospace,monospace;color:#6B7681;">RX-20260618-014</span><span style="text-align:center;"><span style="padding:3px 9px;border-radius:999px;font:600 11px Pretendard;background:#FBF1DE;color:#8A5A0E;">PENDING</span></span><span style="text-align:right;"><button style="font:700 12px Pretendard;color:#0064FF;">수동 처리</button></span></div>
+              <div style="display:grid;grid-template-columns:1fr 120px 90px 150px 110px 92px;padding:14px 20px;border-bottom:1px solid #F4F5F6;align-items:center;"><span style="font:600 13px Pretendard;color:#14181B;">미등록 시럽제</span><span style="font:500 12px Pretendard;color:#C8CDD1;">—</span><span style="font:700 13px Pretendard;color:#14181B;text-align:right;">2</span><span style="font:500 11px 'SF Mono',ui-monospace,monospace;color:#6B7681;">RX-20260618-009</span><span style="text-align:center;"><span style="padding:3px 9px;border-radius:999px;font:600 11px Pretendard;background:#FBF1DE;color:#8A5A0E;">PENDING</span></span><span style="text-align:right;"><button style="font:700 12px Pretendard;color:#0064FF;">수동 처리</button></span></div>
+              <div style="display:grid;grid-template-columns:1fr 120px 90px 150px 110px 92px;padding:14px 20px;border-bottom:1px solid #F4F5F6;align-items:center;"><span style="font:600 13px Pretendard;color:#14181B;">크레스토정 10mg</span><span style="font:500 11px 'SF Mono',ui-monospace,monospace;color:#6B7681;">A99900011</span><span style="font:700 13px Pretendard;color:#14181B;text-align:right;">30</span><span style="font:500 11px 'SF Mono',ui-monospace,monospace;color:#6B7681;">RX-20260617-031</span><span style="text-align:center;"><span style="padding:3px 9px;border-radius:999px;font:600 11px Pretendard;background:#EFF5FF;color:#0050CC;">완료</span></span><span style="text-align:right;"><span style="font:500 12px Pretendard;color:#C8CDD1;">—</span></span></div>
+              <div style="display:grid;grid-template-columns:1fr 120px 90px 150px 110px 92px;padding:14px 20px;align-items:center;"><span style="font:600 13px Pretendard;color:#14181B;">노바스크정 5mg</span><span style="font:500 11px 'SF Mono',ui-monospace,monospace;color:#6B7681;">A12300456</span><span style="font:700 13px Pretendard;color:#14181B;text-align:right;">28</span><span style="font:500 11px 'SF Mono',ui-monospace,monospace;color:#6B7681;">RX-20260617-022</span><span style="text-align:center;"><span style="padding:3px 9px;border-radius:999px;font:600 11px Pretendard;background:#FBF1DE;color:#8A5A0E;">PENDING</span></span><span style="text-align:right;"><button style="font:700 12px Pretendard;color:#0064FF;">수동 처리</button></span></div>
+            </div>
+          </div>
+          <!-- 수동 처리 모달 -->
+          <div style="position:absolute;inset:0;background:rgba(16,24,28,.42);display:flex;align-items:center;justify-content:center;">
+            <div style="width:460px;background:#fff;border-radius:18px;box-shadow:0 24px 60px rgba(0,0,0,.28);padding:24px;">
+              <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;"><span style="font:800 18px Pretendard;color:#14181B;letter-spacing:-.01em;">차감 실패 항목 수동 처리</span><button style="width:30px;height:30px;border-radius:8px;background:#F4F5F6;color:#5A646D;font:600 16px Pretendard;">×</button></div>
+              <div style="font:600 14px Pretendard;color:#14181B;margin-bottom:2px;">리리카캡슐 75mg · 차감 14</div>
+              <div style="font:500 12px 'SF Mono',ui-monospace,monospace;color:#8E98A1;margin-bottom:18px;">RX-20260618-014 · A77788899</div>
+              <label style="display:block;font:600 12px Pretendard;color:#8E98A1;margin-bottom:9px;">처리 방법</label>
+              <div style="display:flex;flex-direction:column;gap:9px;margin-bottom:16px;">
+                <button style="display:flex;align-items:center;gap:12px;padding:13px 14px;border:1px solid #EEF1F2;background:#fff;border-radius:12px;text-align:left;"><span style="width:18px;height:18px;border-radius:50%;border:2px solid #CBD2D7;flex:none;"></span><span><span style="display:block;font:700 13px Pretendard;color:#14181B;">가상의 약</span><span style="display:block;font:500 11px Pretendard;color:#8E98A1;margin-top:2px;">가상 보험코드로 생성/연결 후 차감</span></span></button>
+                <button style="display:flex;align-items:center;gap:12px;padding:13px 14px;border:1.5px solid #0064FF;background:#EFF5FF;border-radius:12px;text-align:left;"><span style="width:18px;height:18px;border-radius:50%;border:6px solid #0064FF;flex:none;"></span><span style="flex:1;"><span style="display:block;font:700 13px Pretendard;color:#14181B;">재고가 있는 약</span><span style="display:block;font:500 11px Pretendard;color:#8E98A1;margin-top:2px;">기존 재고에 매칭하고 차감</span></span></button>
+                <button style="display:flex;align-items:center;gap:12px;padding:13px 14px;border:1px solid #EEF1F2;background:#fff;border-radius:12px;text-align:left;"><span style="width:18px;height:18px;border-radius:50%;border:2px solid #CBD2D7;flex:none;"></span><span><span style="display:block;font:700 13px Pretendard;color:#14181B;">등록안된약</span><span style="display:block;font:500 11px Pretendard;color:#8E98A1;margin-top:2px;">차감 없이 미처리 목록으로 표시</span></span></button>
+              </div>
+              <label style="display:block;font:600 12px Pretendard;color:#8E98A1;margin-bottom:8px;">매칭할 재고 선택</label>
+              <div style="display:flex;align-items:center;justify-content:space-between;border:1px solid #E6E9EB;border-radius:10px;padding:12px 13px;margin-bottom:20px;"><span style="font:600 13px Pretendard;color:#14181B;">리리카캡슐 75mg · 보유 60</span><span style="width:7px;height:7px;flex:none;border-right:2px solid #8E98A1;border-bottom:2px solid #8E98A1;transform:rotate(45deg);"></span></div>
+              <div style="display:flex;gap:10px;"><button style="flex:1;padding:14px;border-radius:11px;background:#F4F5F6;color:#48515A;font:700 14px Pretendard;">취소</button><button style="flex:1.4;padding:14px;border-radius:11px;background:#0064FF;color:#fff;font:700 14px Pretendard;box-shadow:0 4px 12px rgba(0,100,255,.28);">14개 차감 처리</button></div>
+            </div>
+          </div>
+        </main>
+      </div>
+</body></html>
