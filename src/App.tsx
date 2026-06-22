@@ -3482,32 +3482,32 @@ function ScanScreen({
               >
                 입고 확인 리스트
               </button>
-              {nativeAppBridgeAvailable && (
-                <>
-                  <label className="scan-toggle-row">
-                    <input
-                      checked={scannerEngine === "native"}
-                      type="checkbox"
-                      onChange={() => {
-                        setMenuOpen(false);
-                        onScannerEngine();
-                      }}
-                    />
-                    <span>네이티브 리더 사용</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setMenuOpen(false);
-                      onScanPerformanceMode();
-                    }}
-                  >
-                    {scanPerformanceMode === "performance"
-                      ? "정밀 스캔 모드"
-                      : "저사양 스캔 모드"}
-                  </button>
-                </>
-              )}
+              {/* {nativeAppBridgeAvailable && (
+                <> */}
+              <label className="scan-toggle-row">
+                <input
+                  checked={scannerEngine === "native"}
+                  type="checkbox"
+                  onChange={() => {
+                    setMenuOpen(false);
+                    onScannerEngine();
+                  }}
+                />
+                <span>네이티브 리더 사용</span>
+              </label>
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onScanPerformanceMode();
+                }}
+              >
+                {scanPerformanceMode === "performance"
+                  ? "정밀 스캔 모드"
+                  : "저사양 스캔 모드"}
+              </button>
+              {/* </>
+              )} */}
               <button
                 type="button"
                 onClick={() => {
