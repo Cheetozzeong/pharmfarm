@@ -5,7 +5,14 @@ import {
   type IScannerControls,
 } from "@zxing/browser";
 import { DecodeHintType } from "@zxing/library";
-import { Focus, RefreshCw, Zap, ZapOff } from "lucide-react";
+import {
+  ChevronDown,
+  Focus,
+  RefreshCw,
+  Trash2,
+  Zap,
+  ZapOff,
+} from "lucide-react";
 import pharmfarmLogo from "../logo_1.png";
 
 type Screen =
@@ -102,7 +109,7 @@ type ReceiptTrace = {
 type SellerCandidate = {
   id: string;
   sellerName: string;
-  transactionDate: string;
+  transactionAt: string;
   orderItemName: string;
   productName: string;
   quantity: number;
@@ -129,6 +136,7 @@ type ReturnLookup =
       lot: string;
       exp: string;
       drugName: string;
+      message?: string;
       sellerCandidates: SellerCandidate[];
       returnableQuantity: number;
       stockQuantity: number;
@@ -200,6 +208,8 @@ const apiBase = (
   import.meta.env.VITE_PHARMFARM_API_BASE ??
   "https://api.solusi.co.kr/api/v1/pharmfarm"
 ).replace(/\/$/, "");
+const debugToolsEnabled =
+  import.meta.env.DEV || import.meta.env.VITE_PHARMFARM_DEBUG_TOOLS === "true";
 
 const storageKeys = {
   accessToken: "pharmfarm.accessToken",
@@ -213,6 +223,9 @@ const alreadyProcessedAudioSrc =
   "/audio/%EC%9D%B4%EB%AF%B8_%EC%B2%98%EB%A6%AC%EB%90%9C_%EC%95%BD%ED%92%88%EC%9E%85%EB%8B%88%EB%8B%A4.mp3";
 const defaultScanCooldownMs = 900;
 const duplicateScanCooldownMs = 2500;
+const retakeScanCooldownMs = 2800;
+const minimumReliableSnLength = 6;
+const virtualInsuranceCodeGenerationAttempts = 40;
 
 type TokenResponse = {
   accessToken?: string;
@@ -323,7 +336,7 @@ const demoPurchaseHistories: SellerCandidate[] = [
   {
     id: "100",
     sellerName: "한미약품 A도매",
-    transactionDate: "2026-01-10",
+    transactionAt: "2026-01-10",
     orderItemName: "예시약 30T",
     productName: "예시약",
     quantity: 30,
@@ -331,7 +344,7 @@ const demoPurchaseHistories: SellerCandidate[] = [
   {
     id: "200",
     sellerName: "지오영 도매",
-    transactionDate: "2025-11-22",
+    transactionAt: "2025-11-22",
     orderItemName: "예시약 30정",
     productName: "예시약",
     quantity: 60,
@@ -909,6 +922,59 @@ async function parseJsonResponse<T>(response: Response): Promise<T> {
   return JSON.parse(text) as T;
 }
 
+class ApiError extends Error {
+  status: number;
+  code: unknown;
+
+  constructor(message: string, status: number, code?: unknown) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+function getApiEnvelopeError(raw: unknown, status: number) {
+  const item = asRecord(raw);
+  if (item.success !== false) return null;
+
+  const payload = asRecord(item.data);
+  const message = String(
+    item.message ?? payload.message ?? `HTTP ${status}`,
+  ).trim();
+
+  return new ApiError(message || `HTTP ${status}`, status, item.code);
+}
+
+async function createApiErrorFromResponse(response: Response) {
+  const fallback = `HTTP ${response.status}`;
+
+  try {
+    const text = await response.text();
+    if (!text) return new ApiError(fallback, response.status);
+
+    const data = JSON.parse(text) as unknown;
+    const envelopeError = getApiEnvelopeError(data, response.status);
+    if (envelopeError) return envelopeError;
+
+    const item = asRecord(data);
+    const payload = asRecord(item.data);
+    const message = String(item.message ?? payload.message ?? "").trim();
+
+    return new ApiError(message || fallback, response.status, item.code);
+  } catch {
+    return new ApiError(fallback, response.status);
+  }
+}
+
+async function parseApiResponse<T>(response: Response) {
+  const data = await parseJsonResponse<T>(response);
+  const envelopeError = getApiEnvelopeError(data, response.status);
+  if (envelopeError) throw envelopeError;
+
+  return data;
+}
+
 async function rawApiFetch<T>(
   path: string,
   options: RequestInit = {},
@@ -935,10 +1001,10 @@ async function rawApiFetch<T>(
     throw new Error("FORBIDDEN");
   }
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await createApiErrorFromResponse(response);
   }
 
-  return parseJsonResponse<T>(response);
+  return parseApiResponse<T>(response);
 }
 
 let refreshAccessTokenRequest: Promise<boolean> | null = null;
@@ -1012,10 +1078,10 @@ async function apiFetch<T>(
     throw new Error("FORBIDDEN");
   }
   if (!response.ok) {
-    throw new Error(`HTTP ${response.status}`);
+    throw await createApiErrorFromResponse(response);
   }
 
-  return parseJsonResponse<T>(response);
+  return parseApiResponse<T>(response);
 }
 
 async function login(loginId: string, password: string) {
@@ -1046,8 +1112,15 @@ async function requestVirtualInsuranceCode() {
     method: "POST",
   });
   const item = asRecord(data);
+  const payload = asRecord(item.data);
   const insuranceCode = String(
-    item.insuranceCode ?? item.virtualInsuranceCode ?? item.code ?? "",
+    payload.insuranceCode ??
+      payload.virtualInsuranceCode ??
+      payload.code ??
+      item.insuranceCode ??
+      item.virtualInsuranceCode ??
+      item.code ??
+      "",
   );
   if (!insuranceCode) throw new Error("가상 보험코드 응답이 비어 있습니다.");
   return insuranceCode;
@@ -1056,7 +1129,24 @@ async function requestVirtualInsuranceCode() {
 async function checkInsuranceCodeExists(insuranceCode: string) {
   const params = new URLSearchParams({ insuranceCode });
   const data = await apiFetch<unknown>(`/insurance-codes/exists?${params}`);
-  return Boolean(asRecord(data).exists);
+  const item = asRecord(data);
+  const payload = asRecord(item.data);
+
+  return normalizeBoolean(payload.exists ?? item.exists);
+}
+
+function normalizeBoolean(value: unknown) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true" || normalized === "1") return true;
+    if (normalized === "false" || normalized === "0" || normalized === "") {
+      return false;
+    }
+  }
+
+  return false;
 }
 
 function normalizeWholesaler(raw: unknown, index: number): Wholesaler {
@@ -1244,6 +1334,17 @@ function normalizeMatchStatus(value: unknown): MatchStatus {
 
 function normalizeLookup(raw: unknown, qr: QrFields): ReturnLookup {
   const item = unwrapObjectPayload(raw);
+  const sellerCandidates = firstArrayPayload(item, [
+    "sellerCandidates",
+    "purchaseHistoryCandidates",
+    "purchaseHistoryCandidateList",
+    "sellerCandidateList",
+    "candidates",
+    "purchaseHistories",
+    "purchaseHistoryList",
+    "histories",
+    "data",
+  ]).map(normalizeCandidate);
   const rawMatchType = String(
     item.matchType ?? item.type ?? item.resultType ?? item.status ?? "NONE",
   ).toUpperCase();
@@ -1251,7 +1352,8 @@ function normalizeLookup(raw: unknown, qr: QrFields): ReturnLookup {
     ? "CONFIRMED"
     : rawMatchType.includes("ESTIMAT") ||
         rawMatchType.includes("CANDIDATE") ||
-        rawMatchType.includes("PURCHASE")
+        rawMatchType.includes("PURCHASE") ||
+        sellerCandidates.length > 0
       ? "ESTIMATED"
       : "NONE";
 
@@ -1281,13 +1383,6 @@ function normalizeLookup(raw: unknown, qr: QrFields): ReturnLookup {
   }
 
   if (matchType === "ESTIMATED") {
-    const sellerCandidates = firstArrayPayload(item, [
-      "sellerCandidates",
-      "purchaseHistoryCandidates",
-      "candidates",
-      "purchaseHistories",
-      "histories",
-    ]).map(normalizeCandidate);
     return {
       matchType: "ESTIMATED",
       pc: String(item.pc ?? qr.pc),
@@ -1295,6 +1390,10 @@ function normalizeLookup(raw: unknown, qr: QrFields): ReturnLookup {
       lot: String(item.lot ?? qr.lot),
       exp: String(item.exp ?? qr.exp),
       drugName: String(item.drugName ?? item.name ?? "미확인 약품"),
+      message: String(
+        item.message ??
+          "입고 이력은 없지만 구매 내역 기준 판매처 후보가 있습니다.",
+      ),
       sellerCandidates,
       returnableQuantity: Number(
         item.returnableQuantity ?? item.stockQuantity ?? 0,
@@ -1329,14 +1428,48 @@ function noReceiptHistoryLookup(
 }
 
 function normalizeCandidate(raw: unknown, index: number): SellerCandidate {
-  const item = raw as Record<string, unknown>;
+  const item = asRecord(raw);
+  const sellerName = String(
+    item.sellerName ??
+      item.wholesalerName ??
+      item.vendorName ??
+      item.companyName ??
+      item.name ??
+      "-",
+  );
+  const orderItemName = String(
+    item.orderItemName ??
+      item.inventoryName ??
+      item.orderProductName ??
+      (item.common === true ? "공통 도매처" : "판매처 후보"),
+  );
+
   return {
-    id: String(item.id ?? item.purchaseHistoryId ?? index),
-    sellerName: String(item.sellerName ?? item.wholesalerName ?? "-"),
-    transactionDate: String(item.transactionDate ?? item.orderDate ?? "-"),
-    orderItemName: String(item.orderItemName ?? item.inventoryName ?? "-"),
-    productName: String(item.productName ?? item.name ?? "-"),
-    quantity: Number(item.quantity ?? 0),
+    id: String(
+      item.id ??
+        item.purchaseHistoryId ??
+        item.wholesalerId ??
+        item.sellerId ??
+        index,
+    ),
+    sellerName,
+    transactionAt: String(
+      item.transactionAt ??
+        item.orderDate ??
+        item.purchaseDate ??
+        item.createdAt ??
+        (item.common === true ? "공통" : "-"),
+    ),
+    orderItemName,
+    productName: String(
+      item.productName ??
+        item.drugName ??
+        item.inventoryProductName ??
+        item.inventoryName ??
+        item.orderItemName ??
+        "",
+    ),
+    quantity: Number(item.quantity ?? item.productTotalQuantity ?? 0),
   };
 }
 
@@ -1364,6 +1497,21 @@ function parseQrPayload(rawValue: string): QrFields {
   if (!result.exp) result.errors.push("EXP 없음");
 
   return result;
+}
+
+function getLowConfidenceSnReason(qr: QrFields) {
+  const sn = qr.sn.trim();
+  if (!sn) return "";
+
+  const comparableSn = sn.replace(/[^0-9A-Za-z]/g, "");
+  if (
+    comparableSn.length > 0 &&
+    comparableSn.length < minimumReliableSnLength
+  ) {
+    return `SN이 ${sn}로 너무 짧게 인식되었습니다.`;
+  }
+
+  return "";
 }
 
 function normalizePc(value: string) {
@@ -1434,8 +1582,13 @@ function parseCompactGs1(raw: string) {
   const pcEnd = pcIndex >= 0 ? pcIndex + 16 : 0;
   const expIndex = findFixedGs1Ai(compact, "17", pcEnd, 6);
   const expEnd = expIndex >= 0 ? expIndex + 8 : pcEnd;
-  const lot = readVariableGs1Ai(compact, "10", expEnd);
-  const sn = readVariableGs1Ai(compact, "21", expEnd);
+  const lot = readVariableGs1Ai(compact, "10", expEnd, {
+    stopAtVariableAis: ["21"],
+  });
+  const sn = readVariableGs1Ai(compact, "21", expEnd, {
+    stopAtFixedAis: false,
+    stopAtVariableAis: [],
+  });
   const result = {
     pc: pcIndex >= 0 ? compact.slice(pcIndex + 2, pcIndex + 16) : "",
     sn,
@@ -1466,30 +1619,58 @@ function findFixedGs1Ai(
   return -1;
 }
 
-function readVariableGs1Ai(raw: string, ai: string, start: number) {
+function readVariableGs1Ai(
+  raw: string,
+  ai: string,
+  start: number,
+  options: {
+    stopAtFixedAis?: boolean;
+    stopAtVariableAis?: string[];
+  } = {},
+) {
   const index = raw.indexOf(ai, Math.max(0, start));
   if (index < 0) return "";
 
   const valueStart = index + 2;
   const separatorIndex = raw.indexOf("\x1d", valueStart);
   const nextAiIndex =
-    separatorIndex >= 0 ? separatorIndex : findNextGs1Ai(raw, valueStart);
+    separatorIndex >= 0
+      ? separatorIndex
+      : findNextGs1Ai(raw, valueStart, options);
   const valueEnd = nextAiIndex >= 0 ? nextAiIndex : raw.length;
 
   return raw.slice(valueStart, valueEnd).replace(/\x1d/g, "").trim();
 }
 
-function findNextGs1Ai(raw: string, start: number) {
+function findNextGs1Ai(
+  raw: string,
+  start: number,
+  {
+    stopAtFixedAis = true,
+    stopAtVariableAis = ["10", "21"],
+  }: {
+    stopAtFixedAis?: boolean;
+    stopAtVariableAis?: string[];
+  } = {},
+) {
   for (let index = start + 1; index < raw.length - 1; index += 1) {
     const ai = raw.slice(index, index + 2);
 
-    if (ai === "01" && /^\d{14}/.test(raw.slice(index + 2, index + 16))) {
+    if (
+      stopAtFixedAis &&
+      ai === "01" &&
+      /^\d{14}/.test(raw.slice(index + 2, index + 16))
+    ) {
       return index;
     }
-    if (ai === "17" && /^\d{6}/.test(raw.slice(index + 2, index + 8))) {
+    if (
+      stopAtFixedAis &&
+      ai === "17" &&
+      /^\d{6}/.test(raw.slice(index + 2, index + 8))
+    ) {
       return index;
     }
-    if (ai === "10" || ai === "21") {
+    if (stopAtVariableAis.includes(ai)) {
       return index;
     }
   }
@@ -1616,7 +1797,7 @@ function statusText(status: MatchStatus) {
     case "NAME_MATCH":
       return "이름매칭";
     case "VIRTUAL":
-      return "가상생성";
+      return "비급여";
     case "MISSING":
       return "미등록";
     default:
@@ -1637,6 +1818,26 @@ function statusClass(status: MatchStatus) {
   }
 }
 
+function priceCandidateKey(price: PriceMaster) {
+  return `${normalizeSearchText(price.productName)}|${normalizeSearchText(
+    price.productCode,
+  )}`;
+}
+
+function uniquePriceMasters(prices: PriceMaster[], selectedId?: string) {
+  const unique = new Map<string, PriceMaster>();
+
+  for (const price of prices) {
+    const key = priceCandidateKey(price);
+    const current = unique.get(key);
+    if (!current || price.id === selectedId) {
+      unique.set(key, price);
+    }
+  }
+
+  return Array.from(unique.values());
+}
+
 function createId(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.random().toString(16).slice(2, 7)}`;
 }
@@ -1655,7 +1856,310 @@ function normalizeSearchText(value: string) {
   return value.replace(/\s+/g, "").toLowerCase();
 }
 
+function normalizeInsuranceCode(value: string | undefined) {
+  return (value ?? "").replace(/\s+/g, "").toUpperCase();
+}
+
+function createVirtualInsuranceCodeCandidate(
+  baseCode: string,
+  attempt: number,
+) {
+  const normalized = normalizeInsuranceCode(baseCode);
+  if (attempt === 0) return normalized;
+
+  const match = normalized.match(/^(.*?)(\d+)$/);
+  if (!match) {
+    return `${normalized}${attempt + 1}`;
+  }
+
+  const [, prefix, digits] = match;
+  const next = BigInt(digits) + BigInt(attempt);
+
+  return `${prefix}${next.toString().padStart(digits.length, "0")}`;
+}
+
+function getUiPreviewMode() {
+  const preview = new URLSearchParams(window.location.search).get("preview");
+  return preview === "receipt-match" ? preview : null;
+}
+
+function previewPriceMaster(
+  id: string,
+  productName: string,
+  productCode: string,
+  maxPrice: number,
+): PriceMaster {
+  return {
+    id,
+    maxPrice,
+    productCode,
+    productName,
+    spec: "30정",
+    unit: "정",
+  };
+}
+
+function createReceiptPreviewBatchId() {
+  return `${Date.now().toString(36)}${Math.random()
+    .toString(36)
+    .slice(2, 6)}`.toUpperCase();
+}
+
+const initialReceiptPreviewBatchId = createReceiptPreviewBatchId();
+
+function previewQr(
+  id: string,
+  pc: string,
+  batchId = initialReceiptPreviewBatchId,
+): QrFields {
+  const serialId = id
+    .replace(/^PREVIEW-/i, "")
+    .replace(/[^a-z0-9]/gi, "")
+    .slice(0, 12)
+    .toUpperCase();
+
+  return {
+    errors: [],
+    exp: "2027-12-31",
+    format: "gs1",
+    lot: `LOT-UI-${batchId}`,
+    pc,
+    raw: `preview-${batchId}-${id}-${pc}`,
+    sn: `SN-UI-${batchId}-${serialId}`,
+  };
+}
+
+function previewReceiptItem(
+  id: string,
+  status: MatchStatus,
+  name: string,
+  pc: string,
+  options: {
+    drugMasterId?: string;
+    insuranceCode?: string;
+    priceMasterId?: string;
+    priceMasters?: PriceMaster[];
+    productTotalQuantity?: number;
+    virtualCode?: string;
+  } = {},
+): ReceiptQueueItem {
+  const insuranceCode = options.insuranceCode ?? pc.slice(-9);
+
+  return {
+    id,
+    drug: {
+      insuranceCode: options.virtualCode ?? insuranceCode,
+      insuranceCodeExists: status === "MISSING" ? null : false,
+      drugMasterId: options.drugMasterId,
+      matchStatus: status,
+      name,
+      pc,
+      price: status === "MISSING" ? 0 : 120,
+      priceMasterId: options.priceMasterId,
+      priceMasters: options.priceMasters,
+      productTotalQuantity: options.productTotalQuantity ?? 30,
+      virtualDrugName: status === "VIRTUAL" ? `${name} 가상 재고` : undefined,
+      virtualInsuranceCode: options.virtualCode,
+    },
+    qr: previewQr(id, pc),
+  };
+}
+
+function createReceiptMatchPreviewQueue(): ReceiptQueueItem[] {
+  const duplicatedAmoxi = [
+    previewPriceMaster(
+      "698505110",
+      "페노피타정(피타바스타틴칼슘,페노피브레이트)",
+      "698505110",
+      0,
+    ),
+    previewPriceMaster(
+      "698505100",
+      "페노피브정160밀리그램(페노피브레이트)",
+      "698505100",
+      0,
+    ),
+    previewPriceMaster(
+      "698504990",
+      "테독시움정(도베실산칼슘수화물)",
+      "698504990",
+      0,
+    ),
+  ];
+
+  return [
+    previewReceiptItem(
+      "PREVIEW-NORMAL-1",
+      "NORMAL",
+      "푸란투스정(프란루카스트수화물)",
+      "8806985051929",
+      {
+        drugMasterId: "90",
+        insuranceCode: "698505190",
+        priceMasterId: "698505190",
+        productTotalQuantity: 300,
+      },
+    ),
+    previewReceiptItem(
+      "PREVIEW-NORMAL-2",
+      "NORMAL",
+      "가바민서방정150밀리그램(레바미피드)",
+      "8806985051813",
+      {
+        drugMasterId: "94",
+        insuranceCode: "698505180",
+        priceMasterId: "698505180",
+        productTotalQuantity: 30,
+      },
+    ),
+    previewReceiptItem(
+      "PREVIEW-NORMAL-3",
+      "NORMAL",
+      "가바텍스캡슐100밀리그램(가바펜틴)",
+      "8806985051615",
+      {
+        drugMasterId: "97",
+        insuranceCode: "698505160",
+        priceMasterId: "698505160",
+        productTotalQuantity: 30,
+      },
+    ),
+    previewReceiptItem(
+      "PREVIEW-NORMAL-4",
+      "NORMAL",
+      "메만젠정5밀리그램(메만틴염산염)",
+      "8806985051417",
+      {
+        drugMasterId: "103",
+        insuranceCode: "698505140",
+        priceMasterId: "698505140",
+        productTotalQuantity: 30,
+      },
+    ),
+    previewReceiptItem(
+      "PREVIEW-NAME-1",
+      "NAME_MATCH",
+      "페노피타정",
+      "8806985051110",
+      {
+        drugMasterId: "112",
+        insuranceCode: "698505110",
+        priceMasters: duplicatedAmoxi,
+        productTotalQuantity: 30,
+      },
+    ),
+    previewReceiptItem(
+      "PREVIEW-NAME-2",
+      "NAME_MATCH",
+      "에페시나서방정",
+      "8806985050915",
+      {
+        drugMasterId: "117",
+        insuranceCode: "698505090",
+        priceMasters: duplicatedAmoxi,
+        productTotalQuantity: 30,
+      },
+    ),
+    previewReceiptItem(
+      "PREVIEW-NAME-3",
+      "NAME_MATCH",
+      "트라졸정",
+      "8806985050816",
+      {
+        drugMasterId: "120",
+        insuranceCode: "698505080",
+        priceMasters: [
+          previewPriceMaster(
+            "698505080",
+            "트라졸정(이트라코나졸)",
+            "698505080",
+            0,
+          ),
+          previewPriceMaster(
+            "698505090",
+            "에페시나서방정(에페리손염산염)",
+            "698505090",
+            0,
+          ),
+        ],
+        productTotalQuantity: 30,
+      },
+    ),
+    previewReceiptItem(
+      "PREVIEW-NAME-4",
+      "NAME_MATCH",
+      "코로잘탄정10/50밀리그램",
+      "8806985050519",
+      {
+        drugMasterId: "122",
+        insuranceCode: "698505050",
+        priceMasters: [
+          previewPriceMaster(
+            "698505050",
+            "코로잘탄정10/50밀리그램(암로디핀,로사르탄칼륨)",
+            "698505050",
+            0,
+          ),
+          previewPriceMaster(
+            "698505040",
+            "코로잘탄정5/50밀리그램(암로디핀,로사르탄칼륨)",
+            "698505040",
+            0,
+          ),
+        ],
+        productTotalQuantity: 30,
+      },
+    ),
+    previewReceiptItem(
+      "PREVIEW-VIRTUAL-1",
+      "VIRTUAL",
+      "코로잘탄정5/50밀리그램",
+      "8806985050410",
+      {
+        drugMasterId: "124",
+        productTotalQuantity: 30,
+        virtualCode: "3PF000124",
+      },
+    ),
+    previewReceiptItem(
+      "PREVIEW-VIRTUAL-2",
+      "VIRTUAL",
+      "피나스카정(피나스테리드)",
+      "8806985050113",
+      {
+        drugMasterId: "131",
+        productTotalQuantity: 30,
+        virtualCode: "3PF000125",
+      },
+    ),
+    previewReceiptItem(
+      "PREVIEW-VIRTUAL-3",
+      "VIRTUAL",
+      "이름매칭 실패 입력 테스트",
+      "8806985049919",
+      {
+        drugMasterId: "139",
+        insuranceCode: "",
+        productTotalQuantity: 10,
+      },
+    ),
+    previewReceiptItem(
+      "PREVIEW-MISSING-1",
+      "MISSING",
+      "메만젠정(메만틴염산염)",
+      "8806985050014",
+      {
+        drugMasterId: "134",
+        insuranceCode: "698505000",
+        productTotalQuantity: 30,
+      },
+    ),
+  ];
+}
+
 function MobileApp() {
+  const uiPreviewMode = getUiPreviewMode();
+  const receiptMatchPreview = uiPreviewMode === "receipt-match";
   const videoRef = useRef<HTMLVideoElement>(null);
   const scanGuideRef = useRef<HTMLButtonElement>(null);
   const scanAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -1665,6 +2169,7 @@ function MobileApp() {
   const expiryAudioUnlockedRef = useRef(false);
   const alreadyProcessedAudioUnlockedRef = useRef(false);
   const scannerControlsRef = useRef<IScannerControls | null>(null);
+  const wholesalerSearchRequestRef = useRef(0);
   const lastDetectedRef = useRef({
     value: "",
     at: 0,
@@ -1676,7 +2181,11 @@ function MobileApp() {
   const modeRef = useRef<Mode>("receipt");
 
   const [screen, setScreen] = useState<Screen>(() =>
-    hasStoredAuthTokens() ? "wholesaler" : "account",
+    receiptMatchPreview
+      ? "receiptMatch"
+      : hasStoredAuthTokens()
+        ? "wholesaler"
+        : "account",
   );
   const [mode, setMode] = useState<Mode>("receipt");
   const [cameraActive, setCameraActive] = useState(false);
@@ -1689,31 +2198,46 @@ function MobileApp() {
   const [scannerEngine, setScannerEngine] = useState<ScannerEngine>(() =>
     getStoredScannerEngine(),
   );
-  const [apiState, setApiState] = useState<ApiState>("checking");
-  const [apiMessage, setApiMessage] = useState("");
+  const [apiState, setApiState] = useState<ApiState>(() =>
+    receiptMatchPreview ? "demo" : "checking",
+  );
+  const [apiMessage, setApiMessage] = useState(
+    receiptMatchPreview ? "UI 프리뷰 더미 데이터" : "",
+  );
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
-  const [wholesalers, setWholesalers] = useState<Wholesaler[]>([]);
+  const [wholesalers, setWholesalers] = useState<Wholesaler[]>(() =>
+    receiptMatchPreview ? demoWholesalers : [],
+  );
   const [wholesalerSearchResults, setWholesalerSearchResults] = useState<
     Wholesaler[]
   >([]);
   const [wholesalerSearchStatus, setWholesalerSearchStatus] = useState<
     "idle" | "short" | "loading" | "done" | "error"
   >("idle");
-  const [selectedWholesalerId, setSelectedWholesalerId] = useState("");
+  const [selectedWholesalerId, setSelectedWholesalerId] = useState(
+    receiptMatchPreview ? (demoWholesalers[0]?.id ?? "") : "",
+  );
   const [pendingWholesalerId, setPendingWholesalerId] = useState("");
   const [stocks, setStocks] = useState(initialStocks);
   const [stocksLoading, setStocksLoading] = useState(false);
   const [stocksMessage, setStocksMessage] = useState("");
   const [traces, setTraces] = useState(initialTraces);
-  const [receiptQueue, setReceiptQueue] = useState<ReceiptQueueItem[]>([]);
-  const [lastScanName, setLastScanName] = useState("QR 스캔 대기");
+  const [receiptQueue, setReceiptQueue] = useState<ReceiptQueueItem[]>(() =>
+    receiptMatchPreview ? createReceiptMatchPreviewQueue() : [],
+  );
+  const [lastScanName, setLastScanName] = useState(
+    receiptMatchPreview ? "UI 프리뷰" : "QR 스캔 대기",
+  );
   const [scanNotice, setScanNotice] = useState(
-    "카메라를 시작하면 QR이 자동으로 인식됩니다.",
+    receiptMatchPreview
+      ? "더미 데이터로 매칭 결과 UI를 확인 중입니다."
+      : "카메라를 시작하면 QR이 자동으로 인식됩니다.",
   );
   const [receiptSummary, setReceiptSummary] = useState<ReceiptSummary | null>(
     null,
   );
+  const [receiptSubmitError, setReceiptSubmitError] = useState("");
   const [returnLookup, setReturnLookup] = useState<ReturnLookup | null>(null);
   const [returnQuantity, setReturnQuantity] = useState(10);
   const [returnMemo, setReturnMemo] = useState("유통기한 임박 반품");
@@ -1724,12 +2248,25 @@ function MobileApp() {
   const [scanExpiryNotice, setScanExpiryNotice] =
     useState<ScanExpiryNotice | null>(null);
 
-  const resetWholesalerSelection = useCallback(() => {
-    setSelectedWholesalerId("");
+  const resetWholesalerDraft = useCallback(() => {
+    wholesalerSearchRequestRef.current += 1;
     setPendingWholesalerId("");
     setWholesalerSearchResults([]);
     setWholesalerSearchStatus("idle");
+  }, []);
+
+  const resetWholesalerSelection = useCallback(() => {
+    setSelectedWholesalerId("");
+    resetWholesalerDraft();
     setWholesalers([]);
+  }, [resetWholesalerDraft]);
+
+  const resetReturnFlow = useCallback(() => {
+    setReturnLookup(null);
+    setReturnQuantity(10);
+    setReturnMemo("유통기한 임박 반품");
+    setSelectedCandidateId("");
+    setReturnSummary(null);
   }, []);
 
   useEffect(() => {
@@ -1862,6 +2399,21 @@ function MobileApp() {
     audio.load();
   }, []);
 
+  const clearScanExpiryFeedback = useCallback(() => {
+    if (expiryDismissTimerRef.current) {
+      window.clearTimeout(expiryDismissTimerRef.current);
+      expiryDismissTimerRef.current = null;
+    }
+    if (expirySpeechTimerRef.current) {
+      window.clearTimeout(expirySpeechTimerRef.current);
+      expirySpeechTimerRef.current = null;
+    }
+
+    expirySpeechRequestRef.current += 1;
+    setScanExpiryNotice(null);
+    clearExpiryAudio();
+  }, [clearExpiryAudio]);
+
   const playExpiryAudioFile = useCallback(
     (src: string, requestId: number) =>
       new Promise<void>((resolve, reject) => {
@@ -1927,6 +2479,11 @@ function MobileApp() {
 
   const presentScanExpiry = useCallback(
     (qr: QrFields) => {
+      if (modeRef.current !== "receipt") {
+        clearScanExpiryFeedback();
+        return;
+      }
+
       const notice = formatExpiryNotice(qr.exp);
       setScanExpiryNotice(notice);
 
@@ -1946,7 +2503,7 @@ function MobileApp() {
         expirySpeechTimerRef.current = null;
       }, 460);
     },
-    [playExpiryAudio],
+    [clearScanExpiryFeedback, playExpiryAudio],
   );
 
   const selectedWholesaler = useMemo(
@@ -1964,14 +2521,101 @@ function MobileApp() {
     [pendingWholesalerId, wholesalers],
   );
 
-  const isReceiptItemReady = useCallback((item: ReceiptQueueItem) => {
-    if (item.qr.errors.length > 0) return false;
-    if (item.drug.priceMasterId) return true;
+  const virtualInsuranceCodeCounts = useMemo(() => {
+    const counts = new Map<string, number>();
+
+    for (const item of receiptQueue) {
+      if (item.drug.priceMasterId) continue;
+
+      const code = normalizeInsuranceCode(
+        item.drug.virtualInsuranceCode || item.drug.insuranceCode,
+      );
+      if (!code) continue;
+      counts.set(code, (counts.get(code) ?? 0) + 1);
+    }
+
+    return counts;
+  }, [receiptQueue]);
+
+  const isVirtualInsuranceCodeDuplicatedInQueue = useCallback(
+    (item: ReceiptQueueItem) => {
+      const code = normalizeInsuranceCode(
+        item.drug.virtualInsuranceCode || item.drug.insuranceCode,
+      );
+
+      return Boolean(code && (virtualInsuranceCodeCounts.get(code) ?? 0) > 1);
+    },
+    [virtualInsuranceCodeCounts],
+  );
+
+  const findAvailableVirtualInsuranceCode = useCallback(
+    async (itemId?: string) => {
+      const baseInsuranceCode = await requestVirtualInsuranceCode();
+      const baseNormalized = normalizeInsuranceCode(baseInsuranceCode);
+      const checkedCodes = new Set<string>();
+
+      for (
+        let attempt = 0;
+        attempt < virtualInsuranceCodeGenerationAttempts;
+        attempt += 1
+      ) {
+        const insuranceCode = createVirtualInsuranceCodeCandidate(
+          baseNormalized,
+          attempt,
+        );
+
+        if (!insuranceCode || checkedCodes.has(insuranceCode)) continue;
+        checkedCodes.add(insuranceCode);
+
+        const duplicatedInQueue = receiptQueue.some(
+          (item) =>
+            item.id !== itemId &&
+            !item.drug.priceMasterId &&
+            normalizeInsuranceCode(
+              item.drug.virtualInsuranceCode || item.drug.insuranceCode,
+            ) === insuranceCode,
+        );
+
+        if (duplicatedInQueue) continue;
+
+        const exists = await checkInsuranceCodeExists(insuranceCode);
+        if (!exists) {
+          return {
+            baseInsuranceCode: baseNormalized,
+            insuranceCode,
+            attemptCount: attempt + 1,
+          };
+        }
+      }
+
+      throw new Error("사용 가능한 가상 보험코드를 찾지 못했습니다.");
+    },
+    [receiptQueue],
+  );
+
+  const isReceiptItemReady = useCallback(
+    (item: ReceiptQueueItem) => {
+      if (item.qr.errors.length > 0) return false;
+      if (item.drug.priceMasterId) return true;
+
+      return Boolean(
+        item.drug.virtualDrugName?.trim() &&
+        item.drug.virtualInsuranceCode?.trim() &&
+        item.drug.insuranceCodeExists === false &&
+        !isVirtualInsuranceCodeDuplicatedInQueue(item),
+      );
+    },
+    [isVirtualInsuranceCodeDuplicatedInQueue],
+  );
+
+  const hasManualVirtualReceiptInput = useCallback((item: ReceiptQueueItem) => {
+    const candidateCount = item.drug.priceMasters?.length ?? 0;
 
     return Boolean(
+      !item.drug.priceMasterId &&
+      candidateCount === 0 &&
       item.drug.virtualDrugName?.trim() &&
-      item.drug.virtualInsuranceCode?.trim() &&
-      item.drug.insuranceCodeExists !== true,
+      item.drug.virtualInsuranceCode?.trim(),
     );
   }, []);
 
@@ -1979,6 +2623,37 @@ function MobileApp() {
     () => receiptQueue.filter(isReceiptItemReady),
     [isReceiptItemReady, receiptQueue],
   );
+
+  const receiptCommitBlockedReason = useMemo(() => {
+    if (receiptQueue.length === 0) return "";
+
+    const unselectedNameMatchCount = receiptQueue.filter(
+      (item) =>
+        !item.drug.priceMasterId && (item.drug.priceMasters?.length ?? 0) > 0,
+    ).length;
+
+    if (unselectedNameMatchCount > 0) {
+      return `이름매칭 ${unselectedNameMatchCount}건의 약품을 선택해야 입고 확정할 수 있습니다.`;
+    }
+
+    const invalidQrCount = receiptQueue.filter(
+      (item) => item.qr.errors.length > 0,
+    ).length;
+
+    if (invalidQrCount > 0) {
+      return `QR 필드 오류 ${invalidQrCount}건을 삭제하거나 다시 스캔해야 합니다.`;
+    }
+
+    const pendingVirtualCount = receiptQueue.filter(
+      (item) => !isReceiptItemReady(item),
+    ).length;
+
+    if (pendingVirtualCount > 0) {
+      return `비급여/미등록 ${pendingVirtualCount}건의 약명, 보험코드, 중복 확인이 필요합니다.`;
+    }
+
+    return "";
+  }, [isReceiptItemReady, receiptQueue]);
 
   const receiptIncrease = useMemo(
     () =>
@@ -2068,30 +2743,36 @@ function MobileApp() {
     return loadStocks();
   }, [loadStocks]);
 
-  const validateReceiptQr = useCallback(async (qr: QrFields) => {
-    const response = await apiFetch<unknown>("/receipts/validate-qr", {
-      method: "POST",
-      body: JSON.stringify({ pc: qr.pc }),
-    });
-    const drug = normalizeReceiptValidation(response, qr);
+  const validateReceiptQr = useCallback(
+    async (qr: QrFields) => {
+      const response = await apiFetch<unknown>("/receipts/validate-qr", {
+        method: "POST",
+        body: JSON.stringify({ pc: qr.pc }),
+      });
+      const drug = normalizeReceiptValidation(response, qr);
 
-    if (drug.matchStatus === "MISSING" && !drug.virtualInsuranceCode) {
-      try {
-        drug.virtualInsuranceCode = await requestVirtualInsuranceCode();
-        drug.insuranceCode = drug.virtualInsuranceCode;
-        drug.matchStatus = "VIRTUAL";
-      } catch {
-        drug.virtualInsuranceCode = `3PF${qr.pc.slice(-6).padStart(6, "0")}`;
-        drug.insuranceCode = drug.virtualInsuranceCode;
-        drug.matchStatus = "VIRTUAL";
+      if (drug.matchStatus === "MISSING" && !drug.virtualInsuranceCode) {
+        try {
+          const generated = await findAvailableVirtualInsuranceCode();
+          drug.virtualInsuranceCode = generated.insuranceCode;
+          drug.insuranceCode = drug.virtualInsuranceCode;
+          drug.insuranceCodeExists = false;
+          drug.matchStatus = "VIRTUAL";
+        } catch {
+          drug.virtualInsuranceCode = `3PF${qr.pc.slice(-6).padStart(6, "0")}`;
+          drug.insuranceCode = drug.virtualInsuranceCode;
+          drug.matchStatus = "VIRTUAL";
+        }
       }
-    }
 
-    return drug;
-  }, []);
+      return drug;
+    },
+    [findAvailableVirtualInsuranceCode],
+  );
 
   const searchWholesalers = useCallback(
     async (keyword: string) => {
+      const requestId = (wholesalerSearchRequestRef.current += 1);
       const trimmed = keyword.trim();
 
       if (normalizeSearchText(trimmed).length < 2) {
@@ -2105,6 +2786,7 @@ function MobileApp() {
         const params = new URLSearchParams({ keyword: trimmed });
         const response = await apiFetch<unknown>(`/wholesalers?${params}`);
         const results = arrayPayload(response).map(normalizeWholesaler);
+        if (requestId !== wholesalerSearchRequestRef.current) return;
 
         setWholesalerSearchResults(results);
         setWholesalers((current) => mergeWholesalers(current, results));
@@ -2112,6 +2794,7 @@ function MobileApp() {
         setApiState("connected");
         setApiMessage("도매처 검색 완료");
       } catch (error) {
+        if (requestId !== wholesalerSearchRequestRef.current) return;
         setApiFallback(error);
         const fallbackResults = demoWholesalers.filter((wholesaler) =>
           normalizeSearchText(`${wholesaler.name} ${wholesaler.meta}`).includes(
@@ -2127,6 +2810,12 @@ function MobileApp() {
   );
 
   const bootstrapAuth = useCallback(async () => {
+    if (receiptMatchPreview) {
+      setApiState("demo");
+      setApiMessage("UI 프리뷰 더미 데이터");
+      return;
+    }
+
     if (!hasStoredAuthTokens()) {
       setApiState("unauthorized");
       setApiMessage("로그인이 필요합니다.");
@@ -2147,12 +2836,22 @@ function MobileApp() {
         setApiMessage("자동 로그인됨");
       }
       resetWholesalerSelection();
+      resetReturnFlow();
+      setReceiptQueue([]);
+      setReceiptSummary(null);
+      setLastScanName("QR 스캔 대기");
       setMode("receipt");
       setScreen("wholesaler");
     } catch (error) {
       setApiFallback(error);
     }
-  }, [refreshFromBackend, resetWholesalerSelection, setApiFallback]);
+  }, [
+    refreshFromBackend,
+    receiptMatchPreview,
+    resetReturnFlow,
+    resetWholesalerSelection,
+    setApiFallback,
+  ]);
 
   useEffect(() => {
     void bootstrapAuth();
@@ -2173,6 +2872,7 @@ function MobileApp() {
 
   const patchReceiptDrug = useCallback(
     (itemId: string, patch: Partial<DrugMaster>) => {
+      setReceiptSubmitError("");
       setReceiptQueue((current) =>
         current.map((item) =>
           item.id === itemId
@@ -2186,6 +2886,7 @@ function MobileApp() {
 
   const selectReceiptPriceMaster = useCallback(
     (itemId: string, priceMasterId: string) => {
+      setReceiptSubmitError("");
       setReceiptQueue((current) =>
         current.map((item) => {
           if (item.id !== itemId) return item;
@@ -2204,9 +2905,11 @@ function MobileApp() {
               name: price.productName,
               price: price.maxPrice,
               matchStatus:
-                item.drug.insuranceCode === price.productCode
-                  ? "NORMAL"
-                  : "NAME_MATCH",
+                item.drug.matchStatus === "NAME_MATCH"
+                  ? "NAME_MATCH"
+                  : item.drug.insuranceCode === price.productCode
+                    ? "NORMAL"
+                    : "NAME_MATCH",
               virtualDrugName: "",
               virtualInsuranceCode: "",
               insuranceCodeExists: null,
@@ -2218,27 +2921,67 @@ function MobileApp() {
     [],
   );
 
+  const removeReceiptItem = useCallback((itemId: string) => {
+    setReceiptSubmitError("");
+    setReceiptQueue((current) => current.filter((item) => item.id !== itemId));
+  }, []);
+
+  const regenerateReceiptPreviewSerials = useCallback(() => {
+    const batchId = createReceiptPreviewBatchId();
+
+    setReceiptQueue((current) =>
+      current.map((item) => ({
+        ...item,
+        qr: previewQr(item.id, item.qr.pc, batchId),
+      })),
+    );
+    setLastScanName("테스트 SN 재생성");
+    setScanNotice(`프리뷰 SN/LOT을 새 배치 ${batchId}로 변경했습니다.`);
+  }, []);
+
   const generateVirtualForReceiptItem = useCallback(
     async (itemId: string) => {
       try {
-        const insuranceCode = await requestVirtualInsuranceCode();
+        const generated = await findAvailableVirtualInsuranceCode(itemId);
+        const { baseInsuranceCode, insuranceCode } = generated;
         patchReceiptDrug(itemId, {
+          insuranceCode,
           virtualInsuranceCode: insuranceCode,
-          insuranceCodeExists: null,
+          insuranceCodeExists: false,
         });
         setApiState("connected");
-        setApiMessage("가상 보험코드 생성 완료");
+        setApiMessage(
+          insuranceCode === baseInsuranceCode
+            ? "가상 보험코드 생성 완료"
+            : "중복 없는 가상 보험코드로 자동 변경했습니다.",
+        );
       } catch (error) {
         setApiFallback(error);
       }
     },
-    [patchReceiptDrug, setApiFallback],
+    [findAvailableVirtualInsuranceCode, patchReceiptDrug, setApiFallback],
   );
 
   const checkVirtualForReceiptItem = useCallback(
     async (itemId: string, insuranceCode: string) => {
       const trimmed = insuranceCode.trim();
       if (!trimmed) return;
+      const normalized = normalizeInsuranceCode(trimmed);
+      const duplicatedInQueue = receiptQueue.some(
+        (item) =>
+          item.id !== itemId &&
+          !item.drug.priceMasterId &&
+          normalizeInsuranceCode(
+            item.drug.virtualInsuranceCode || item.drug.insuranceCode,
+          ) === normalized,
+      );
+
+      if (duplicatedInQueue) {
+        patchReceiptDrug(itemId, { insuranceCodeExists: true });
+        setApiState("connected");
+        setApiMessage("현재 입고 목록에 같은 가상 보험코드가 있습니다.");
+        return;
+      }
 
       try {
         const exists = await checkInsuranceCodeExists(trimmed);
@@ -2249,7 +2992,7 @@ function MobileApp() {
         setApiFallback(error);
       }
     },
-    [patchReceiptDrug, setApiFallback],
+    [patchReceiptDrug, receiptQueue, setApiFallback],
   );
 
   const notifyDuplicateReceiptQr = useCallback(() => {
@@ -2336,11 +3079,31 @@ function MobileApp() {
           return;
         }
         if (lookup.matchType === "ESTIMATED") {
-          const noHistoryLookup = noReceiptHistoryLookup(lookup);
-          setReturnLookup(noHistoryLookup);
-          setLastScanName(`${lookup.drugName} · 입고 이력 없음`);
-          setScanNotice(noHistoryLookup.message);
-          setScreen("returnNone");
+          if (lookup.sellerCandidates.length === 0) {
+            const noHistoryLookup = noReceiptHistoryLookup(lookup);
+            setReturnLookup(noHistoryLookup);
+            setLastScanName(`${lookup.drugName} · 판매처 후보 없음`);
+            setScanNotice(noHistoryLookup.message);
+            setScreen("returnNone");
+            return;
+          }
+
+          setReturnLookup(lookup);
+          setSelectedCandidateId(lookup.sellerCandidates[0]?.id ?? "");
+          setLastScanName(
+            `${lookup.drugName} · 판매처 후보 ${lookup.sellerCandidates.length}건`,
+          );
+          setScanNotice(
+            lookup.message ??
+              "입고 이력은 없지만 구매 내역 기준 판매처 후보가 있습니다.",
+          );
+          setReturnQuantity(
+            clampReturnQuantity(
+              lookup.returnableQuantity,
+              lookup.returnableQuantity,
+            ),
+          );
+          setScreen("returnEstimated");
           return;
         }
         setReturnLookup(lookup);
@@ -2372,11 +3135,31 @@ function MobileApp() {
           );
           setScreen("returnConfirmed");
         } else if (lookup.matchType === "ESTIMATED") {
-          const noHistoryLookup = noReceiptHistoryLookup(lookup);
-          setReturnLookup(noHistoryLookup);
-          setLastScanName(`${lookup.drugName} · 입고 이력 없음`);
-          setScanNotice(noHistoryLookup.message);
-          setScreen("returnNone");
+          if (lookup.sellerCandidates.length === 0) {
+            const noHistoryLookup = noReceiptHistoryLookup(lookup);
+            setReturnLookup(noHistoryLookup);
+            setLastScanName(`${lookup.drugName} · 판매처 후보 없음`);
+            setScanNotice(noHistoryLookup.message);
+            setScreen("returnNone");
+            return;
+          }
+
+          setReturnLookup(lookup);
+          setSelectedCandidateId(lookup.sellerCandidates[0]?.id ?? "");
+          setLastScanName(
+            `${lookup.drugName} · 판매처 후보 ${lookup.sellerCandidates.length}건`,
+          );
+          setScanNotice(
+            lookup.message ??
+              "입고 이력은 없지만 구매 내역 기준 판매처 후보가 있습니다.",
+          );
+          setReturnQuantity(
+            clampReturnQuantity(
+              lookup.returnableQuantity,
+              lookup.returnableQuantity,
+            ),
+          );
+          setScreen("returnEstimated");
         } else {
           setReturnLookup(lookup);
           setLastScanName("입고 이력 없음");
@@ -2391,6 +3174,15 @@ function MobileApp() {
   const handlePayload = useCallback(
     (payload: string): ScanHandleResult => {
       const qr = parseQrPayload(payload);
+      const lowConfidenceSnReason = getLowConfidenceSnReason(qr);
+
+      if (lowConfidenceSnReason) {
+        setLastScanName("SN 재촬영 필요");
+        setScanNotice(
+          `${lowConfidenceSnReason}\n카메라를 조금 떨어뜨리고 QR 전체를 다시 맞춰주세요.`,
+        );
+        return { kind: "handled", cooldownMs: retakeScanCooldownMs };
+      }
 
       if (modeRef.current === "return") {
         if (!qr.pc) {
@@ -2501,7 +3293,9 @@ function MobileApp() {
     };
     unlockAlreadyProcessedAudio();
     unlockScanAudio();
-    unlockExpiryAudio();
+    if (modeRef.current === "receipt") {
+      unlockExpiryAudio();
+    }
     setCameraActive(true);
   }, [unlockAlreadyProcessedAudio, unlockExpiryAudio, unlockScanAudio]);
 
@@ -2515,7 +3309,9 @@ function MobileApp() {
     setScanNotice("카메라를 새로고침하고 있습니다.");
     unlockAlreadyProcessedAudio();
     unlockScanAudio();
-    unlockExpiryAudio();
+    if (modeRef.current === "receipt") {
+      unlockExpiryAudio();
+    }
     stopCamera();
     setCameraActive(true);
     setCameraRestartKey((value) => value + 1);
@@ -2774,7 +3570,7 @@ function MobileApp() {
 
         focusHintTimer = window.setTimeout(() => {
           setScanNotice(
-            "인식이 늦으면 카메라를 조금 떨어뜨리고 초점 버튼을 눌러주세요.",
+            "인식이 늦으면 카메라를 조금 떨어뜨리고\n초점 버튼을 눌러주세요.",
           );
         }, 4500);
       } catch (error) {
@@ -2826,6 +3622,9 @@ function MobileApp() {
       if (hasReceiptDraft) setReceiptQueue([]);
       setCameraActive(false);
     }
+    clearScanExpiryFeedback();
+    resetWholesalerDraft();
+    resetReturnFlow();
     setMode(nextMode);
     setLastScanName("QR 스캔 대기");
     setScreen(
@@ -2860,12 +3659,16 @@ function MobileApp() {
       setScanNotice("도매처를 다시 선택하면 새 입고 스캔을 시작합니다.");
     }
 
+    resetWholesalerDraft();
     setMode("receipt");
-    setPendingWholesalerId(selectedWholesalerId || pendingWholesalerId);
+    setPendingWholesalerId(selectedWholesalerId);
     setScreen("wholesaler");
   }
 
   function startReturnFirst() {
+    resetWholesalerDraft();
+    resetReturnFlow();
+    clearScanExpiryFeedback();
     setMode("return");
     setCameraActive(false);
     setScreen("scan");
@@ -2883,6 +3686,7 @@ function MobileApp() {
 
   function startReceipt() {
     if (!selectedWholesaler) {
+      resetWholesalerDraft();
       setScreen("wholesaler");
       return false;
     }
@@ -2891,25 +3695,44 @@ function MobileApp() {
 
   async function commitReceipt() {
     const wholesaler = selectedWholesaler;
-    if (!wholesaler || eligibleReceiptItems.length === 0) return;
+    if (!wholesaler || receiptQueue.length === 0) return;
 
-    const requestItems = eligibleReceiptItems.map((item) => ({
-      pc: item.qr.pc,
-      sn: item.qr.sn,
-      lot: item.qr.lot,
-      exp: item.qr.exp,
-      drugMasterId: optionalId(item.drug.drugMasterId),
-      insuranceCode: item.drug.insuranceCode || undefined,
-      priceMasterId: optionalId(item.drug.priceMasterId),
-      virtualDrugName: item.drug.priceMasterId
-        ? null
-        : item.drug.virtualDrugName || item.drug.name,
-      virtualInsuranceCode: item.drug.priceMasterId
-        ? null
-        : item.drug.virtualInsuranceCode || item.drug.insuranceCode,
-    }));
+    if (receiptCommitBlockedReason) {
+      setApiState(receiptMatchPreview ? "demo" : "connected");
+      setApiMessage(receiptCommitBlockedReason);
+      setScanNotice(receiptCommitBlockedReason);
+      return;
+    }
+
+    setReceiptSubmitError("");
 
     try {
+      const requestItems = await Promise.all(
+        eligibleReceiptItems.map(async (item) => {
+          const keepManualVirtualInput = hasManualVirtualReceiptInput(item);
+          const drug =
+            receiptMatchPreview && !keepManualVirtualInput
+              ? await validateReceiptQr(item.qr)
+              : item.drug;
+
+          return {
+            pc: item.qr.pc,
+            sn: item.qr.sn,
+            lot: item.qr.lot,
+            exp: item.qr.exp,
+            drugMasterId: optionalId(drug.drugMasterId),
+            insuranceCode: drug.insuranceCode || undefined,
+            priceMasterId: optionalId(drug.priceMasterId),
+            virtualDrugName: drug.priceMasterId
+              ? null
+              : drug.virtualDrugName || drug.name,
+            virtualInsuranceCode: drug.priceMasterId
+              ? null
+              : drug.virtualInsuranceCode || drug.insuranceCode,
+          };
+        }),
+      );
+
       await apiFetch("/receipts", {
         method: "POST",
         body: JSON.stringify({
@@ -2924,7 +3747,17 @@ function MobileApp() {
       setApiMessage("입고 반영 완료");
       void refreshFromBackend();
     } catch (error) {
+      if (error instanceof ApiError) {
+        const message = error.message || "입고 요청에 실패했습니다.";
+        setReceiptSubmitError(message);
+        setApiState("connected");
+        setApiMessage(message);
+        setScanNotice(message);
+        return;
+      }
+
       setApiFallback(error);
+      if (receiptMatchPreview) return;
       commitReceiptDemo(eligibleReceiptItems, wholesaler);
     }
 
@@ -3041,6 +3874,10 @@ function MobileApp() {
       }
       setPassword("");
       resetWholesalerSelection();
+      resetReturnFlow();
+      setReceiptQueue([]);
+      setReceiptSummary(null);
+      setLastScanName("QR 스캔 대기");
       setMode("receipt");
       setScreen("wholesaler");
     } catch (error) {
@@ -3058,7 +3895,9 @@ function MobileApp() {
     setApiMessage("로그아웃됨");
     setPassword("");
     resetWholesalerSelection();
+    resetReturnFlow();
     setReceiptQueue([]);
+    setReceiptSummary(null);
     setLastScanName("QR 스캔 대기");
     setScreen("account");
   }
@@ -3075,16 +3914,25 @@ function MobileApp() {
           searchResults={wholesalerSearchResults}
           searchStatus={wholesalerSearchStatus}
           wholesalers={wholesalers}
-          onBack={selectedWholesaler ? () => setScreen("scan") : undefined}
+          onBack={
+            selectedWholesaler
+              ? () => {
+                  resetWholesalerDraft();
+                  setScreen("scan");
+                }
+              : undefined
+          }
           onChoose={setPendingWholesalerId}
           onReturnFirst={startReturnFirst}
           onSearch={searchWholesalers}
           onStart={() => {
             if (!pendingWholesaler) return;
-            setSelectedWholesalerId(pendingWholesaler.id);
+            const wholesaler = pendingWholesaler;
+            resetWholesalerDraft();
+            setSelectedWholesalerId(wholesaler.id);
             setMode("receipt");
             setLastScanName("스캔 준비 완료");
-            setScanNotice(`${pendingWholesaler.name} 입고 스캔을 시작합니다.`);
+            setScanNotice(`${wholesaler.name} 입고 스캔을 시작합니다.`);
             setScreen("scan");
           }}
         />
@@ -3129,18 +3977,26 @@ function MobileApp() {
           queue={receiptQueue}
           selectedWholesaler={selectedWholesaler}
           onBack={() => setScreen("scan")}
+          onRemove={removeReceiptItem}
           onNext={() => setScreen("receiptMatch")}
         />
       )}
 
       {screen === "receiptMatch" && (
         <ReceiptMatchScreen
+          commitBlockedReason={receiptCommitBlockedReason}
           eligibleCount={eligibleReceiptItems.length}
           queue={receiptQueue}
+          submitErrorMessage={receiptSubmitError}
           onBack={() => setScreen("receiptReview")}
           onCheckVirtual={checkVirtualForReceiptItem}
           onCommit={commitReceipt}
           onGenerateVirtual={generateVirtualForReceiptItem}
+          onRegeneratePreviewSerials={
+            receiptMatchPreview && debugToolsEnabled
+              ? regenerateReceiptPreviewSerials
+              : undefined
+          }
           onSelectPrice={selectReceiptPriceMaster}
           onVirtualCode={(itemId, value) =>
             patchReceiptDrug(itemId, {
@@ -3174,7 +4030,11 @@ function MobileApp() {
         returnLookup?.matchType === "CONFIRMED" && (
           <ReturnConfirmedScreen
             lookup={returnLookup}
-            onClose={() => setScreen("scan")}
+            onClose={() => {
+              resetReturnFlow();
+              setLastScanName("QR 스캔 대기");
+              setScreen("scan");
+            }}
             onNext={() => {
               setReturnQuantity(clampReturnQuantity(returnMax, returnMax));
               setScreen("returnQty");
@@ -3184,16 +4044,34 @@ function MobileApp() {
 
       {screen === "returnEstimated" &&
         returnLookup?.matchType === "ESTIMATED" && (
-          <ReturnNoneScreen
-            lookup={noReceiptHistoryLookup(returnLookup)}
-            onClose={() => setScreen("scan")}
+          <ReturnEstimatedScreen
+            lookup={returnLookup}
+            selectedCandidateId={selectedCandidate?.id ?? ""}
+            onChoose={setSelectedCandidateId}
+            onClose={() => {
+              resetReturnFlow();
+              setLastScanName("QR 스캔 대기");
+              setScreen("scan");
+            }}
+            onNext={() => {
+              const candidate =
+                selectedCandidate ?? returnLookup.sellerCandidates[0];
+              if (!candidate) return;
+              setSelectedCandidateId(candidate.id);
+              setReturnQuantity(clampReturnQuantity(returnMax, returnMax));
+              setScreen("returnQty");
+            }}
           />
         )}
 
       {screen === "returnNone" && (
         <ReturnNoneScreen
           lookup={returnLookup?.matchType === "NONE" ? returnLookup : null}
-          onClose={() => setScreen("scan")}
+          onClose={() => {
+            resetReturnFlow();
+            setLastScanName("QR 스캔 대기");
+            setScreen("scan");
+          }}
         />
       )}
 
@@ -3228,12 +4106,21 @@ function MobileApp() {
           kind="return"
           returnSummary={returnSummary}
           onPrimary={() => {
-            setReturnLookup(null);
+            resetReturnFlow();
+            setLastScanName("QR 스캔 대기");
             setScreen("scan");
           }}
           onSecondary={() => {
+            resetReturnFlow();
+            resetWholesalerDraft();
             setMode("receipt");
-            setScreen("scan");
+            setLastScanName("QR 스캔 대기");
+            setScanNotice(
+              selectedWholesaler
+                ? "입고 모드입니다. QR을 스캔하세요."
+                : "입고 모드입니다. 도매처 선택 후 QR을 스캔하세요.",
+            );
+            setScreen(selectedWholesaler ? "scan" : "wholesaler");
           }}
         />
       )}
@@ -3261,7 +4148,7 @@ function MobileApp() {
         />
       )}
 
-      {scanExpiryNotice && (
+      {mode === "receipt" && scanExpiryNotice && (
         <div className="scan-expiry-modal" role="status" aria-live="polite">
           <span>유효기간</span>
           <strong>{scanExpiryNotice.display}</strong>
@@ -3797,12 +4684,14 @@ function ReceiptReviewScreen({
   selectedWholesaler,
   onBack,
   onNext,
+  onRemove,
 }: {
   increase: number;
   queue: ReceiptQueueItem[];
   selectedWholesaler: Wholesaler | null;
   onBack: () => void;
   onNext: () => void;
+  onRemove: (itemId: string) => void;
 }) {
   return (
     <>
@@ -3821,21 +4710,34 @@ function ReceiptReviewScreen({
             blue
           />
         </div>
-        <div className="list-card">
-          {queue.slice(0, 4).map((item) => (
-            <DrugRow
-              key={item.id}
-              item={item}
-              delta={item.drug.productTotalQuantity}
-            />
-          ))}
-        </div>
+        {queue.length > 0 ? (
+          <div className="list-card">
+            {queue.slice(0, 4).map((item) => (
+              <DrugRow
+                key={item.id}
+                item={item}
+                delta={item.drug.productTotalQuantity}
+                onRemove={onRemove}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state compact">
+            <strong>입고할 QR이 없습니다</strong>
+            <span>스캔 화면에서 다시 QR을 추가하세요.</span>
+          </div>
+        )}
         {queue.length > 4 && (
           <div className="more">+ {queue.length - 4}건 더 보기</div>
         )}
       </section>
       <BottomBar>
-        <button className="primary-btn" type="button" onClick={onNext}>
+        <button
+          className="primary-btn"
+          type="button"
+          disabled={queue.length === 0}
+          onClick={onNext}
+        >
           매칭 결과 확인
         </button>
       </BottomBar>
@@ -3844,22 +4746,28 @@ function ReceiptReviewScreen({
 }
 
 function ReceiptMatchScreen({
+  commitBlockedReason,
   eligibleCount,
   queue,
+  submitErrorMessage,
   onBack,
   onCheckVirtual,
   onCommit,
   onGenerateVirtual,
+  onRegeneratePreviewSerials,
   onSelectPrice,
   onVirtualCode,
   onVirtualName,
 }: {
+  commitBlockedReason: string;
   eligibleCount: number;
   queue: ReceiptQueueItem[];
+  submitErrorMessage: string;
   onBack: () => void;
   onCheckVirtual: (itemId: string, insuranceCode: string) => void;
   onCommit: () => void;
   onGenerateVirtual: (itemId: string) => void;
+  onRegeneratePreviewSerials?: () => void;
   onSelectPrice: (itemId: string, priceMasterId: string) => void;
   onVirtualCode: (itemId: string, value: string) => void;
   onVirtualName: (itemId: string, value: string) => void;
@@ -3868,154 +4776,272 @@ function ReceiptMatchScreen({
   const name = queue.filter((item) => item.drug.matchStatus === "NAME_MATCH");
   const virtual = queue.filter((item) => item.drug.matchStatus === "VIRTUAL");
   const missing = queue.filter((item) => item.drug.matchStatus === "MISSING");
+  const commitBlocked = Boolean(commitBlockedReason);
+  const [expandedGroups, setExpandedGroups] = useState<
+    Record<MatchStatus, boolean>
+  >({
+    MISSING: true,
+    NAME_MATCH: true,
+    NORMAL: true,
+    VIRTUAL: true,
+  });
+  const groups: Array<{
+    color: string;
+    danger?: boolean;
+    items: ReceiptQueueItem[];
+    status: MatchStatus;
+    title: string;
+  }> = [
+    { color: "#0064FF", items: normal, status: "NORMAL", title: "정상매칭" },
+    { color: "#6B4EE6", items: name, status: "NAME_MATCH", title: "이름매칭" },
+    { color: "#B07514", items: virtual, status: "VIRTUAL", title: "비급여" },
+    {
+      color: "#C13B2C",
+      danger: true,
+      items: missing,
+      status: "MISSING",
+      title: "미등록",
+    },
+  ];
 
   return (
     <>
       <Header title="매칭 결과" onBack={onBack} />
       <section className="scroll-body">
-        <p className="guide-copy">
-          기준 데이터 연결 상태입니다. 가상생성·미등록 항목은 CMS에서 보정할 수
-          있어요.
-        </p>
-        <MatchBox title="정상매칭" count={normal.length} color="#0064FF" />
-        <MatchBox title="이름매칭" count={name.length} color="#6B4EE6" />
-        <MatchBox
-          title="가상생성"
-          count={virtual.length}
-          color="#B07514"
-          item={virtual[0]}
-        />
-        <MatchBox
-          title="미등록"
-          count={missing.length}
-          color="#C13B2C"
-          item={missing[0]}
-          danger
-        />
-        <div className="receipt-fix-list">
-          {queue.map((item) => (
-            <div className="receipt-fix-card" key={item.id}>
-              {(() => {
-                const priceCandidateCount = item.drug.priceMasters?.length ?? 0;
-                const hasPriceCandidates = priceCandidateCount > 0;
-
-                return (
-                  <>
-                    <div className="receipt-fix-head">
-                      <div>
-                        <strong>{item.drug.name}</strong>
-                        <span>
-                          PC {shortCode(item.qr.pc)} · SN {item.qr.sn}
-                        </span>
-                      </div>
-                      <span
-                        className={`badge ${statusClass(item.drug.matchStatus)}`}
-                      >
-                        {statusText(item.drug.matchStatus)}
-                      </span>
-                    </div>
-                    {hasPriceCandidates && (
-                      <div className="candidate-chips">
-                        {item.drug.priceMasters?.map((price) => (
-                          <button
-                            key={price.id}
-                            className={
-                              item.drug.priceMasterId === price.id
-                                ? "is-active"
-                                : ""
-                            }
-                            type="button"
-                            onClick={() => onSelectPrice(item.id, price.id)}
-                          >
-                            {price.productName} · {price.productCode}
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    {!item.drug.priceMasterId && hasPriceCandidates && (
-                      <p className="candidate-help">
-                        검증 API에서 받은 가격 후보입니다. 실제 입고할 약 정보를
-                        선택하면 입고 확정에 포함됩니다.
-                      </p>
-                    )}
-                    {!item.drug.priceMasterId && !hasPriceCandidates && (
-                      <div className="virtual-fields">
-                        <label>
-                          <span>가상약명</span>
-                          <input
-                            value={item.drug.virtualDrugName ?? item.drug.name}
-                            onChange={(event) =>
-                              onVirtualName(item.id, event.target.value)
-                            }
-                          />
-                        </label>
-                        <label>
-                          <span>가상 보험코드</span>
-                          <input
-                            value={
-                              item.drug.virtualInsuranceCode ??
-                              item.drug.insuranceCode
-                            }
-                            onChange={(event) =>
-                              onVirtualCode(item.id, event.target.value)
-                            }
-                          />
-                        </label>
-                        <div className="virtual-actions">
-                          <button
-                            type="button"
-                            onClick={() => onGenerateVirtual(item.id)}
-                          >
-                            자동 생성
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() =>
-                              onCheckVirtual(
-                                item.id,
-                                item.drug.virtualInsuranceCode ??
-                                  item.drug.insuranceCode,
-                              )
-                            }
-                          >
-                            중복 확인
-                          </button>
-                          <span
-                            className={
-                              item.drug.insuranceCodeExists === true
-                                ? "is-duplicated"
-                                : item.drug.insuranceCodeExists === false
-                                  ? "is-available"
-                                  : ""
-                            }
-                          >
-                            {item.drug.insuranceCodeExists === true
-                              ? "중복"
-                              : item.drug.insuranceCodeExists === false
-                                ? "사용 가능"
-                                : "확인 대기"}
-                          </span>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                );
-              })()}
-            </div>
-          ))}
-        </div>
+        {queue.length > 0 ? (
+          groups.map((group) => (
+            <ReceiptMatchGroup
+              key={group.title}
+              color={group.color}
+              danger={group.danger}
+              expanded={expandedGroups[group.status]}
+              items={group.items}
+              title={group.title}
+              onCheckVirtual={onCheckVirtual}
+              onGenerateVirtual={onGenerateVirtual}
+              onSelectPrice={onSelectPrice}
+              onToggle={() =>
+                setExpandedGroups((current) => ({
+                  ...current,
+                  [group.status]: !current[group.status],
+                }))
+              }
+              onVirtualCode={onVirtualCode}
+              onVirtualName={onVirtualName}
+            />
+          ))
+        ) : (
+          <div className="empty-state compact">
+            <strong>입고할 QR이 없습니다</strong>
+            <span>스캔 화면에서 다시 QR을 추가하세요.</span>
+          </div>
+        )}
       </section>
-      <BottomBar>
+      <BottomBar stack={Boolean(onRegeneratePreviewSerials)}>
+        {onRegeneratePreviewSerials && (
+          <button
+            className="secondary-btn"
+            type="button"
+            onClick={onRegeneratePreviewSerials}
+          >
+            테스트 SN 재생성
+          </button>
+        )}
+        {commitBlocked && (
+          <p className="receipt-bottom-warning">{commitBlockedReason}</p>
+        )}
+        {!commitBlocked && submitErrorMessage && (
+          <p className="receipt-bottom-error">{submitErrorMessage}</p>
+        )}
         <button
           className="primary-btn"
           type="button"
-          disabled={eligibleCount === 0}
+          disabled={queue.length === 0 || commitBlocked}
           onClick={onCommit}
         >
-          {eligibleCount}건 입고 확정
+          {commitBlocked ? "선택 후 입고 확정" : `${eligibleCount}건 입고 확정`}
         </button>
       </BottomBar>
     </>
+  );
+}
+
+function ReceiptMatchGroup({
+  color,
+  danger,
+  expanded,
+  items,
+  title,
+  onCheckVirtual,
+  onGenerateVirtual,
+  onSelectPrice,
+  onToggle,
+  onVirtualCode,
+  onVirtualName,
+}: {
+  color: string;
+  danger?: boolean;
+  expanded: boolean;
+  items: ReceiptQueueItem[];
+  title: string;
+  onCheckVirtual: (itemId: string, insuranceCode: string) => void;
+  onGenerateVirtual: (itemId: string) => void;
+  onSelectPrice: (itemId: string, priceMasterId: string) => void;
+  onToggle: () => void;
+  onVirtualCode: (itemId: string, value: string) => void;
+  onVirtualName: (itemId: string, value: string) => void;
+}) {
+  return (
+    <section className={`match-box ${danger ? "danger" : ""}`}>
+      <button
+        className="match-box-head"
+        type="button"
+        aria-expanded={expanded}
+        onClick={onToggle}
+      >
+        <span>
+          <i style={{ backgroundColor: color }} />
+          {title}
+        </span>
+        <span className="match-box-count">
+          <strong style={{ color }}>{items.length}건</strong>
+          <ChevronDown
+            className={expanded ? "is-open" : ""}
+            size={16}
+            strokeWidth={2.4}
+          />
+        </span>
+      </button>
+      {expanded && items.length > 0 && (
+        <div
+          className={`receipt-fix-list ${
+            items.length >= 3 ? "is-scrollable" : ""
+          }`}
+        >
+          {items.map((item) => (
+            <ReceiptMatchItem
+              key={item.id}
+              item={item}
+              onCheckVirtual={onCheckVirtual}
+              onGenerateVirtual={onGenerateVirtual}
+              onSelectPrice={onSelectPrice}
+              onVirtualCode={onVirtualCode}
+              onVirtualName={onVirtualName}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ReceiptMatchItem({
+  item,
+  onCheckVirtual,
+  onGenerateVirtual,
+  onSelectPrice,
+  onVirtualCode,
+  onVirtualName,
+}: {
+  item: ReceiptQueueItem;
+  onCheckVirtual: (itemId: string, insuranceCode: string) => void;
+  onGenerateVirtual: (itemId: string) => void;
+  onSelectPrice: (itemId: string, priceMasterId: string) => void;
+  onVirtualCode: (itemId: string, value: string) => void;
+  onVirtualName: (itemId: string, value: string) => void;
+}) {
+  const candidatePrices = uniquePriceMasters(
+    item.drug.priceMasters ?? [],
+    item.drug.priceMasterId,
+  );
+  const hasPriceCandidates = candidatePrices.length > 0;
+  const needsVirtualFields = !item.drug.priceMasterId && !hasPriceCandidates;
+
+  return (
+    <div className="receipt-fix-card">
+      <div className="receipt-fix-head">
+        <div>
+          <strong>{item.drug.name}</strong>
+        </div>
+        <div className="receipt-fix-actions">
+          <span className={`badge ${statusClass(item.drug.matchStatus)}`}>
+            {statusText(item.drug.matchStatus)}
+          </span>
+        </div>
+      </div>
+      {hasPriceCandidates && (
+        <div className="candidate-chips">
+          {candidatePrices.map((price) => (
+            <button
+              key={price.id}
+              className={
+                item.drug.priceMasterId === price.id ? "is-active" : ""
+              }
+              disabled={item.drug.priceMasterId === price.id}
+              type="button"
+              onClick={() => onSelectPrice(item.id, price.id)}
+            >
+              <span className="candidate-code">{price.productCode}</span>
+              <span className="candidate-name">{price.productName}</span>
+            </button>
+          ))}
+        </div>
+      )}
+      {!item.drug.priceMasterId && hasPriceCandidates && (
+        <p className="candidate-help">
+          실제 입고할 약 정보를 선택하면 입고 확정에 포함됩니다.
+        </p>
+      )}
+      {needsVirtualFields && (
+        <div className="virtual-fields">
+          <label>
+            <span>가상약명</span>
+            <input
+              value={item.drug.virtualDrugName ?? item.drug.name}
+              onChange={(event) => onVirtualName(item.id, event.target.value)}
+            />
+          </label>
+          <label>
+            <span>가상 보험코드</span>
+            <input
+              value={item.drug.virtualInsuranceCode ?? item.drug.insuranceCode}
+              onChange={(event) => onVirtualCode(item.id, event.target.value)}
+            />
+          </label>
+          <div className="virtual-actions">
+            <button type="button" onClick={() => onGenerateVirtual(item.id)}>
+              자동 생성
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                onCheckVirtual(
+                  item.id,
+                  item.drug.virtualInsuranceCode ?? item.drug.insuranceCode,
+                )
+              }
+            >
+              중복 확인
+            </button>
+            <span
+              className={
+                item.drug.insuranceCodeExists === true
+                  ? "is-duplicated"
+                  : item.drug.insuranceCodeExists === false
+                    ? "is-available"
+                    : ""
+              }
+            >
+              {item.drug.insuranceCodeExists === true
+                ? "중복"
+                : item.drug.insuranceCodeExists === false
+                  ? "사용 가능"
+                  : "확인 대기"}
+            </span>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -4040,8 +5066,7 @@ function ReturnConfirmedScreen({
       </div>
       <h1>{lookup.drugName}</h1>
       <p className="code-line">
-        PC {lookup.pc.slice(0, 4)}... · {lookup.sn} · {lookup.lot} · EXP{" "}
-        {lookup.exp.slice(0, 7)}
+        {lookup.sn} · {lookup.lot} · EXP {lookup.exp.slice(0, 7)}
       </p>
       <div className="info-card">
         <div className="triple">
@@ -4056,6 +5081,91 @@ function ReturnConfirmedScreen({
       </div>
       <button className="primary-btn push" type="button" onClick={onNext}>
         반품 수량 입력
+      </button>
+      <button
+        className="secondary-btn return-close-btn"
+        type="button"
+        onClick={onClose}
+      >
+        닫기
+      </button>
+    </ReturnSheet>
+  );
+}
+
+function ReturnEstimatedScreen({
+  lookup,
+  selectedCandidateId,
+  onChoose,
+  onClose,
+  onNext,
+}: {
+  lookup: Extract<ReturnLookup, { matchType: "ESTIMATED" }>;
+  selectedCandidateId: string;
+  onChoose: (id: string) => void;
+  onClose: () => void;
+  onNext: () => void;
+}) {
+  const candidateCount = lookup.sellerCandidates.length;
+
+  return (
+    <ReturnSheet height="estimated">
+      <span className="state-badge estimated">
+        <span />
+        추정 · 구매 내역 후보
+      </span>
+      <h1>{lookup.drugName}</h1>
+      <p className="code-line">
+        {lookup.sn} · {lookup.lot} · EXP {lookup.exp.slice(0, 7)}
+      </p>
+      <p className="estimated-copy">
+        {lookup.message ??
+          "입고 이력은 없지만 구매 내역 기준 판매처 후보가 있습니다."}
+      </p>
+      <div className="candidate-list return-candidate-list">
+        {lookup.sellerCandidates.map((candidate) => {
+          const isActive = candidate.id === selectedCandidateId;
+          const productName =
+            candidate.productName && candidate.productName !== "-"
+              ? candidate.productName
+              : "";
+          const metaParts = [
+            candidate.orderItemName && candidate.orderItemName !== "-"
+              ? candidate.orderItemName
+              : "",
+            candidate.quantity > 0 ? `${candidate.quantity}개` : "",
+          ].filter(Boolean);
+
+          return (
+            <button
+              key={candidate.id}
+              className={`return-candidate ${isActive ? "is-active" : ""}`}
+              type="button"
+              onClick={() => onChoose(candidate.id)}
+            >
+              <span className="return-candidate-main">
+                <strong>{candidate.sellerName}</strong>
+                <em>{candidate.transactionAt}</em>
+              </span>
+              {productName && (
+                <span className="return-candidate-product">{productName}</span>
+              )}
+              {metaParts.length > 0 && (
+                <span className="return-candidate-meta">
+                  {metaParts.join(" · ")}
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <button
+        className="primary-btn push"
+        type="button"
+        disabled={candidateCount === 0}
+        onClick={onNext}
+      >
+        선택한 판매처로 반품
       </button>
       <button
         className="secondary-btn return-close-btn"
@@ -4321,20 +5431,22 @@ function StocksScreen({
           </div>
         )}
         {stocks.length > 0 && (
-          <div className="list-card">
+          <div className="list-card stock-list">
             {stocks.map((stock) => (
               <div className="stock-row" key={stock.id}>
-                <div>
-                  <strong>{stock.name}</strong>
-                  <span>
-                    {stock.insuranceCode} · 예상{" "}
-                    {currency(stock.quantity * stock.price)}원
-                  </span>
+                <div className="stock-main">
+                  <strong className="stock-name">{stock.name}</strong>
+                  <div className="stock-meta">
+                    <span>{stock.insuranceCode || "보험코드 없음"}</span>
+                    <span>예상 {currency(stock.quantity * stock.price)}원</span>
+                  </div>
                 </div>
-                <span className={`badge ${statusClass(stock.matchStatus)}`}>
-                  {statusText(stock.matchStatus)}
-                </span>
-                <b>{stock.quantity}개</b>
+                <div className="stock-side">
+                  <span className={`badge ${statusClass(stock.matchStatus)}`}>
+                    {statusText(stock.matchStatus)}
+                  </span>
+                  <b>{stock.quantity}개</b>
+                </div>
               </div>
             ))}
           </div>
@@ -4483,7 +5595,15 @@ function Metric({
   );
 }
 
-function DrugRow({ delta, item }: { delta: number; item: ReceiptQueueItem }) {
+function DrugRow({
+  delta,
+  item,
+  onRemove,
+}: {
+  delta: number;
+  item: ReceiptQueueItem;
+  onRemove?: (itemId: string) => void;
+}) {
   return (
     <div className="drug-row">
       <div>
@@ -4494,12 +5614,23 @@ function DrugRow({ delta, item }: { delta: number; item: ReceiptQueueItem }) {
       <span className={`badge ${statusClass(item.drug.matchStatus)}`}>
         {statusText(item.drug.matchStatus)}
       </span>
+      {onRemove && (
+        <button
+          className="icon-delete-btn"
+          type="button"
+          aria-label={`${item.drug.name} 삭제`}
+          title="삭제"
+          onClick={() => onRemove(item.id)}
+        >
+          <Trash2 size={15} strokeWidth={2.3} />
+        </button>
+      )}
     </div>
   );
 }
 
 function receiptDrugDetail(item: ReceiptQueueItem) {
-  const parts = [`PC ${shortCode(item.qr.pc)}`, `SN ${item.qr.sn}`];
+  const parts = [`SN ${item.qr.sn || "-"}`];
   const candidateCount = item.drug.priceMasters?.length ?? 0;
 
   if (item.drug.priceMasterId) {
@@ -4518,45 +5649,6 @@ function receiptDrugDetail(item: ReceiptQueueItem) {
 
   parts.push(`총수량 ${item.drug.productTotalQuantity}`);
   return parts.join(" · ");
-}
-
-function MatchBox({
-  color,
-  count,
-  danger,
-  item,
-  title,
-}: {
-  color: string;
-  count: number;
-  danger?: boolean;
-  item?: ReceiptQueueItem;
-  title: string;
-}) {
-  return (
-    <div className={`match-box ${danger ? "danger" : ""}`}>
-      <div>
-        <span>
-          <i style={{ backgroundColor: color }} />
-          {title}
-        </span>
-        <strong style={{ color }}>{count}건</strong>
-      </div>
-      {item && (
-        <div className={`match-detail ${danger ? "danger" : ""}`}>
-          <span>
-            <b>{item.drug.name}</b>
-            <em>
-              {item.drug.matchStatus === "MISSING"
-                ? "기준 데이터 없음"
-                : `${item.drug.insuranceCode} · 가격 ${currency(item.drug.price)}원`}
-            </em>
-          </span>
-          <button type="button">{danger ? "재시도" : "수정"}</button>
-        </div>
-      )}
-    </div>
-  );
 }
 
 function ReturnSheet({
@@ -4677,7 +5769,7 @@ type CmsCookieState = {
 type CmsPurchaseHistory = {
   id: string;
   sellerName: string;
-  transactionDate: string;
+  transactionAt: string;
   orderItemName: string;
   productName: string;
   quantity: number;
@@ -4837,7 +5929,7 @@ const demoCmsPurchaseHistories: CmsPurchaseHistory[] = [
   {
     id: "PH-100",
     sellerName: "한미약품 A도매",
-    transactionDate: "2026-01-10 12:56",
+    transactionAt: "2026-01-10 12:56",
     orderItemName: "타이레놀정 500mg 30T",
     productName: "타이레놀정",
     quantity: 30,
@@ -4846,7 +5938,7 @@ const demoCmsPurchaseHistories: CmsPurchaseHistory[] = [
   {
     id: "PH-101",
     sellerName: "지오영 도매",
-    transactionDate: "2025-11-22 09:12",
+    transactionAt: "2025-11-22 09:12",
     orderItemName: "예시약 30정",
     productName: "예시약",
     quantity: 60,
@@ -5639,7 +6731,7 @@ function normalizeCmsPurchase(raw: unknown, index: number): CmsPurchaseHistory {
   return {
     id: String(item.id ?? item.purchaseHistoryId ?? index),
     sellerName: String(item.sellerName ?? item.wholesalerName ?? "-"),
-    transactionDate: String(item.transactionDate ?? item.orderDate ?? "-"),
+    transactionAt: String(item.transactionAt ?? item.orderDate ?? "-"),
     orderItemName: String(item.orderItemName ?? item.inventoryName ?? "-"),
     productName: String(item.productName ?? item.name ?? "-"),
     quantity: Number(item.quantity ?? 0),
@@ -6013,7 +7105,7 @@ function CmsDashboard({
                 `${masters.filter((item) => item.status === "NAME_MATCH").length}건`,
               ],
               [
-                "가상생성",
+                "비급여",
                 `${masters.filter((item) => item.status === "VIRTUAL").length}건`,
               ],
               [
@@ -6773,7 +7865,7 @@ function CmsPurchasePage({
                 <div>
                   <strong>{history.orderItemName}</strong>
                   <span>
-                    {history.sellerName} · {history.transactionDate} ·{" "}
+                    {history.sellerName} · {history.transactionAt} ·{" "}
                     {history.source}
                   </span>
                 </div>

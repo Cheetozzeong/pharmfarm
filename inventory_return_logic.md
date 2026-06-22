@@ -851,6 +851,9 @@ QR `pc` 기준 매칭 순서:
 - 차감 실패 항목은 재처리 또는 수동 확인할 수 있도록 별도 관리한다.
 - 처방전 차감 실패 항목은 재고를 차감하지 않고 실패 항목으로 저장한 뒤 약국 관리자가 수동 처리한다.
 - 실패 항목 상태는 단순하게 `FAILED`와 `RESOLVED`로 관리하고, 어떤 방식으로 처리했는지는 `resolutionType`에 저장한다.
+- 자동 차감은 처방전 약명과 재고 약명을 공백 제거 정규화한 뒤 양방향 포함 검색으로 먼저 비교한다.
+- 처방전 보험코드는 비급여약에서 임의 값이 들어올 수 있으므로 보험코드만으로는 차감하지 않는다. 보험코드로 재고를 찾더라도 처방전 약명과 재고 약명이 함께 매칭될 때만 차감한다.
+- 실제약 입고 재고명은 2번 기준 데이터 제품명을 사용하므로 처방전 약명과의 이름 기반 매칭률을 높인다.
 
 처방전 차감 실패 수동 처리:
 
@@ -922,7 +925,7 @@ QR `pc` 기준 매칭 순서:
 
 | Method | Path | 설명 |
 | --- | --- | --- |
-| GET | `/api/v1/pharmfarm/wholesalers` | 도매처 리스트 조회 |
+| GET | `/api/v1/pharmfarm/wholesalers?keyword={keyword}` | 도매처 리스트 조회. `keyword`는 선택값이며 공백 제거 정규화 기준으로 도매처명을 검색 |
 | POST | `/api/v1/pharmfarm/wholesalers` | 약국별 도매처 직접 등록 |
 | PATCH | `/api/v1/pharmfarm/wholesalers/{wholesalerId}` | 약국별 도매처 수정 |
 
@@ -1026,9 +1029,11 @@ GET /api/v1/pharmfarm/insurance-codes/exists?insuranceCode=2PF000001
 입고 요청 약 정보 처리:
 
 1. `priceMasterId`가 있으면 선택된 2번 기준 데이터를 기준으로 실제 재고를 등록한다.
-2. `priceMasterId`가 없으면 `virtualDrugName`, `virtualInsuranceCode`가 필수다.
-3. `virtualInsuranceCode`는 2번 기준 데이터의 활성 제품코드와 같은 약국의 활성 재고 보험코드와 중복되면 안 된다.
-4. 최종 입고 시에는 QR 검증 결과를 신뢰하지 않고 `pc`, `drugMasterId`, `priceMasterId`, 보험코드 중복 여부를 다시 검증한다.
+2. 실제 재고의 약명은 선택된 2번 기준 데이터의 `productName`을 사용한다. 처방전 데이터가 2번 기준 데이터명과 유사하게 들어오므로 이름 기반 재고 차감 검색과 맞추기 위함이다.
+3. 실제 재고의 보험코드는 선택된 2번 기준 데이터의 `productCode`, 가격은 `maxPrice`를 사용한다.
+4. `priceMasterId`가 없으면 `virtualDrugName`, `virtualInsuranceCode`가 필수다.
+5. `virtualInsuranceCode`는 2번 기준 데이터의 활성 제품코드와 같은 약국의 활성 재고 보험코드와 중복되면 안 된다.
+6. 최종 입고 시에는 QR 검증 결과를 신뢰하지 않고 `pc`, `drugMasterId`, `priceMasterId`, 보험코드 중복 여부를 다시 검증한다.
 
 ### 재고
 

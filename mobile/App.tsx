@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Platform,
   Pressable,
+  SafeAreaView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -21,6 +22,16 @@ import { WebView, type WebViewMessageEvent } from "react-native-webview";
 
 const webUrl =
   process.env.EXPO_PUBLIC_PHARMFARM_WEB_URL ?? "https://pharmfarm.vercel.app/";
+const nativeSafeAreaScript = `
+  (() => {
+    const style = document.createElement('style');
+    style.textContent = ':root { --safe-top: 0px !important; }';
+    const attach = () => document.head && document.head.appendChild(style);
+    if (document.head) attach();
+    else document.addEventListener('DOMContentLoaded', attach, { once: true });
+  })();
+  true;
+`;
 const nativeScannerFrameSize = 248;
 const nativeScannerFrameTopRatio = 0.45;
 const nativeScannerFrameTolerance = 12;
@@ -128,9 +139,9 @@ export default function App() {
     });
 
   useEffect(() => {
-    setStatusBarHidden(true, "none");
+    setStatusBarHidden(false, "none");
     if (Platform.OS === "android") {
-      setStatusBarTranslucent(true);
+      setStatusBarTranslucent(false);
     }
   }, []);
 
@@ -228,13 +239,14 @@ export default function App() {
   );
 
   return (
-    <View style={styles.appShell}>
+    <SafeAreaView style={styles.appShell}>
       <StatusBar
         animated={false}
-        backgroundColor="transparent"
-        hidden
+        backgroundColor="#0C0E0F"
+        hidden={false}
         hideTransitionAnimation="none"
-        translucent
+        style="light"
+        translucent={false}
       />
       {loadError ? (
         <View style={styles.errorPanel}>
@@ -260,6 +272,7 @@ export default function App() {
           automaticallyAdjustContentInsets={false}
           contentInsetAdjustmentBehavior="never"
           domStorageEnabled
+          injectedJavaScriptBeforeContentLoaded={nativeSafeAreaScript}
           javaScriptEnabled
           mediaCapturePermissionGrantType="grant"
           mediaPlaybackRequiresUserAction={false}
@@ -368,16 +381,17 @@ export default function App() {
           )}
         </View>
       )}
-    </View>
+    </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
   appShell: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: "#0C0E0F",
   },
   webview: {
+    backgroundColor: "#ffffff",
     flex: 1,
   },
   nativeCamera: {
@@ -590,6 +604,7 @@ const styles = StyleSheet.create({
     fontWeight: "900",
   },
   errorPanel: {
+    backgroundColor: "#ffffff",
     flex: 1,
     justifyContent: "center",
     padding: 22,

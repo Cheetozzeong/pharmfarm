@@ -14,8 +14,8 @@
       "bundleIdentifier": "kr.pharmfarm.mobile",
       "infoPlist": {
         "NSCameraUsageDescription": "의약품 QR 및 바코드를 촬영해 입고와 반품 내역을 확인합니다.",
-        "UIStatusBarHidden": true,
-        "UIViewControllerBasedStatusBarAppearance": false
+        "UIStatusBarHidden": false,
+        "UIViewControllerBasedStatusBarAppearance": true
       }
     },
     "android": {
@@ -23,9 +23,10 @@
       "permissions": ["CAMERA"]
     },
     "androidStatusBar": {
-      "hidden": true,
-      "translucent": true,
-      "backgroundColor": "#ffffff"
+      "hidden": false,
+      "translucent": false,
+      "backgroundColor": "#0C0E0F",
+      "barStyle": "light-content"
     },
     "web": {
       "bundler": "metro"
