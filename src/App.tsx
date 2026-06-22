@@ -353,6 +353,8 @@ function storeScanPerformanceMode(mode: ScanPerformanceMode) {
 }
 
 function getStoredScannerEngine(): ScannerEngine {
+  if (!getReactNativeWebView()) return "web";
+
   return localStorage.getItem(storageKeys.scannerEngine) === "native"
     ? "native"
     : "web";
@@ -2543,6 +2545,13 @@ function MobileApp() {
   }, []);
 
   const toggleScannerEngine = useCallback(() => {
+    if (!getReactNativeWebView()) {
+      storeScannerEngine("web");
+      setScannerEngine("web");
+      setScanNotice("네이티브 리더는 앱에서만 사용할 수 있습니다.");
+      return;
+    }
+
     setScannerEngine((current) => {
       const next = current === "native" ? "web" : "native";
 
@@ -2570,6 +2579,13 @@ function MobileApp() {
       return next;
     });
   }, []);
+
+  useEffect(() => {
+    if (scannerEngine !== "native" || getReactNativeWebView()) return;
+
+    storeScannerEngine("web");
+    setScannerEngine("web");
+  }, [scannerEngine]);
 
   const refocusCamera = useCallback(() => {
     const video = videoRef.current;
@@ -2701,7 +2717,7 @@ function MobileApp() {
         const reader = createScannerReader(scanPerformanceMode);
         const scanModeLabel =
           scanPerformanceMode === "performance" ? "저사양" : "정밀";
-        setScanNotice(`카메라 실행 중 · QR 전용 ${scanModeLabel} 모드입니다.`);
+        setScanNotice(`카메라 실행 중`);
         const controls = await startGuidedWebScanner({
           constraints: getCameraConstraints(scanPerformanceMode),
           guideElement: scanGuideRef.current,
@@ -2811,6 +2827,7 @@ function MobileApp() {
       setCameraActive(false);
     }
     setMode(nextMode);
+    setLastScanName("QR 스캔 대기");
     setScreen(
       nextMode === "receipt" && !selectedWholesaler ? "wholesaler" : "scan",
     );
@@ -2852,6 +2869,7 @@ function MobileApp() {
     setMode("return");
     setCameraActive(false);
     setScreen("scan");
+    setLastScanName("QR 스캔 대기");
     setScanNotice("반품 모드입니다. QR을 스캔하면 판매처를 조회합니다.");
   }
 
@@ -3404,7 +3422,13 @@ function ScanScreen({
   const canUseCamera = !isReceipt || Boolean(selectedWholesaler);
   const usingNativeScanner = scannerEngine === "native";
   const scannerActive = cameraActive || usingNativeScanner;
-  const nativePreview = usingNativeScanner && !getReactNativeWebView();
+  const nativeAppBridgeAvailable = Boolean(getReactNativeWebView());
+  const nativePreview = usingNativeScanner && !nativeAppBridgeAvailable;
+  const scanStatusText =
+    scanNotice ||
+    (isReceipt
+      ? "QR이 인식되면 자동으로 스캔됩니다"
+      : "입고 이력 또는 구매 내역에서 판매처를 찾아드려요");
   const [menuOpen, setMenuOpen] = useState(false);
 
   return (
@@ -3458,28 +3482,32 @@ function ScanScreen({
               >
                 입고 확인 리스트
               </button>
-              <label className="scan-toggle-row">
-                <input
-                  checked={scannerEngine === "native"}
-                  type="checkbox"
-                  onChange={() => {
-                    setMenuOpen(false);
-                    onScannerEngine();
-                  }}
-                />
-                <span>네이티브 리더 사용</span>
-              </label>
-              <button
-                type="button"
-                onClick={() => {
-                  setMenuOpen(false);
-                  onScanPerformanceMode();
-                }}
-              >
-                {scanPerformanceMode === "performance"
-                  ? "정밀 스캔 모드"
-                  : "저사양 스캔 모드"}
-              </button>
+              {nativeAppBridgeAvailable && (
+                <>
+                  <label className="scan-toggle-row">
+                    <input
+                      checked={scannerEngine === "native"}
+                      type="checkbox"
+                      onChange={() => {
+                        setMenuOpen(false);
+                        onScannerEngine();
+                      }}
+                    />
+                    <span>네이티브 리더 사용</span>
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMenuOpen(false);
+                      onScanPerformanceMode();
+                    }}
+                  >
+                    {scanPerformanceMode === "performance"
+                      ? "정밀 스캔 모드"
+                      : "저사양 스캔 모드"}
+                  </button>
+                </>
+              )}
               <button
                 type="button"
                 onClick={() => {
@@ -3552,6 +3580,9 @@ function ScanScreen({
         )}
         {!nativePreview && (
           <>
+            <div className="scan-status-copy">
+              <span>{scanStatusText}</span>
+            </div>
             <video
               ref={videoRef}
               className={`camera-video ${cameraActive ? "is-active" : ""}`}
@@ -3580,12 +3611,6 @@ function ScanScreen({
                   ? "QR을 사각형 안에 맞춰주세요"
                   : "반품할 약품의 QR을 스캔하세요"}
               </strong>
-              <span>
-                {scanNotice ||
-                  (isReceipt
-                    ? "QR이 인식되면 자동으로 스캔됩니다"
-                    : "입고 이력 또는 구매 내역에서 판매처를 찾아드려요")}
-              </span>
             </div>
             <div className="scan-result-stack">
               <div className="scan-result">

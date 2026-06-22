@@ -623,22 +623,38 @@ p {
   text-align: center;
 }
 
-.scan-copy strong,
-.scan-copy span {
+.scan-status-copy {
+  position: absolute;
+  top: 62px;
+  right: 18px;
+  left: 18px;
+  z-index: 2;
+  pointer-events: none;
+  text-align: center;
+}
+
+.scan-status-copy span {
+  display: -webkit-box;
+  max-width: 320px;
+  overflow: hidden;
+  margin: 0 auto;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.38;
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.44);
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.scan-copy strong {
   display: block;
 }
 
 .scan-copy strong {
-  margin-bottom: 6px;
   color: #fff;
   font-size: 15px;
   font-weight: 700;
-}
-
-.scan-copy span {
-  color: rgba(255, 255, 255, 0.58);
-  font-size: 13px;
-  font-weight: 500;
 }
 
 .scan-result-stack {
@@ -2203,6 +2219,10 @@ body:has(.cms-login) {
   .scanner-zone {
     gap: 18px;
     --scan-frame-center-y: 42%;
+  }
+
+  .scan-status-copy {
+    top: 56px;
   }
 
   .scan-copy {

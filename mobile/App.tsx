@@ -355,6 +355,15 @@ export default function App() {
                   {nativeScannerMessage}
                 </Text>
               </View>
+              <View style={styles.nativeAndroidIcon} pointerEvents="none">
+                <View style={styles.androidAntennaLeft} />
+                <View style={styles.androidAntennaRight} />
+                <View style={styles.androidHead}>
+                  <View style={styles.androidEyeLeft} />
+                  <View style={styles.androidEyeRight} />
+                </View>
+                <View style={styles.androidBody} />
+              </View>
             </>
           )}
         </View>
@@ -440,6 +449,70 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 13,
     fontWeight: "900",
+  },
+  nativeAndroidIcon: {
+    alignItems: "center",
+    bottom: 18,
+    height: 36,
+    justifyContent: "flex-end",
+    opacity: 0.92,
+    position: "absolute",
+    right: 18,
+    width: 36,
+    zIndex: 4,
+  },
+  androidAntennaLeft: {
+    backgroundColor: "#7EDB75",
+    borderRadius: 2,
+    height: 9,
+    left: 10,
+    position: "absolute",
+    top: 1,
+    transform: [{ rotate: "-32deg" }],
+    width: 2,
+  },
+  androidAntennaRight: {
+    backgroundColor: "#7EDB75",
+    borderRadius: 2,
+    height: 9,
+    position: "absolute",
+    right: 10,
+    top: 1,
+    transform: [{ rotate: "32deg" }],
+    width: 2,
+  },
+  androidBody: {
+    backgroundColor: "#7EDB75",
+    borderBottomLeftRadius: 5,
+    borderBottomRightRadius: 5,
+    height: 15,
+    width: 24,
+  },
+  androidEyeLeft: {
+    backgroundColor: "#0C0E0F",
+    borderRadius: 2,
+    height: 3,
+    left: 7,
+    position: "absolute",
+    top: 8,
+    width: 3,
+  },
+  androidEyeRight: {
+    backgroundColor: "#0C0E0F",
+    borderRadius: 2,
+    height: 3,
+    position: "absolute",
+    right: 7,
+    top: 8,
+    width: 3,
+  },
+  androidHead: {
+    backgroundColor: "#7EDB75",
+    borderTopLeftRadius: 14,
+    borderTopRightRadius: 14,
+    height: 15,
+    position: "relative",
+    width: 24,
   },
   nativePrimaryButton: {
     alignItems: "center",
