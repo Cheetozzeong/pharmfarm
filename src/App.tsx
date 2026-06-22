@@ -202,6 +202,7 @@ const apiBase = (
 const storageKeys = {
   accessToken: "pharmfarm.accessToken",
   refreshToken: "pharmfarm.refreshToken",
+  authAccount: "pharmfarm.authAccount",
 };
 
 const alreadyProcessedAudioSrc =
@@ -213,11 +214,25 @@ type TokenResponse = {
   accessToken?: string;
   refreshToken?: string;
   token?: string;
+  account?: unknown;
+  user?: unknown;
   data?: {
     accessToken?: string;
     refreshToken?: string;
     token?: string;
+    account?: unknown;
+    user?: unknown;
   };
+};
+
+type AuthAccount = {
+  accountId?: string;
+  pharmacyId?: string;
+  pharmacyName?: string;
+  loginId?: string;
+  accountName?: string;
+  role?: string;
+  accountType?: string;
 };
 
 const demoWholesalers: Wholesaler[] = [
@@ -462,9 +477,126 @@ function hasStoredAuthTokens() {
   return Boolean(getStoredAccessToken() || getStoredRefreshToken());
 }
 
+function getStoredAuthAccount(): AuthAccount | null {
+  const stored = localStorage.getItem(storageKeys.authAccount);
+  if (!stored) return null;
+
+  try {
+    return JSON.parse(stored) as AuthAccount;
+  } catch {
+    localStorage.removeItem(storageKeys.authAccount);
+    return null;
+  }
+}
+
 function clearAuthTokens() {
   localStorage.removeItem(storageKeys.accessToken);
   localStorage.removeItem(storageKeys.refreshToken);
+  localStorage.removeItem(storageKeys.authAccount);
+}
+
+function compactAuthAccount(account: AuthAccount): AuthAccount {
+  return Object.fromEntries(
+    Object.entries(account).filter(
+      ([, value]) => value !== undefined && value !== "",
+    ),
+  ) as AuthAccount;
+}
+
+function decodeJwtPayload(token: string): Record<string, unknown> {
+  const payload = token.split(".")[1];
+  if (!payload) return {};
+
+  try {
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+    const binary = window.atob(padded);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    return JSON.parse(new TextDecoder().decode(bytes)) as Record<
+      string,
+      unknown
+    >;
+  } catch {
+    return {};
+  }
+}
+
+function normalizeAuthAccount(
+  raw: unknown,
+  token?: string,
+): AuthAccount | null {
+  const item = asRecord(raw);
+  const data = asRecord(item.data);
+  const jwt = token ? decodeJwtPayload(token) : {};
+  const account = asRecord(
+    item.account ?? data.account ?? item.user ?? data.user ?? item,
+  );
+  const pharmacy = asRecord(account.pharmacy ?? item.pharmacy ?? data.pharmacy);
+  const source = {
+    ...jwt,
+    ...item,
+    ...data,
+    ...account,
+    pharmacyName:
+      account.pharmacyName ??
+      account.pharmacy_name ??
+      pharmacy.pharmacyName ??
+      pharmacy.pharmacy_name ??
+      pharmacy.name ??
+      item.pharmacyName ??
+      data.pharmacyName ??
+      jwt.pharmacyName,
+    pharmacyId:
+      account.pharmacyId ??
+      account.pharmacy_id ??
+      pharmacy.pharmacyId ??
+      pharmacy.pharmacy_id ??
+      pharmacy.id ??
+      item.pharmacyId ??
+      data.pharmacyId ??
+      jwt.pharmacyId,
+  } as Record<string, unknown>;
+
+  const normalized = compactAuthAccount({
+    accountId:
+      source.accountId !== undefined || source.sub !== undefined
+        ? String(source.accountId ?? source.sub)
+        : undefined,
+    pharmacyId:
+      source.pharmacyId !== undefined ? String(source.pharmacyId) : undefined,
+    pharmacyName:
+      source.pharmacyName !== undefined
+        ? String(source.pharmacyName)
+        : undefined,
+    loginId: source.loginId !== undefined ? String(source.loginId) : undefined,
+    accountName:
+      source.accountName !== undefined
+        ? String(source.accountName)
+        : source.name !== undefined
+          ? String(source.name)
+          : undefined,
+    role: source.role !== undefined ? String(source.role) : undefined,
+    accountType:
+      source.accountType !== undefined
+        ? String(source.accountType)
+        : source.account_type !== undefined
+          ? String(source.account_type)
+          : undefined,
+  });
+
+  return Object.keys(normalized).length > 0 ? normalized : null;
+}
+
+function storeAuthAccount(account: AuthAccount | null) {
+  if (!account) return getStoredAuthAccount();
+
+  const merged = compactAuthAccount({
+    ...(getStoredAuthAccount() ?? {}),
+    ...account,
+  });
+
+  localStorage.setItem(storageKeys.authAccount, JSON.stringify(merged));
+  return merged;
 }
 
 function storeTokenResponse(raw: TokenResponse) {
@@ -478,6 +610,7 @@ function storeTokenResponse(raw: TokenResponse) {
   if (refreshToken) {
     localStorage.setItem(storageKeys.refreshToken, refreshToken);
   }
+  storeAuthAccount(normalizeAuthAccount(raw, accessToken));
   return true;
 }
 
@@ -1712,7 +1845,10 @@ function MobileApp() {
     setApiState("checking");
     setApiMessage("자동 로그인 확인 중");
     try {
-      await apiFetch<unknown>("/auth/me");
+      const authData = await apiFetch<unknown>("/auth/me");
+      storeAuthAccount(
+        normalizeAuthAccount(authData, getStoredAccessToken() ?? undefined),
+      );
       const connected = await refreshFromBackend();
       if (connected) {
         setApiState("connected");
@@ -3687,20 +3823,15 @@ function AccountScreen({
       {onBack && <Header title="계정" onBack={onBack} />}
       <section className="scroll-body account-body">
         <div className="login-panel">
-          <div className="login-brand">
-            <img src={pharmfarmLogo} alt="" />
-            <div>
-              <strong>PharmFarm</strong>
-              <span>약국 재고 관리</span>
+          <div className="app-login-hero">
+            <div className="app-login-logo">
+              <img src={pharmfarmLogo} alt="" />
             </div>
-          </div>
-          <div className="login-copy">
-            <strong>입고와 반품 스캔을 시작하세요</strong>
-            <span>계정으로 로그인하면 재고와 도매처 정보를 불러옵니다.</span>
+            <span>약품 재고를 QR로 간편하게</span>
           </div>
           <form className="login-form" onSubmit={onSubmit}>
             <label>
-              <span>아이디</span>
+              <span>약국 아이디</span>
               <input
                 autoComplete="username"
                 value={loginId}
@@ -3719,6 +3850,11 @@ function AccountScreen({
             <button className="primary-btn" type="submit">
               로그인
             </button>
+            <div className="login-links">
+              <span>비밀번호 찾기</span>
+              <i />
+              <span>약국 등록 문의</span>
+            </div>
           </form>
         </div>
       </section>
@@ -4242,8 +4378,19 @@ function CmsApp({
   path: string;
 }) {
   const page = getCmsPage(path);
-  const [apiState, setApiState] = useState<ApiState>("checking");
-  const [apiMessage, setApiMessage] = useState("CMS 데이터 확인 중");
+  const isCmsLoginRoute = path === "/cms/login";
+  const [postLoginPath, setPostLoginPath] = useState(
+    path === "/cms/login" ? "/cms" : path,
+  );
+  const [apiState, setApiState] = useState<ApiState>(() =>
+    hasStoredAuthTokens() ? "checking" : "unauthorized",
+  );
+  const [apiMessage, setApiMessage] = useState(() =>
+    hasStoredAuthTokens() ? "CMS 데이터 확인 중" : "CMS 로그인이 필요합니다.",
+  );
+  const [authAccount, setAuthAccount] = useState<AuthAccount | null>(() =>
+    getStoredAuthAccount(),
+  );
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
   const [masterQuery, setMasterQuery] = useState("");
@@ -4300,9 +4447,23 @@ function CmsApp({
     setEditingWholesalerName(selectedWholesaler?.name ?? "");
   }, [selectedWholesaler?.name]);
 
+  useEffect(() => {
+    if (apiState !== "unauthorized" || isCmsLoginRoute) return;
+
+    setPostLoginPath(path);
+    navigate("/cms/login");
+  }, [apiState, isCmsLoginRoute, navigate, path]);
+
+  useEffect(() => {
+    if (apiState !== "connected" || !isCmsLoginRoute) return;
+
+    navigate(postLoginPath === "/cms/login" ? "/cms" : postLoginPath);
+  }, [apiState, isCmsLoginRoute, navigate, postLoginPath]);
+
   const cmsFallback = useCallback((error: unknown) => {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
       clearAuthTokens();
+      setAuthAccount(null);
       setApiState("unauthorized");
       setApiMessage("CMS 로그인이 필요합니다.");
       return;
@@ -4318,6 +4479,7 @@ function CmsApp({
 
   const refreshCms = useCallback(async () => {
     if (!hasStoredAuthTokens()) {
+      setAuthAccount(null);
       setApiState("unauthorized");
       setApiMessage("CMS 로그인이 필요합니다.");
       return false;
@@ -4332,6 +4494,7 @@ function CmsApp({
         masterParams.toString() ? `?${masterParams}` : ""
       }`;
       const [
+        accountResult,
         masterResult,
         stockResult,
         cookieResult,
@@ -4339,6 +4502,7 @@ function CmsApp({
         syncResult,
         failureResult,
       ] = await Promise.allSettled([
+        apiFetch<unknown>("/auth/me"),
         apiFetch<unknown>(masterPath),
         apiFetch<unknown>("/stocks"),
         apiFetch<unknown>("/baropharm/cookie"),
@@ -4347,6 +4511,16 @@ function CmsApp({
         apiFetch<unknown>("/prescription-deductions/failed"),
       ]);
 
+      if (accountResult.status === "fulfilled") {
+        setAuthAccount(
+          storeAuthAccount(
+            normalizeAuthAccount(
+              accountResult.value,
+              getStoredAccessToken() ?? undefined,
+            ),
+          ),
+        );
+      }
       if (masterResult.status === "fulfilled") {
         setMasters(arrayPayload(masterResult.value).map(normalizeCmsMaster));
       }
@@ -4371,6 +4545,7 @@ function CmsApp({
       }
 
       const rejected = [
+        accountResult,
         masterResult,
         stockResult,
         cookieResult,
@@ -4403,10 +4578,12 @@ function CmsApp({
       setApiState("checking");
       setApiMessage("CMS 로그인 중");
       await login(loginId, password);
+      setAuthAccount(getStoredAuthAccount());
       const connected = await refreshCms();
       if (connected) {
         setApiState("connected");
         setApiMessage("CMS 로그인 완료");
+        navigate(postLoginPath === "/cms/login" ? "/cms" : postLoginPath);
       }
       setPassword("");
     } catch (error) {
@@ -4419,6 +4596,7 @@ function CmsApp({
 
   function logoutCms() {
     clearAuthTokens();
+    setAuthAccount(null);
     setApiState("unauthorized");
     setApiMessage("CMS 로그인이 필요합니다.");
   }
@@ -4756,9 +4934,23 @@ function CmsApp({
     }
   }
 
+  if (apiState === "unauthorized" || isCmsLoginRoute) {
+    return (
+      <CmsLoginPage
+        apiMessage={apiMessage}
+        apiState={apiState}
+        loginId={loginId}
+        password={password}
+        onLoginId={setLoginId}
+        onPassword={setPassword}
+        onSubmit={submitCmsLogin}
+      />
+    );
+  }
+
   return (
     <div className="cms-shell">
-      <CmsSidebar page={page} navigate={navigate} />
+      <CmsSidebar account={authAccount} page={page} navigate={navigate} />
       <main className="cms-main">
         <CmsHeader
           apiMessage={apiMessage}
@@ -4767,114 +4959,101 @@ function CmsApp({
           page={page}
           onRefresh={refreshCms}
         />
-        {apiState === "unauthorized" ? (
-          <CmsLoginPage
-            apiBase={apiBase}
-            apiMessage={apiMessage}
-            apiState={apiState}
-            loginId={loginId}
-            password={password}
-            onLoginId={setLoginId}
-            onPassword={setPassword}
-            onSubmit={submitCmsLogin}
-          />
-        ) : (
-          <>
-            {page === "dashboard" && (
-              <CmsDashboard
-                importJobs={importJobs}
-                stocks={stocks}
-                masters={masters}
-                syncJobs={syncJobs}
-                navigate={navigate}
-              />
-            )}
-            {page === "master" && (
-              <CmsMasterPage
-                includeInactive={includeInactive}
-                masterQuery={masterQuery}
-                masters={masters}
-                selectedMaster={selectedMaster}
-                onIncludeInactive={setIncludeInactive}
-                onMasterChange={updateMaster}
-                onQuery={setMasterQuery}
-                onRematch={rematchMaster}
-                onSave={saveMaster}
-                onSelect={setSelectedMasterId}
-                onUpload={uploadMasterCsv}
-              />
-            )}
-            {page === "import" && (
-              <CmsImportPage jobs={importJobs} onUpload={uploadMasterCsv} />
-            )}
-            {page === "inventory" && (
-              <CmsInventoryPage
-                adjustDirection={adjustDirection}
-                adjustMemo={adjustMemo}
-                adjustQuantity={adjustQuantity}
-                mergeInsuranceCode={mergeInsuranceCode}
-                selectedStock={selectedStock}
-                stocks={stocks}
-                onAdjust={adjustStock}
-                onAdjustDirection={setAdjustDirection}
-                onAdjustMemo={setAdjustMemo}
-                onAdjustQuantity={(value) =>
-                  setAdjustQuantity(Math.max(1, Math.min(999, value)))
-                }
-                onMergeInsuranceCode={setMergeInsuranceCode}
-                onMergeVirtual={mergeVirtualStock}
-                onSelect={setSelectedStockId}
-              />
-            )}
-            {page === "wholesaler" && (
-              <CmsWholesalerPage
-                editingName={editingWholesalerName}
-                newName={newWholesalerName}
-                query={wholesalerQuery}
-                searchStatus={cmsWholesalerSearchStatus}
-                selectedWholesaler={selectedWholesaler}
-                wholesalers={wholesalers}
-                onCreate={createCmsWholesaler}
-                onEditingName={setEditingWholesalerName}
-                onNewName={setNewWholesalerName}
-                onQuery={setWholesalerQuery}
-                onSave={saveCmsWholesaler}
-                onSearch={searchCmsWholesalers}
-                onSelect={setSelectedWholesalerId}
-              />
-            )}
-            {page === "dispense" && (
-              <CmsDispensePage
-                failures={deductionFailures}
-                prescriptionId={prescriptionId}
-                selectedFailure={selectedFailure}
-                selectedStockId={selectedStockId}
-                stocks={stocks}
-                onDeduct={deductPrescriptionStock}
-                onPrescriptionId={setPrescriptionId}
-                onResolve={resolveDeduction}
-                onSelectFailure={setSelectedFailureId}
-                onSelectStock={setSelectedStockId}
-              />
-            )}
-            {page === "purchase" && (
-              <CmsPurchasePage
-                cookieInput={cookieInput}
-                cookieState={cookieState}
-                histories={purchaseHistories}
-                syncEndDate={syncEndDate}
-                syncJobs={syncJobs}
-                syncStartDate={syncStartDate}
-                onCookieInput={setCookieInput}
-                onRegisterCookie={registerBaropharmCookie}
-                onResume={resumePurchaseSync}
-                onSync={startPurchaseSync}
-                onSyncEndDate={setSyncEndDate}
-                onSyncStartDate={setSyncStartDate}
-              />
-            )}
-          </>
-        )}
+        <>
+          {page === "dashboard" && (
+            <CmsDashboard
+              importJobs={importJobs}
+              stocks={stocks}
+              masters={masters}
+              syncJobs={syncJobs}
+              navigate={navigate}
+            />
+          )}
+          {page === "master" && (
+            <CmsMasterPage
+              includeInactive={includeInactive}
+              masterQuery={masterQuery}
+              masters={masters}
+              selectedMaster={selectedMaster}
+              onIncludeInactive={setIncludeInactive}
+              onMasterChange={updateMaster}
+              onQuery={setMasterQuery}
+              onRematch={rematchMaster}
+              onSave={saveMaster}
+              onSelect={setSelectedMasterId}
+              onUpload={uploadMasterCsv}
+            />
+          )}
+          {page === "import" && (
+            <CmsImportPage jobs={importJobs} onUpload={uploadMasterCsv} />
+          )}
+          {page === "inventory" && (
+            <CmsInventoryPage
+              adjustDirection={adjustDirection}
+              adjustMemo={adjustMemo}
+              adjustQuantity={adjustQuantity}
+              mergeInsuranceCode={mergeInsuranceCode}
+              selectedStock={selectedStock}
+              stocks={stocks}
+              onAdjust={adjustStock}
+              onAdjustDirection={setAdjustDirection}
+              onAdjustMemo={setAdjustMemo}
+              onAdjustQuantity={(value) =>
+                setAdjustQuantity(Math.max(1, Math.min(999, value)))
+              }
+              onMergeInsuranceCode={setMergeInsuranceCode}
+              onMergeVirtual={mergeVirtualStock}
+              onSelect={setSelectedStockId}
+            />
+          )}
+          {page === "wholesaler" && (
+            <CmsWholesalerPage
+              editingName={editingWholesalerName}
+              newName={newWholesalerName}
+              query={wholesalerQuery}
+              searchStatus={cmsWholesalerSearchStatus}
+              selectedWholesaler={selectedWholesaler}
+              wholesalers={wholesalers}
+              onCreate={createCmsWholesaler}
+              onEditingName={setEditingWholesalerName}
+              onNewName={setNewWholesalerName}
+              onQuery={setWholesalerQuery}
+              onSave={saveCmsWholesaler}
+              onSearch={searchCmsWholesalers}
+              onSelect={setSelectedWholesalerId}
+            />
+          )}
+          {page === "dispense" && (
+            <CmsDispensePage
+              failures={deductionFailures}
+              prescriptionId={prescriptionId}
+              selectedFailure={selectedFailure}
+              selectedStockId={selectedStockId}
+              stocks={stocks}
+              onDeduct={deductPrescriptionStock}
+              onPrescriptionId={setPrescriptionId}
+              onResolve={resolveDeduction}
+              onSelectFailure={setSelectedFailureId}
+              onSelectStock={setSelectedStockId}
+            />
+          )}
+          {page === "purchase" && (
+            <CmsPurchasePage
+              cookieInput={cookieInput}
+              cookieState={cookieState}
+              histories={purchaseHistories}
+              syncEndDate={syncEndDate}
+              syncJobs={syncJobs}
+              syncStartDate={syncStartDate}
+              onCookieInput={setCookieInput}
+              onRegisterCookie={registerBaropharmCookie}
+              onResume={resumePurchaseSync}
+              onSync={startPurchaseSync}
+              onSyncEndDate={setSyncEndDate}
+              onSyncStartDate={setSyncStartDate}
+            />
+          )}
+        </>
       </main>
     </div>
   );
@@ -5025,10 +5204,42 @@ function normalizeCmsFailure(raw: unknown, index: number): CmsDeductionFailure {
   };
 }
 
+function accountTypeLabel(account?: AuthAccount | null) {
+  const role = account?.role?.toUpperCase();
+  const accountType = account?.accountType?.toUpperCase();
+
+  if (role === "ADMIN") return "관리자";
+  if (accountType === "PRIMARY" || role === "PHARMACY_OWNER") return "주계정";
+  if (accountType === "LIMITED" || role === "PHARMACY_LIMITED") {
+    return "제한 계정";
+  }
+  return "계정";
+}
+
+function getCmsAccountDisplay(account?: AuthAccount | null) {
+  const name =
+    account?.pharmacyName ??
+    account?.accountName ??
+    (account?.pharmacyId ? `약국 ${account.pharmacyId}` : "로그인 계정");
+  const loginLabel =
+    account?.loginId ?? (account?.accountId ? `#${account.accountId}` : "");
+  const detail = [accountTypeLabel(account), loginLabel]
+    .filter(Boolean)
+    .join(" · ");
+
+  return {
+    initial: Array.from(name.trim())[0] ?? "P",
+    name,
+    detail,
+  };
+}
+
 function CmsSidebar({
+  account,
   navigate,
   page,
 }: {
+  account?: AuthAccount | null;
   navigate: (path: string) => void;
   page: CmsPage;
 }) {
@@ -5041,6 +5252,8 @@ function CmsSidebar({
     ["dispense", "처방전 차감", "/cms/dispense"],
     ["purchase", "구매 내역", "/cms/purchase"],
   ];
+  const accountDisplay = getCmsAccountDisplay(account);
+
   return (
     <aside className="cms-sidebar">
       <div className="cms-brand">
@@ -5063,10 +5276,10 @@ function CmsSidebar({
         ))}
       </nav>
       <div className="cms-account">
-        <span>이</span>
+        <span>{accountDisplay.initial}</span>
         <div>
-          <strong>이층약국</strong>
-          <em>주계정 · pharmacy01</em>
+          <strong>{accountDisplay.name}</strong>
+          <em>{accountDisplay.detail}</em>
         </div>
       </div>
     </aside>
@@ -5118,7 +5331,6 @@ function CmsHeader({
 }
 
 function CmsLoginPage({
-  apiBase,
   apiMessage,
   apiState,
   loginId,
@@ -5127,7 +5339,6 @@ function CmsLoginPage({
   onPassword,
   onSubmit,
 }: {
-  apiBase: string;
   apiMessage: string;
   apiState: ApiState;
   loginId: string;
@@ -5138,44 +5349,66 @@ function CmsLoginPage({
 }) {
   return (
     <section className="cms-content cms-login">
-      <form className="cms-login-card" onSubmit={onSubmit}>
-        <div className="cms-login-brand">
-          <img src={pharmfarmLogo} alt="" />
-          <div>
-            <strong>PharmFarm</strong>
-            <span>CMS</span>
+      <div className="cms-login-shell">
+        <div className="cms-login-visual">
+          <div className="cms-login-mark">
+            <img src={pharmfarmLogo} alt="" />
+            <span>PharmFarm CMS</span>
           </div>
+          <div className="cms-login-message">
+            <strong>
+              QR 입고부터 반품 추적까지,
+              <br />
+              약국 재고를 한 곳에서.
+            </strong>
+            <span>
+              시리얼 기반 입고처 추적, 기준 데이터 매칭, 처방전 차감과 구매내역
+              연동을 운영자 화면에서 관리하세요.
+            </span>
+            <div className="cms-login-tags">
+              <em>QR 입고 추적</em>
+              <em>반품 도매처 확인</em>
+            </div>
+          </div>
+          <small>© 2026 PharmFarm. 약국 전용 재고 관리 시스템</small>
         </div>
-        <div>
-          <span>CMS 로그인</span>
-          <strong>실제 API 계정으로 접속</strong>
-          <em>
-            {apiStateLabel(apiState)} · {apiMessage || "로그인이 필요합니다."}
-          </em>
-        </div>
-        <label>
-          <span>API Base</span>
-          <input readOnly value={apiBase} />
-        </label>
-        <label>
-          <span>아이디</span>
-          <input
-            value={loginId}
-            onChange={(event) => onLoginId(event.target.value)}
-          />
-        </label>
-        <label>
-          <span>비밀번호</span>
-          <input
-            type="password"
-            value={password}
-            onChange={(event) => onPassword(event.target.value)}
-          />
-        </label>
-        <button className="cms-primary" type="submit">
-          로그인
-        </button>
-      </form>
+        <form className="cms-login-card" onSubmit={onSubmit}>
+          <div className="cms-login-logo">
+            <img src={pharmfarmLogo} alt="" />
+          </div>
+          <div className="cms-login-title">
+            <strong>운영자 로그인</strong>
+            <span>약국 CMS 계정으로 로그인하세요</span>
+            <em>
+              {apiStateLabel(apiState)} · {apiMessage || "로그인이 필요합니다."}
+            </em>
+          </div>
+          <label>
+            <span>아이디</span>
+            <input
+              autoComplete="username"
+              value={loginId}
+              onChange={(event) => onLoginId(event.target.value)}
+            />
+          </label>
+          <label>
+            <span>비밀번호</span>
+            <input
+              autoComplete="current-password"
+              type="password"
+              value={password}
+              onChange={(event) => onPassword(event.target.value)}
+            />
+          </label>
+          <button className="cms-primary" type="submit">
+            로그인
+          </button>
+          <div className="cms-login-help">
+            <span>계정이 없으신가요?</span>
+            <strong>약국 등록 문의</strong>
+          </div>
+        </form>
+      </div>
     </section>
   );
 }
