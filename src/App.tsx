@@ -322,7 +322,10 @@ function createScannerReader() {
   const hints = new Map<DecodeHintType, unknown>();
   hints.set(DecodeHintType.TRY_HARDER, true);
   hints.set(DecodeHintType.CHARACTER_SET, "UTF-8");
-  hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
+  hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+    BarcodeFormat.QR_CODE,
+    BarcodeFormat.DATA_MATRIX,
+  ]);
 
   return new BrowserMultiFormatReader(hints, {
     delayBetweenScanAttempts: 60,
