@@ -12,6 +12,7 @@
   --panel: #f6f7f8;
   --dark: #0c0e0f;
   --app-height: 100vh;
+  --safe-top: env(safe-area-inset-top, 0px);
   color: var(--ink);
   background: #eef0f2;
   font-family:
@@ -128,6 +129,7 @@ p {
   max-height: var(--app-height);
   flex-direction: column;
   overflow: hidden;
+  padding-top: var(--safe-top);
   background: #fff;
 }
 
@@ -242,7 +244,7 @@ p {
   top: calc(100% + 8px);
   right: 0;
   display: grid;
-  width: 168px;
+  width: 184px;
   overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.18);
   border-radius: 12px;
@@ -252,7 +254,8 @@ p {
   backdrop-filter: blur(10px);
 }
 
-.scan-dropdown button {
+.scan-dropdown button,
+.scan-toggle-row {
   min-height: 42px;
   padding: 0 13px;
   color: #fff;
@@ -261,7 +264,28 @@ p {
   text-align: left;
 }
 
-.scan-dropdown button + button {
+.scan-toggle-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.scan-toggle-row input {
+  width: 15px;
+  height: 15px;
+  flex: 0 0 15px;
+  accent-color: var(--scan-blue);
+}
+
+.scan-toggle-row span {
+  flex: 1;
+  min-width: 0;
+}
+
+.scan-dropdown button + button,
+.scan-dropdown button + .scan-toggle-row,
+.scan-dropdown .scan-toggle-row + button {
   border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 
@@ -313,6 +337,7 @@ p {
   flex: 1 1 auto;
   min-height: 0;
   padding-bottom: 88px;
+  --scan-frame-center-y: 45%;
 }
 
 .camera-video {
@@ -337,12 +362,21 @@ p {
 
 .scan-box {
   position: absolute;
-  top: 39%;
+  top: var(--scan-frame-center-y);
   left: 50%;
   z-index: 2;
   display: block;
   background: transparent;
   transform: translate(-50%, -50%);
+}
+
+.scan-box::before {
+  position: absolute;
+  inset: 0;
+  border-radius: 18px;
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.14);
+  content: "";
+  pointer-events: none;
 }
 
 .scan-box.is-active {
@@ -413,9 +447,176 @@ p {
   animation: scan 2.6s ease-in-out infinite;
 }
 
+.phone.is-scan-performance .glass-pill,
+.phone.is-scan-performance .count-chip,
+.phone.is-scan-performance .camera-actions button,
+.phone.is-scan-performance .scan-dropdown,
+.phone.is-scan-performance .scan-result,
+.phone.is-scan-performance .scan-alert {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.phone.is-scan-performance .corner {
+  filter: none;
+}
+
+.phone.is-scan-performance .scan-line {
+  top: 50%;
+  opacity: 0.58;
+  animation: none;
+}
+
+.native-reader-preview {
+  position: absolute;
+  inset: -56px 0 -36px;
+  z-index: 3;
+  overflow: hidden;
+  background:
+    radial-gradient(
+      circle at 50% 36%,
+      rgba(58, 71, 82, 0.86) 0,
+      rgba(22, 27, 31, 0.96) 48%,
+      #080a0c 100%
+    ),
+    #0c0e0f;
+}
+
+.native-reader-preview::before {
+  position: absolute;
+  inset: 0;
+  background:
+    linear-gradient(
+      180deg,
+      rgba(0, 0, 0, 0.34),
+      rgba(0, 0, 0, 0.08) 38%,
+      rgba(0, 0, 0, 0.48)
+    ),
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.018) 0 1px,
+      transparent 1px 5px
+    );
+  content: "";
+  pointer-events: none;
+}
+
+.native-preview-top {
+  position: absolute;
+  top: calc(18px + var(--safe-top));
+  right: 18px;
+  left: 18px;
+  z-index: 2;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.native-preview-pill {
+  display: inline-flex;
+  min-height: 40px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.16);
+  padding: 0 15px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.native-preview-frame {
+  position: absolute;
+  top: 45%;
+  left: 50%;
+  z-index: 2;
+  width: min(248px, 64vw);
+  aspect-ratio: 1;
+  transform: translate(-50%, -50%);
+}
+
+.native-preview-corner {
+  position: absolute;
+  width: 42px;
+  height: 42px;
+  border-color: #4d9aff;
+  border-style: solid;
+  border-width: 0;
+  filter: drop-shadow(0 0 12px rgba(77, 154, 255, 0.42));
+}
+
+.native-preview-corner.tl {
+  top: 0;
+  left: 0;
+  border-top-width: 4px;
+  border-left-width: 4px;
+  border-top-left-radius: 16px;
+}
+
+.native-preview-corner.tr {
+  top: 0;
+  right: 0;
+  border-top-width: 4px;
+  border-right-width: 4px;
+  border-top-right-radius: 16px;
+}
+
+.native-preview-corner.bl {
+  bottom: 0;
+  left: 0;
+  border-bottom-width: 4px;
+  border-left-width: 4px;
+  border-bottom-left-radius: 16px;
+}
+
+.native-preview-corner.br {
+  right: 0;
+  bottom: 0;
+  border-right-width: 4px;
+  border-bottom-width: 4px;
+  border-bottom-right-radius: 16px;
+}
+
+.native-preview-bottom {
+  position: absolute;
+  right: 24px;
+  bottom: calc(58px + env(safe-area-inset-bottom));
+  left: 24px;
+  z-index: 2;
+  text-align: center;
+}
+
+.native-preview-bottom strong,
+.native-preview-bottom span {
+  display: block;
+}
+
+.native-preview-bottom strong {
+  color: #fff;
+  font-size: 17px;
+  font-weight: 900;
+}
+
+.native-preview-bottom span {
+  margin-top: 6px;
+  color: rgba(255, 255, 255, 0.72);
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scan-line {
+    top: 50%;
+    opacity: 0.58;
+    animation: none;
+  }
+}
+
 .scan-copy {
   position: absolute;
-  top: calc(39% + min(118px, 31vw) + 18px);
+  top: calc(var(--scan-frame-center-y) + min(118px, 31vw) + 18px);
   right: 18px;
   left: 18px;
   z-index: 2;
@@ -457,7 +658,7 @@ p {
   display: flex;
   width: 100%;
   min-width: 0;
-  min-height: 48px;
+  min-height: 36px;
   align-items: center;
   justify-content: center;
   overflow: hidden;
@@ -476,7 +677,7 @@ p {
   min-width: 0;
   overflow: hidden;
   color: #fff;
-  font-size: 18px;
+  font-size: 14px;
   font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -486,7 +687,7 @@ p {
   display: flex;
   width: 100%;
   min-width: 0;
-  min-height: 52px;
+  min-height: 40px;
   align-items: center;
   justify-content: center;
   overflow: hidden;
@@ -1997,15 +2198,15 @@ body:has(.cms-login) {
   .scan-box {
     width: 210px;
     height: 210px;
-    top: 36%;
   }
 
   .scanner-zone {
     gap: 18px;
+    --scan-frame-center-y: 42%;
   }
 
   .scan-copy {
-    top: calc(36% + 105px + 16px);
+    top: calc(var(--scan-frame-center-y) + 100px + 16px);
   }
 
   /* .scan-result {
