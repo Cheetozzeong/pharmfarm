@@ -5,6 +5,7 @@ import {
   type IScannerControls,
 } from "@zxing/browser";
 import { BarcodeFormat, DecodeHintType } from "@zxing/library";
+import { Focus, RefreshCw, Zap, ZapOff } from "lucide-react";
 import pharmfarmLogo from "../logo_1.png";
 
 type Screen =
@@ -32,6 +33,11 @@ type QrFields = {
   format: "query" | "gs1" | "text";
   errors: string[];
 };
+
+type ScanHandleResult =
+  | { kind: "accepted"; qr: QrFields; cooldownMs?: number }
+  | { kind: "handled"; cooldownMs?: number }
+  | null;
 
 type Wholesaler = {
   id: string;
@@ -160,7 +166,25 @@ type ScanExpiryNotice = {
 type CameraConstraintSet = MediaTrackConstraintSet & {
   exposureMode?: string;
   focusMode?: string;
+  torch?: boolean;
   whiteBalanceMode?: string;
+  zoom?: number;
+};
+
+type CameraTrackCapabilities = MediaTrackCapabilities & {
+  exposureMode?: string[];
+  focusMode?: string[];
+  torch?: boolean;
+  whiteBalanceMode?: string[];
+  zoom?: {
+    min?: number;
+    max?: number;
+    step?: number;
+  };
+};
+
+type CameraTrackConstraints = MediaTrackConstraints & {
+  advanced?: CameraConstraintSet[];
 };
 
 type ApiState =
@@ -179,6 +203,11 @@ const storageKeys = {
   accessToken: "pharmfarm.accessToken",
   refreshToken: "pharmfarm.refreshToken",
 };
+
+const alreadyProcessedAudioSrc =
+  "/audio/%EC%9D%B4%EB%AF%B8_%EC%B2%98%EB%A6%AC%EB%90%9C_%EC%95%BD%ED%92%88%EC%9E%85%EB%8B%88%EB%8B%A4.mp3";
+const defaultScanCooldownMs = 900;
+const duplicateScanCooldownMs = 2500;
 
 type TokenResponse = {
   accessToken?: string;
@@ -293,14 +322,11 @@ function createScannerReader() {
   const hints = new Map<DecodeHintType, unknown>();
   hints.set(DecodeHintType.TRY_HARDER, true);
   hints.set(DecodeHintType.CHARACTER_SET, "UTF-8");
-  hints.set(DecodeHintType.POSSIBLE_FORMATS, [
-    BarcodeFormat.QR_CODE,
-    BarcodeFormat.DATA_MATRIX,
-  ]);
+  hints.set(DecodeHintType.POSSIBLE_FORMATS, [BarcodeFormat.QR_CODE]);
 
   return new BrowserMultiFormatReader(hints, {
-    delayBetweenScanAttempts: 80,
-    delayBetweenScanSuccess: 220,
+    delayBetweenScanAttempts: 60,
+    delayBetweenScanSuccess: 180,
     tryPlayVideoTimeout: 5000,
   });
 }
@@ -318,12 +344,106 @@ function getCameraConstraints(): MediaStreamConstraints {
     audio: false,
     video: {
       facingMode: { ideal: "environment" },
-      width: { ideal: 1920, min: 1280 },
-      height: { ideal: 1080, min: 720 },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
       frameRate: { ideal: 30, min: 15 },
       advanced,
     },
   };
+}
+
+function cameraCapabilityIncludes(
+  capabilities: CameraTrackCapabilities,
+  key: "exposureMode" | "focusMode" | "whiteBalanceMode",
+  value: string,
+) {
+  return capabilities[key]?.includes(value) ?? false;
+}
+
+function getCameraZoomConstraint(capabilities: CameraTrackCapabilities) {
+  const zoom = capabilities.zoom;
+  if (!zoom) return null;
+
+  const min = Number.isFinite(zoom.min) ? Number(zoom.min) : 1;
+  const max = Number.isFinite(zoom.max) ? Number(zoom.max) : min;
+  if (max <= 1.1) return null;
+
+  const lowerBound = Math.max(min, 1);
+  const target = Math.min(Math.max(1.35, lowerBound), max);
+  const step = Number.isFinite(zoom.step) && zoom.step ? Number(zoom.step) : 0;
+  const stepped = step
+    ? Math.round((target - lowerBound) / step) * step + lowerBound
+    : target;
+
+  return Number(Math.min(max, Math.max(lowerBound, stepped)).toFixed(2));
+}
+
+function getCameraTrack(video: HTMLVideoElement) {
+  const stream = video.srcObject;
+  if (!(stream instanceof MediaStream)) return null;
+
+  return stream.getVideoTracks().find((track) => track.readyState === "live");
+}
+
+async function tuneCameraTrack(
+  video: HTMLVideoElement,
+  mode: "startup" | "refocus" = "startup",
+) {
+  const track = getCameraTrack(video);
+  if (!track?.applyConstraints) return "unsupported";
+
+  const capabilities =
+    typeof track.getCapabilities === "function"
+      ? (track.getCapabilities() as CameraTrackCapabilities)
+      : ({} as CameraTrackCapabilities);
+
+  const advanced: CameraConstraintSet[] = [];
+  if (
+    mode === "refocus" &&
+    cameraCapabilityIncludes(capabilities, "focusMode", "single-shot")
+  ) {
+    advanced.push({ focusMode: "single-shot" });
+  } else if (
+    cameraCapabilityIncludes(capabilities, "focusMode", "continuous")
+  ) {
+    advanced.push({ focusMode: "continuous" });
+  }
+
+  if (cameraCapabilityIncludes(capabilities, "exposureMode", "continuous")) {
+    advanced.push({ exposureMode: "continuous" });
+  }
+
+  if (
+    cameraCapabilityIncludes(capabilities, "whiteBalanceMode", "continuous")
+  ) {
+    advanced.push({ whiteBalanceMode: "continuous" });
+  }
+
+  const zoom = getCameraZoomConstraint(capabilities);
+  if (zoom) advanced.push({ zoom });
+
+  if (advanced.length === 0) return "unsupported";
+
+  try {
+    await track.applyConstraints({ advanced } as CameraTrackConstraints);
+
+    if (
+      mode === "refocus" &&
+      cameraCapabilityIncludes(capabilities, "focusMode", "continuous")
+    ) {
+      window.setTimeout(() => {
+        void track
+          .applyConstraints({
+            advanced: [{ focusMode: "continuous" }],
+          } as CameraTrackConstraints)
+          .catch(() => undefined);
+      }, 700);
+    }
+
+    return "applied";
+  } catch {
+    return "failed";
+  }
 }
 
 function getStoredAccessToken() {
@@ -1105,10 +1225,16 @@ function MobileApp() {
   const videoRef = useRef<HTMLVideoElement>(null);
   const scanAudioRef = useRef<HTMLAudioElement | null>(null);
   const expiryAudioRef = useRef<HTMLAudioElement | null>(null);
+  const alreadyProcessedAudioRef = useRef<HTMLAudioElement | null>(null);
   const audioUnlockedRef = useRef(false);
   const expiryAudioUnlockedRef = useRef(false);
+  const alreadyProcessedAudioUnlockedRef = useRef(false);
   const scannerControlsRef = useRef<IScannerControls | null>(null);
-  const lastDetectedRef = useRef({ value: "", at: 0 });
+  const lastDetectedRef = useRef({
+    value: "",
+    at: 0,
+    cooldownMs: defaultScanCooldownMs,
+  });
   const expiryDismissTimerRef = useRef<number | null>(null);
   const expirySpeechTimerRef = useRef<number | null>(null);
   const expirySpeechRequestRef = useRef(0);
@@ -1121,6 +1247,8 @@ function MobileApp() {
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraRestartKey, setCameraRestartKey] = useState(0);
   const [cameraError, setCameraError] = useState("");
+  const [torchAvailable, setTorchAvailable] = useState(false);
+  const [torchOn, setTorchOn] = useState(false);
   const [apiState, setApiState] = useState<ApiState>("checking");
   const [apiMessage, setApiMessage] = useState("");
   const [loginId, setLoginId] = useState("");
@@ -1140,7 +1268,7 @@ function MobileApp() {
   const [traces, setTraces] = useState(initialTraces);
   const [receiptQueue, setReceiptQueue] = useState<ReceiptQueueItem[]>([]);
   const [lastScanName, setLastScanName] = useState("QR 스캔 대기");
-  const [, setScanNotice] = useState(
+  const [scanNotice, setScanNotice] = useState(
     "카메라를 시작하면 QR이 자동으로 인식됩니다.",
   );
   const [receiptSummary, setReceiptSummary] = useState<ReceiptSummary | null>(
@@ -1171,16 +1299,21 @@ function MobileApp() {
   useEffect(() => {
     const audio = new Audio("/barcode_sound.mp3");
     const expiryAudio = new Audio();
+    const alreadyProcessedAudio = new Audio(alreadyProcessedAudioSrc);
     audio.preload = "auto";
     expiryAudio.preload = "auto";
+    alreadyProcessedAudio.preload = "auto";
     scanAudioRef.current = audio;
     expiryAudioRef.current = expiryAudio;
+    alreadyProcessedAudioRef.current = alreadyProcessedAudio;
 
     return () => {
       audio.pause();
       expiryAudio.pause();
+      alreadyProcessedAudio.pause();
       scanAudioRef.current = null;
       expiryAudioRef.current = null;
+      alreadyProcessedAudioRef.current = null;
     };
   }, []);
 
@@ -1218,6 +1351,36 @@ function MobileApp() {
 
   const playScanSound = useCallback(() => {
     const audio = scanAudioRef.current;
+    if (!audio) return;
+
+    audio.pause();
+    audio.currentTime = 0;
+    audio.volume = 1;
+    void audio.play().catch(() => undefined);
+  }, []);
+
+  const unlockAlreadyProcessedAudio = useCallback(() => {
+    const audio = alreadyProcessedAudioRef.current;
+    if (!audio || alreadyProcessedAudioUnlockedRef.current) return;
+
+    const previousVolume = audio.volume;
+    audio.volume = 0;
+    audio.currentTime = 0;
+    void audio
+      .play()
+      .then(() => {
+        audio.pause();
+        audio.currentTime = 0;
+        audio.volume = previousVolume;
+        alreadyProcessedAudioUnlockedRef.current = true;
+      })
+      .catch(() => {
+        audio.volume = previousVolume;
+      });
+  }, []);
+
+  const playAlreadyProcessedAudio = useCallback(() => {
+    const audio = alreadyProcessedAudioRef.current;
     if (!audio) return;
 
     audio.pause();
@@ -1555,6 +1718,8 @@ function MobileApp() {
   const stopCamera = useCallback(() => {
     scannerControlsRef.current?.stop();
     scannerControlsRef.current = null;
+    setTorchAvailable(false);
+    setTorchOn(false);
 
     if (videoRef.current) {
       videoRef.current.pause();
@@ -1644,6 +1809,13 @@ function MobileApp() {
     [patchReceiptDrug, setApiFallback],
   );
 
+  const notifyDuplicateReceiptQr = useCallback(() => {
+    setLastScanName("이미 처리된 약품입니다");
+    setScanNotice("이미 입고됐거나 현재 목록에 있는 QR입니다.");
+    playScanSound();
+    window.setTimeout(playAlreadyProcessedAudio, 120);
+  }, [playAlreadyProcessedAudio, playScanSound]);
+
   const addReceiptQr = useCallback(
     async (qr: QrFields) => {
       const alreadyReceived = traces.some(
@@ -1654,8 +1826,7 @@ function MobileApp() {
       );
 
       if (alreadyReceived || duplicated) {
-        setLastScanName("이미 스캔된 SN");
-        setScanNotice("이미 입고됐거나 현재 목록에 있는 QR입니다.");
+        notifyDuplicateReceiptQr();
         return true;
       }
 
@@ -1684,7 +1855,13 @@ function MobileApp() {
       );
       return true;
     },
-    [receiptQueue, setApiFallback, traces, validateReceiptQr],
+    [
+      notifyDuplicateReceiptQr,
+      receiptQueue,
+      setApiFallback,
+      traces,
+      validateReceiptQr,
+    ],
   );
 
   const lookupReturn = useCallback(
@@ -1769,7 +1946,7 @@ function MobileApp() {
   );
 
   const handlePayload = useCallback(
-    (payload: string) => {
+    (payload: string): ScanHandleResult => {
       const qr = parseQrPayload(payload);
 
       if (modeRef.current === "return") {
@@ -1779,7 +1956,7 @@ function MobileApp() {
           return null;
         }
         void lookupReturn(qr);
-        return qr;
+        return { kind: "accepted", qr };
       }
 
       if (qr.errors.length > 0) {
@@ -1802,34 +1979,104 @@ function MobileApp() {
       );
 
       if (alreadyReceived || duplicated) {
-        setLastScanName("이미 스캔된 SN");
-        setScanNotice("이미 입고됐거나 현재 목록에 있는 QR입니다.");
-        return null;
+        notifyDuplicateReceiptQr();
+        return { kind: "handled", cooldownMs: duplicateScanCooldownMs };
       }
 
       void addReceiptQr(qr);
-      return qr;
+      return { kind: "accepted", qr };
     },
-    [addReceiptQr, lookupReturn, receiptQueue, selectedWholesaler, traces],
+    [
+      addReceiptQr,
+      lookupReturn,
+      notifyDuplicateReceiptQr,
+      receiptQueue,
+      selectedWholesaler,
+      traces,
+    ],
   );
 
   const activateCamera = useCallback(() => {
-    lastDetectedRef.current = { value: "", at: 0 };
+    lastDetectedRef.current = {
+      value: "",
+      at: 0,
+      cooldownMs: defaultScanCooldownMs,
+    };
+    unlockAlreadyProcessedAudio();
     unlockScanAudio();
     unlockExpiryAudio();
     setCameraActive(true);
-  }, [unlockExpiryAudio, unlockScanAudio]);
+  }, [unlockAlreadyProcessedAudio, unlockExpiryAudio, unlockScanAudio]);
 
   const refreshCamera = useCallback(() => {
-    lastDetectedRef.current = { value: "", at: 0 };
+    lastDetectedRef.current = {
+      value: "",
+      at: 0,
+      cooldownMs: defaultScanCooldownMs,
+    };
     setCameraError("");
     setScanNotice("카메라를 새로고침하고 있습니다.");
+    unlockAlreadyProcessedAudio();
     unlockScanAudio();
     unlockExpiryAudio();
     stopCamera();
     setCameraActive(true);
     setCameraRestartKey((value) => value + 1);
-  }, [stopCamera, unlockExpiryAudio, unlockScanAudio]);
+  }, [
+    stopCamera,
+    unlockAlreadyProcessedAudio,
+    unlockExpiryAudio,
+    unlockScanAudio,
+  ]);
+
+  const refocusCamera = useCallback(() => {
+    const video = videoRef.current;
+    if (!cameraActive || !video) {
+      setScanNotice("카메라가 켜진 뒤 초점을 다시 맞출 수 있습니다.");
+      return;
+    }
+
+    setScanNotice("초점을 다시 맞추고 있습니다.");
+    void tuneCameraTrack(video, "refocus").then((status) => {
+      if (status === "applied") {
+        setScanNotice(
+          "초점 재조정 완료 · QR과 카메라를 15~20cm 거리로 맞춰주세요.",
+        );
+        return;
+      }
+
+      setScanNotice(
+        "이 기기는 수동 초점 제어가 제한됩니다. QR을 조금 더 멀리 두고 밝은 곳에서 다시 시도해 주세요.",
+      );
+    });
+  }, [cameraActive]);
+
+  const toggleTorch = useCallback(() => {
+    const controls = scannerControlsRef.current;
+    if (!cameraActive || !controls?.switchTorch) {
+      setTorchAvailable(false);
+      setTorchOn(false);
+      setScanNotice("이 기기에서는 플래시 제어가 지원되지 않습니다.");
+      return;
+    }
+
+    const nextTorchOn = !torchOn;
+    void controls
+      .switchTorch(nextTorchOn)
+      .then(() => {
+        setTorchOn(nextTorchOn);
+        setScanNotice(
+          nextTorchOn
+            ? "플래시를 켰습니다. 반사가 심하면 다시 꺼주세요."
+            : "플래시를 껐습니다.",
+        );
+      })
+      .catch(() => {
+        setTorchAvailable(false);
+        setTorchOn(false);
+        setScanNotice("이 기기에서는 플래시 제어가 제한됩니다.");
+      });
+  }, [cameraActive, torchOn]);
 
   useEffect(() => {
     if (screen !== "scan") {
@@ -1858,6 +2105,7 @@ function MobileApp() {
     }
 
     let cancelled = false;
+    let focusHintTimer: number | null = null;
 
     async function startCamera() {
       setCameraError("");
@@ -1877,18 +2125,32 @@ function MobileApp() {
           (result) => {
             const value = result?.getText();
             if (!value) return;
+            if (focusHintTimer) {
+              window.clearTimeout(focusHintTimer);
+              focusHintTimer = null;
+            }
 
             const now = Date.now();
             const lastDetected = lastDetectedRef.current;
-            if (value === lastDetected.value && now - lastDetected.at < 900) {
+            if (
+              value === lastDetected.value &&
+              now - lastDetected.at < lastDetected.cooldownMs
+            ) {
               return;
             }
 
-            const acceptedQr = handlePayload(value);
-            if (acceptedQr) {
-              lastDetectedRef.current = { value, at: now };
+            const handled = handlePayload(value);
+            if (handled) {
+              lastDetectedRef.current = {
+                value,
+                at: now,
+                cooldownMs: handled.cooldownMs ?? defaultScanCooldownMs,
+              };
+            }
+
+            if (handled?.kind === "accepted") {
               playScanSound();
-              presentScanExpiry(acceptedQr);
+              presentScanExpiry(handled.qr);
             }
           },
         );
@@ -1898,6 +2160,22 @@ function MobileApp() {
           return;
         }
         scannerControlsRef.current = controls;
+        setTorchAvailable(Boolean(controls.switchTorch));
+        setTorchOn(false);
+        const tuningStatus = await tuneCameraTrack(video, "startup");
+        if (cancelled) return;
+
+        if (tuningStatus === "applied") {
+          setScanNotice(
+            "카메라 초점과 줌을 최적화했습니다. QR을 사각형 안에 맞춰주세요.",
+          );
+        }
+
+        focusHintTimer = window.setTimeout(() => {
+          setScanNotice(
+            "인식이 늦으면 QR과 카메라를 15~20cm 떨어뜨리고 초점 버튼을 눌러주세요.",
+          );
+        }, 4500);
       } catch (error) {
         if (cancelled) return;
         setCameraError(
@@ -1906,6 +2184,8 @@ function MobileApp() {
         setScanNotice(
           "카메라를 시작하지 못했습니다. 권한과 HTTPS 환경을 확인해 주세요.",
         );
+        setTorchAvailable(false);
+        setTorchOn(false);
         setCameraActive(false);
       }
     }
@@ -1914,6 +2194,9 @@ function MobileApp() {
 
     return () => {
       cancelled = true;
+      if (focusHintTimer) {
+        window.clearTimeout(focusHintTimer);
+      }
       stopCamera();
     };
   }, [
@@ -2208,16 +2491,21 @@ function MobileApp() {
           mode={mode}
           queueCount={receiptQueue.length}
           lastScanName={lastScanName}
+          scanNotice={scanNotice}
           selectedWholesaler={selectedWholesaler}
+          torchAvailable={torchAvailable}
+          torchOn={torchOn}
           videoRef={videoRef}
           onLogout={logoutMobile}
           onMode={chooseMode}
           onReview={() => {
             if (startReceipt()) setScreen("receiptReview");
           }}
+          onRefocusCamera={refocusCamera}
           onRefreshCamera={refreshCamera}
           onStocks={() => setScreen("stocks")}
           onToggleCamera={toggleCamera}
+          onToggleTorch={toggleTorch}
           onWholesaler={openWholesalerPicker}
         />
       )}
@@ -2472,14 +2760,19 @@ function ScanScreen({
   lastScanName,
   mode,
   queueCount,
+  scanNotice,
   selectedWholesaler,
+  torchAvailable,
+  torchOn,
   videoRef,
   onLogout,
   onMode,
+  onRefocusCamera,
   onRefreshCamera,
   onReview,
   onStocks,
   onToggleCamera,
+  onToggleTorch,
   onWholesaler,
 }: {
   apiMessage: string;
@@ -2489,14 +2782,19 @@ function ScanScreen({
   lastScanName: string;
   mode: Mode;
   queueCount: number;
+  scanNotice: string;
   selectedWholesaler: Wholesaler | null;
+  torchAvailable: boolean;
+  torchOn: boolean;
   videoRef: RefObject<HTMLVideoElement>;
   onLogout: () => void;
   onMode: (mode: Mode) => void;
+  onRefocusCamera: () => void;
   onRefreshCamera: () => void;
   onReview: () => void;
   onStocks: () => void;
   onToggleCamera: () => void;
+  onToggleTorch: () => void;
   onWholesaler: () => void;
 }) {
   const isReceipt = mode === "receipt";
@@ -2571,17 +2869,34 @@ function ScanScreen({
 
       <section className="scanner-zone">
         {canUseCamera && (
-          <button
-            className="camera-refresh-btn"
-            type="button"
-            onClick={onRefreshCamera}
-          >
-            카메라 새로고침
-          </button>
+          <div className="camera-actions">
+            <button
+              type="button"
+              className={torchOn ? "is-active" : ""}
+              disabled={!torchAvailable}
+              onClick={onToggleTorch}
+            >
+              {torchOn ? (
+                <ZapOff size={15} strokeWidth={2.4} />
+              ) : (
+                <Zap size={15} strokeWidth={2.4} />
+              )}
+              {torchOn ? "끄기" : "플래시"}
+            </button>
+            <button type="button" onClick={onRefocusCamera}>
+              <Focus size={15} strokeWidth={2.4} />
+              초점
+            </button>
+            <button type="button" onClick={onRefreshCamera}>
+              <RefreshCw size={15} strokeWidth={2.4} />
+              새로고침
+            </button>
+          </div>
         )}
         <video
           ref={videoRef}
           className={`camera-video ${cameraActive ? "is-active" : ""}`}
+          autoPlay
           muted
           playsInline
         />
@@ -2604,9 +2919,10 @@ function ScanScreen({
               : "반품할 약품의 QR을 스캔하세요"}
           </strong>
           <span>
-            {isReceipt
-              ? "코드가 인식되면 자동으로 스캔됩니다"
-              : "입고 이력 또는 구매 내역에서 판매처를 찾아드려요"}
+            {scanNotice ||
+              (isReceipt
+                ? "코드가 인식되면 자동으로 스캔됩니다"
+                : "입고 이력 또는 구매 내역에서 판매처를 찾아드려요")}
           </span>
         </div>
         <div className="scan-result-stack">
@@ -2619,7 +2935,7 @@ function ScanScreen({
               type="button"
               onClick={onReview}
             >
-              입고 신청
+              <span>입고 신청</span>
             </button>
           )}
         </div>
@@ -2632,11 +2948,11 @@ function ScanScreen({
         </button>
       )}
 
-      {(cameraError || apiMessage) && (
+      {/* {(cameraError || apiMessage) && (
         <div className="runtime-toast">
           {cameraError || `${apiStateLabel(apiState)} · ${apiMessage}`}
         </div>
-      )}
+      )} */}
 
       <div className="modebar">
         <div className="segment">

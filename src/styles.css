@@ -155,7 +155,7 @@ p {
 
 .glass-pill,
 .count-chip,
-.camera-refresh-btn,
+.camera-actions button,
 .runtime-toast {
   border: 1px solid rgba(255, 255, 255, 0.18);
   background: rgba(255, 255, 255, 0.13);
@@ -270,17 +270,40 @@ p {
   opacity: 1;
 }
 
-.camera-refresh-btn {
+.camera-actions {
   position: absolute;
-  top: 12px;
+  top: 16px;
   left: 50%;
   z-index: 6;
+  display: flex;
+  gap: 6px;
+  max-width: calc(100vw - 28px);
+  transform: translateX(-50%);
+}
+
+.camera-actions button {
+  display: inline-flex;
+  flex: 0 1 auto;
   min-height: 34px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
   border-radius: 999px;
-  padding: 0 13px;
+  padding: 0 11px;
   font-size: 12px;
   font-weight: 900;
-  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+.camera-actions button.is-active {
+  border-color: rgba(255, 180, 77, 0.48);
+  background: rgba(255, 180, 77, 0.2);
+  color: #ffd8a0;
+}
+
+.camera-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.42;
 }
 
 .scanner-zone {
@@ -423,6 +446,8 @@ p {
   left: 50%;
   z-index: 2;
   width: min(318px, calc(100vw - 56px));
+  max-width: calc(100vw - 56px);
+  min-width: 0;
   display: grid;
   gap: 8px;
   transform: translateX(-50%);
@@ -431,9 +456,11 @@ p {
 .scan-result {
   display: flex;
   width: 100%;
+  min-width: 0;
   min-height: 60px;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
   border: 1px solid rgba(255, 255, 255, 0.14);
   border-radius: 14px;
   background: rgba(255, 255, 255, 0.1);
@@ -445,6 +472,7 @@ p {
 
 .scan-result strong {
   display: block;
+  max-width: 100%;
   min-width: 0;
   overflow: hidden;
   color: #fff;
@@ -457,15 +485,26 @@ p {
 .scan-receipt-button {
   display: flex;
   width: 100%;
+  min-width: 0;
   min-height: 52px;
   align-items: center;
   justify-content: center;
+  overflow: hidden;
   border-radius: 14px;
   background: var(--blue);
   box-shadow: 0 8px 20px rgba(0, 100, 255, 0.34);
   color: #fff;
   font-size: 15px;
   font-weight: 900;
+}
+
+.scan-receipt-button span {
+  display: block;
+  max-width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .scan-alert {
@@ -504,7 +543,7 @@ p {
 .runtime-toast {
   position: absolute;
   right: 18px;
-  top: 104px;
+  top: 120px;
   bottom: auto;
   left: 18px;
   z-index: 5;
