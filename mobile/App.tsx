@@ -1,11 +1,5 @@
 import { useState } from "react";
-import {
-  SafeAreaView,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { WebView } from "react-native-webview";
 
@@ -17,8 +11,8 @@ export default function App() {
   const [reloadKey, setReloadKey] = useState(0);
 
   return (
-    <SafeAreaView style={styles.safeArea}>
-      <StatusBar style="dark" />
+    <View style={styles.appShell}>
+      <StatusBar hidden />
       {loadError ? (
         <View style={styles.errorPanel}>
           <Text style={styles.errorTitle}>웹 앱 연결 실패</Text>
@@ -39,6 +33,8 @@ export default function App() {
         <WebView
           key={reloadKey}
           allowsInlineMediaPlayback
+          automaticallyAdjustContentInsets={false}
+          contentInsetAdjustmentBehavior="never"
           domStorageEnabled
           javaScriptEnabled
           mediaCapturePermissionGrantType="grant"
@@ -52,12 +48,12 @@ export default function App() {
           }
         />
       )}
-    </SafeAreaView>
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  safeArea: {
+  appShell: {
     flex: 1,
     backgroundColor: "#ffffff",
   },

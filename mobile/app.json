@@ -20,6 +20,11 @@
       "package": "kr.pharmfarm.mobile",
       "permissions": ["CAMERA"]
     },
+    "androidStatusBar": {
+      "hidden": true,
+      "translucent": true,
+      "backgroundColor": "#ffffff"
+    },
     "web": {
       "bundler": "metro"
     }

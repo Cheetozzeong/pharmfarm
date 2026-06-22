@@ -457,7 +457,7 @@ p {
   display: flex;
   width: 100%;
   min-width: 0;
-  min-height: 60px;
+  min-height: 48px;
   align-items: center;
   justify-content: center;
   overflow: hidden;
@@ -762,7 +762,11 @@ p {
 }
 
 .account-body {
-  padding-bottom: calc(28px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 28px 18px calc(28px + env(safe-area-inset-bottom));
+  background: linear-gradient(180deg, #f7fbff 0%, #ffffff 48%, #f7f9fb 100%);
 }
 
 .section-label {
@@ -1729,14 +1733,15 @@ p {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin: 4px 0 16px;
+  margin: 0 0 18px;
 }
 
 .login-brand img {
-  width: 48px;
-  height: 48px;
-  flex: 0 0 48px;
-  border-radius: 14px;
+  width: 58px;
+  height: 58px;
+  flex: 0 0 58px;
+  border-radius: 18px;
+  box-shadow: 0 10px 24px rgba(0, 100, 255, 0.16);
   object-fit: cover;
 }
 
@@ -1747,61 +1752,61 @@ p {
 
 .login-brand strong {
   color: var(--ink);
-  font-size: 20px;
+  font-size: 24px;
   font-weight: 950;
 }
 
 .login-brand span {
-  margin-top: 3px;
+  margin-top: 4px;
   color: var(--muted);
-  font-size: 12px;
-  font-weight: 800;
-}
-
-.account-card {
-  padding: 15px;
-}
-
-.account-card span,
-.account-card strong,
-.account-card em {
-  display: block;
-}
-
-.account-card span {
-  color: var(--muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-.account-card strong {
-  margin-top: 6px;
-  overflow-wrap: anywhere;
-  color: var(--ink);
   font-size: 13px;
   font-weight: 800;
 }
 
-.account-card em {
+.login-panel {
+  width: 100%;
+  border: 1px solid #e7eef5;
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 20px 50px rgba(20, 31, 44, 0.1);
+  padding: 22px 18px 18px;
+}
+
+.login-copy {
+  margin-bottom: 18px;
+}
+
+.login-copy strong,
+.login-copy span {
+  display: block;
+}
+
+.login-copy strong {
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 950;
+  line-height: 1.28;
+}
+
+.login-copy span {
   margin-top: 7px;
-  color: #0050cc;
-  font-size: 12px;
-  font-style: normal;
-  font-weight: 800;
+  color: #6b7681;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.45;
 }
 
 .login-form {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-top: 14px;
 }
 
 .login-form label {
   display: block;
-  border: 1px solid var(--line);
+  border: 1px solid #e2e9ef;
   border-radius: 14px;
-  background: #fff;
+  background: #fdfefe;
   padding: 12px 14px;
 }
 

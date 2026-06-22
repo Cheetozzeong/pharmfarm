@@ -216,6 +216,7 @@ type TokenResponse = {
   data?: {
     accessToken?: string;
     refreshToken?: string;
+    token?: string;
   };
 };
 
@@ -467,7 +468,8 @@ function clearAuthTokens() {
 }
 
 function storeTokenResponse(raw: TokenResponse) {
-  const accessToken = raw.accessToken ?? raw.token ?? raw.data?.accessToken;
+  const accessToken =
+    raw.accessToken ?? raw.token ?? raw.data?.accessToken ?? raw.data?.token;
   const refreshToken = raw.refreshToken ?? raw.data?.refreshToken;
 
   if (!accessToken) return false;
@@ -520,7 +522,9 @@ async function rawApiFetch<T>(
   return parseJsonResponse<T>(response);
 }
 
-async function refreshAccessToken() {
+let refreshAccessTokenRequest: Promise<boolean> | null = null;
+
+async function performRefreshAccessToken() {
   const refreshToken = getStoredRefreshToken();
   if (!refreshToken) return false;
 
@@ -537,6 +541,14 @@ async function refreshAccessToken() {
     clearAuthTokens();
     return false;
   }
+}
+
+async function refreshAccessToken() {
+  refreshAccessTokenRequest ??= performRefreshAccessToken().finally(() => {
+    refreshAccessTokenRequest = null;
+  });
+
+  return refreshAccessTokenRequest;
 }
 
 async function apiFetch<T>(
@@ -2176,7 +2188,7 @@ function MobileApp() {
 
         focusHintTimer = window.setTimeout(() => {
           setScanNotice(
-            "인식이 늦으면 QR과 카메라를 15~20cm 떨어뜨리고 초점 버튼을 눌러주세요.",
+            "인식이 늦으면 카메라를 조금 떨어뜨리고 초점 버튼을 눌러주세요.",
           );
         }, 4500);
       } catch (error) {
@@ -2640,9 +2652,6 @@ function MobileApp() {
 
       {screen === "account" && (
         <AccountScreen
-          apiBase={apiBase}
-          apiMessage={apiMessage}
-          apiState={apiState}
           loginId={loginId}
           password={password}
           onBack={
@@ -3659,9 +3668,6 @@ function StocksScreen({
 }
 
 function AccountScreen({
-  apiBase,
-  apiMessage,
-  apiState,
   loginId,
   password,
   onBack,
@@ -3669,9 +3675,6 @@ function AccountScreen({
   onPassword,
   onSubmit,
 }: {
-  apiBase: string;
-  apiMessage: string;
-  apiState: ApiState;
   loginId: string;
   password: string;
   onBack?: () => void;
@@ -3681,42 +3684,43 @@ function AccountScreen({
 }) {
   return (
     <>
-      <Header title="계정" onBack={onBack} />
+      {onBack && <Header title="계정" onBack={onBack} />}
       <section className="scroll-body account-body">
-        <div className="login-brand">
-          <img src={pharmfarmLogo} alt="" />
-          <div>
-            <strong>PharmFarm</strong>
-            <span>약국 재고 관리</span>
+        <div className="login-panel">
+          <div className="login-brand">
+            <img src={pharmfarmLogo} alt="" />
+            <div>
+              <strong>PharmFarm</strong>
+              <span>약국 재고 관리</span>
+            </div>
           </div>
+          <div className="login-copy">
+            <strong>입고와 반품 스캔을 시작하세요</strong>
+            <span>계정으로 로그인하면 재고와 도매처 정보를 불러옵니다.</span>
+          </div>
+          <form className="login-form" onSubmit={onSubmit}>
+            <label>
+              <span>아이디</span>
+              <input
+                autoComplete="username"
+                value={loginId}
+                onChange={(event) => onLoginId(event.target.value)}
+              />
+            </label>
+            <label>
+              <span>비밀번호</span>
+              <input
+                autoComplete="current-password"
+                type="password"
+                value={password}
+                onChange={(event) => onPassword(event.target.value)}
+              />
+            </label>
+            <button className="primary-btn" type="submit">
+              로그인
+            </button>
+          </form>
         </div>
-        <div className="account-card">
-          <span>API</span>
-          <strong>{apiBase}</strong>
-          <em>
-            {apiStateLabel(apiState)} · {apiMessage || "대기"}
-          </em>
-        </div>
-        <form className="login-form" onSubmit={onSubmit}>
-          <label>
-            <span>아이디</span>
-            <input
-              value={loginId}
-              onChange={(event) => onLoginId(event.target.value)}
-            />
-          </label>
-          <label>
-            <span>비밀번호</span>
-            <input
-              type="password"
-              value={password}
-              onChange={(event) => onPassword(event.target.value)}
-            />
-          </label>
-          <button className="primary-btn" type="submit">
-            로그인
-          </button>
-        </form>
       </section>
     </>
   );
