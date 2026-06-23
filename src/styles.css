@@ -300,7 +300,6 @@ p {
   left: 50%;
   z-index: 6;
   display: flex;
-  flex-wrap: wrap;
   gap: 6px;
   justify-content: center;
   max-width: calc(100vw - 28px);

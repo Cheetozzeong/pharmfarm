@@ -264,12 +264,13 @@ export default function App() {
       if (item.type !== "pharmfarm-native-scanner") return;
 
       if (item.action === "start") {
-        void startNativeScanner();
+        primeCameraPermission();
+        stopNativeScanner();
       } else if (item.action === "stop") {
         stopNativeScanner();
       }
     },
-    [startNativeScanner, stopNativeScanner],
+    [primeCameraPermission, stopNativeScanner],
   );
 
   return (

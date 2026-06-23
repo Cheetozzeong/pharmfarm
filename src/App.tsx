@@ -375,8 +375,6 @@ function storeScanPerformanceMode(mode: ScanPerformanceMode) {
 }
 
 function getStoredScannerEngine(): ScannerEngine {
-  if (!isNativeAppShell()) return "web";
-
   return localStorage.getItem(storageKeys.scannerEngine) === "native"
     ? "native"
     : "web";
@@ -2271,6 +2269,8 @@ function MobileApp() {
   const expiryDismissTimerRef = useRef<number | null>(null);
   const expirySpeechTimerRef = useRef<number | null>(null);
   const expirySpeechRequestRef = useRef(0);
+  const cameraDevicesRef = useRef<VideoInputDevice[]>([]);
+  const selectedCameraDeviceIdRef = useRef("");
   const modeRef = useRef<Mode>("receipt");
 
   const [screen, setScreen] = useState<Screen>(() =>
@@ -2284,8 +2284,6 @@ function MobileApp() {
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraRestartKey, setCameraRestartKey] = useState(0);
   const [cameraError, setCameraError] = useState("");
-  const [cameraDevices, setCameraDevices] = useState<VideoInputDevice[]>([]);
-  const [selectedCameraDeviceId, setSelectedCameraDeviceId] = useState("");
   const [torchAvailable, setTorchAvailable] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
   const [scanPerformanceMode, setScanPerformanceMode] =
@@ -3422,12 +3420,12 @@ function MobileApp() {
   const refreshCameraDevices = useCallback(async (activeDeviceId?: string) => {
     try {
       const devices = await listVideoInputDevices();
-      setCameraDevices(devices);
+      cameraDevicesRef.current = devices;
       if (
         activeDeviceId &&
         devices.some((device) => device.deviceId === activeDeviceId)
       ) {
-        setSelectedCameraDeviceId(activeDeviceId);
+        selectedCameraDeviceIdRef.current = activeDeviceId;
       }
       return devices;
     } catch {
@@ -3445,7 +3443,7 @@ function MobileApp() {
       ? getCameraTrack(videoRef.current)
       : null;
     const activeDeviceId =
-      currentTrack?.getSettings().deviceId ?? selectedCameraDeviceId;
+      currentTrack?.getSettings().deviceId ?? selectedCameraDeviceIdRef.current;
     const devices = await refreshCameraDevices(activeDeviceId);
     if (devices.length <= 1) {
       setScanNotice("전환할 다른 카메라가 없습니다.");
@@ -3459,7 +3457,7 @@ function MobileApp() {
       currentIndex >= 0 ? (currentIndex + 1) % devices.length : 0;
     const nextDevice = devices[nextIndex];
 
-    setSelectedCameraDeviceId(nextDevice.deviceId);
+    selectedCameraDeviceIdRef.current = nextDevice.deviceId;
     lastDetectedRef.current = {
       value: "",
       at: 0,
@@ -3474,12 +3472,7 @@ function MobileApp() {
     } else {
       activateCamera();
     }
-  }, [
-    activateCamera,
-    cameraActive,
-    refreshCameraDevices,
-    selectedCameraDeviceId,
-  ]);
+  }, [activateCamera, cameraActive, refreshCameraDevices]);
 
   const toggleScanPerformanceMode = useCallback(() => {
     setScanPerformanceMode((current) => {
@@ -3518,14 +3511,8 @@ function MobileApp() {
       };
 
       if (next === "native") {
-        setCameraActive(false);
-        setTorchAvailable(false);
-        setTorchOn(false);
-        setScanNotice(
-          isNativeAppShell()
-            ? "네이티브 QR 리더로 전환했습니다."
-            : "네이티브 리더 UI 미리보기입니다. 실제 스캔은 앱에서만 동작합니다.",
-        );
+        postNativeScannerMessage("stop");
+        setScanNotice("네이티브 리더 모드를 기본값으로 저장했습니다.");
       } else {
         postNativeScannerMessage("stop");
         setScanNotice("웹 QR 리더로 전환했습니다.");
@@ -3538,7 +3525,6 @@ function MobileApp() {
   useEffect(() => {
     if (scannerEngine !== "native" || isNativeAppShell()) return;
 
-    storeScannerEngine("web");
     setScannerEngine("web");
   }, [scannerEngine]);
 
@@ -3602,11 +3588,6 @@ function MobileApp() {
       return;
     }
 
-    if (scannerEngine === "native") {
-      if (cameraActive) setCameraActive(false);
-      return;
-    }
-
     if (!cameraActive) activateCamera();
   }, [
     activateCamera,
@@ -3618,31 +3599,8 @@ function MobileApp() {
   ]);
 
   useEffect(() => {
-    const canUseNativeScanner =
-      scannerEngine === "native" &&
-      screen === "scan" &&
-      (mode === "return" || Boolean(selectedWholesaler));
-
-    if (!canUseNativeScanner) {
-      postNativeScannerMessage("stop");
-      return;
-    }
-
-    setCameraActive(false);
-    if (!isNativeAppShell()) {
-      setScanNotice(
-        "네이티브 리더 UI 미리보기입니다. 실제 스캔은 앱에서만 동작합니다.",
-      );
-      return;
-    }
-
-    postNativeScannerMessage("start");
-    setScanNotice("네이티브 QR 리더가 실행 중입니다.");
-
-    return () => {
-      postNativeScannerMessage("stop");
-    };
-  }, [mode, scannerEngine, screen, selectedWholesaler?.id]);
+    postNativeScannerMessage("stop");
+  }, [scannerEngine]);
 
   useEffect(() => {
     if (screen === "stocks") {
@@ -3672,14 +3630,15 @@ function MobileApp() {
         const reader = createScannerReader(scanPerformanceMode);
         const scanModeLabel =
           scanPerformanceMode === "performance" ? "저사양" : "정밀";
+        const selectedCameraDeviceId = selectedCameraDeviceIdRef.current;
         const availableDevices = selectedCameraDeviceId
-          ? cameraDevices
+          ? cameraDevicesRef.current
           : await refreshCameraDevices();
         const preferredDeviceId =
           selectedCameraDeviceId ||
           getPreferredVideoInputDeviceId(availableDevices);
         if (preferredDeviceId && preferredDeviceId !== selectedCameraDeviceId) {
-          setSelectedCameraDeviceId(preferredDeviceId);
+          selectedCameraDeviceIdRef.current = preferredDeviceId;
         }
         setScanNotice(`카메라 실행 중`);
         const handleScannerResult = (value: string) => {
@@ -3727,7 +3686,7 @@ function MobileApp() {
           });
         } catch (error) {
           if (!preferredDeviceId) throw error;
-          setSelectedCameraDeviceId("");
+          selectedCameraDeviceIdRef.current = "";
           controls = await startGuidedWebScanner({
             constraints: getCameraConstraints(scanPerformanceMode),
             guideElement: scanGuideRef.current,
@@ -3787,13 +3746,11 @@ function MobileApp() {
   }, [
     cameraActive,
     cameraRestartKey,
-    cameraDevices,
     handlePayload,
     playScanSound,
     presentScanExpiry,
     refreshCameraDevices,
     scanPerformanceMode,
-    selectedCameraDeviceId,
     stopCamera,
   ]);
 
@@ -4501,10 +4458,7 @@ function ScanScreen({
   const isReceipt = mode === "receipt";
   const accent = isReceipt ? "#4D9AFF" : "#FFB44D";
   const canUseCamera = !isReceipt || Boolean(selectedWholesaler);
-  const usingNativeScanner = scannerEngine === "native";
-  const scannerActive = cameraActive || usingNativeScanner;
-  const nativeAppBridgeAvailable = isNativeAppShell();
-  const nativePreview = usingNativeScanner && !nativeAppBridgeAvailable;
+  const scannerActive = cameraActive;
   const scanStatusText =
     scanNotice ||
     (isReceipt
@@ -4604,37 +4558,7 @@ function ScanScreen({
       </div>
 
       <section className="scanner-zone">
-        {nativePreview && (
-          <div className="native-reader-preview">
-            <div className="native-preview-top">
-              <button className="native-preview-pill" type="button">
-                플래시
-              </button>
-              <button
-                className="native-preview-pill"
-                type="button"
-                onClick={onScannerEngine}
-              >
-                닫기
-              </button>
-            </div>
-            <div className="native-preview-frame" aria-hidden="true">
-              <span className="native-preview-corner tl" />
-              <span className="native-preview-corner tr" />
-              <span className="native-preview-corner bl" />
-              <span className="native-preview-corner br" />
-            </div>
-            <div className="native-preview-bottom">
-              <strong>네이티브 리더</strong>
-              <span>
-                {canUseCamera
-                  ? "UI 미리보기입니다. 실제 스캔은 앱에서 동작합니다."
-                  : "도매처 선택 후 앱에서 네이티브 리더를 사용할 수 있습니다."}
-              </span>
-            </div>
-          </div>
-        )}
-        {canUseCamera && !usingNativeScanner && (
+        {canUseCamera && (
           <div className="camera-actions">
             <button
               type="button"
@@ -4663,56 +4587,50 @@ function ScanScreen({
             </button>
           </div>
         )}
-        {!nativePreview && (
-          <>
-            <div className="scan-status-copy">
-              <span>{scanStatusText}</span>
-            </div>
-            <video
-              ref={videoRef}
-              className={`camera-video ${cameraActive ? "is-active" : ""}`}
-              autoPlay
-              muted
-              playsInline
-            />
+        <div className="scan-status-copy">
+          <span>{scanStatusText}</span>
+        </div>
+        <video
+          ref={videoRef}
+          className={`camera-video ${cameraActive ? "is-active" : ""}`}
+          autoPlay
+          muted
+          playsInline
+        />
+        <button
+          ref={scanGuideRef}
+          className={`scan-box ${scannerActive ? "is-active" : ""}`}
+          style={{ "--accent": accent } as CSSProperties}
+          type="button"
+          onClick={scannerActive ? undefined : onToggleCamera}
+        >
+          <span className="corner tl" />
+          <span className="corner tr" />
+          <span className="corner br" />
+          <span className="corner bl" />
+          <span className="scan-line" />
+        </button>
+        <div className="scan-copy">
+          <strong>
+            {isReceipt
+              ? "QR을 사각형 안에 맞춰주세요"
+              : "반품할 약품의 QR을 스캔하세요"}
+          </strong>
+        </div>
+        <div className="scan-result-stack">
+          <div className="scan-result">
+            <strong>{lastScanName}</strong>
+          </div>
+          {isReceipt && queueCount > 0 && (
             <button
-              ref={scanGuideRef}
-              className={`scan-box ${scannerActive ? "is-active" : ""}`}
-              style={{ "--accent": accent } as CSSProperties}
+              className="scan-receipt-button"
               type="button"
-              onClick={
-                scannerActive || usingNativeScanner ? undefined : onToggleCamera
-              }
+              onClick={onReview}
             >
-              <span className="corner tl" />
-              <span className="corner tr" />
-              <span className="corner bl" />
-              <span className="corner br" />
-              <span className="scan-line" />
+              <span>입고 신청</span>
             </button>
-            <div className="scan-copy">
-              <strong>
-                {isReceipt
-                  ? "QR을 사각형 안에 맞춰주세요"
-                  : "반품할 약품의 QR을 스캔하세요"}
-              </strong>
-            </div>
-            <div className="scan-result-stack">
-              <div className="scan-result">
-                <strong>{lastScanName}</strong>
-              </div>
-              {isReceipt && queueCount > 0 && (
-                <button
-                  className="scan-receipt-button"
-                  type="button"
-                  onClick={onReview}
-                >
-                  <span>입고 신청</span>
-                </button>
-              )}
-            </div>
-          </>
-        )}
+          )}
+        </div>
       </section>
 
       {isReceipt && !selectedWholesaler && (
