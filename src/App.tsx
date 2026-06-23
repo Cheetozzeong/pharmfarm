@@ -6264,6 +6264,7 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
         <p>
           이팜 로컬 SQL Server에서 조제 약품 데이터만 읽어 서버로 전송합니다.
           QR 원문은 기본 전송하지 않고, 네트워크가 끊기면 로컬 큐에 보관한 뒤 자동 재시도합니다.
+          설치 시 약품 마스터 1회 동기화도 선택할 수 있습니다.
         </p>
         <div className="agent-download-actions">
           <a className="agent-primary-button" href="/pharmfarm-agent-production.zip" download>
@@ -6299,6 +6300,7 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
           <li><b>install-pharmfarm-agent.bat</b>을 실행합니다.</li>
           <li>API 주소는 기본값을 유지하고 SQL Server는 <b>.\\EPHARM_DB</b>를 사용합니다.</li>
           <li><b>디버깅용 QR 원문 포함</b>은 체크하지 않습니다.</li>
+          <li><b>약품 마스터 1회 동기화</b>는 켜도 되고, 재고 후보 리포트는 테이블 확인이 필요할 때만 켭니다.</li>
           <li>이팜에서 QR을 등록한 뒤 PharmFarm 처방/리스트에서 수신 여부를 확인합니다.</li>
         </ol>
       </section>

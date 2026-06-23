@@ -69,6 +69,8 @@ function Write-Config {
     [string]$DeviceName,
     [string]$AgentSecret,
     [bool]$IncludeRawQrText,
+    [bool]$BootstrapDrugMaster,
+    [bool]$BootstrapStockProbe,
     [int]$IntervalSeconds
   )
 
@@ -95,6 +97,9 @@ function Write-Config {
     agentSecret = $AgentSecret
     intervalSeconds = $IntervalSeconds
     includeRawQrText = $IncludeRawQrText
+    bootstrapDrugMaster = $BootstrapDrugMaster
+    bootstrapStockProbe = $BootstrapStockProbe
+    bootstrapChunkSize = 500
     createdAt = (Get-Date).ToUniversalTime().ToString("o")
   }
 
@@ -127,7 +132,7 @@ function Register-AgentTask {
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "PharmFarm Agent Setup"
-$form.Size = New-Object System.Drawing.Size(620, 620)
+$form.Size = New-Object System.Drawing.Size(620, 700)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
@@ -147,7 +152,7 @@ $form.Controls.Add($subtitle)
 
 $card = New-Object System.Windows.Forms.Panel
 $card.Location = New-Object System.Drawing.Point(34, 118)
-$card.Size = New-Object System.Drawing.Size(540, 350)
+$card.Size = New-Object System.Drawing.Size(540, 420)
 $card.BackColor = [System.Drawing.Color]::White
 $card.BorderStyle = "FixedSingle"
 $form.Controls.Add($card)
@@ -184,13 +189,32 @@ $card.Controls.Add($intervalLabel)
 $intervalBox = New-TextBox "10" 340 310 60
 $card.Controls.Add($intervalBox)
 
-$notice = New-Label "기본값은 QR 원문을 서버로 보내지 않습니다. 처방 코드는 해시로만 처리됩니다." 38 486 540 26
+$bootstrapDrugCheck = New-Object System.Windows.Forms.CheckBox
+$bootstrapDrugCheck.Text = "설치 시 약품 마스터 1회 동기화"
+$bootstrapDrugCheck.Location = New-Object System.Drawing.Point(22, 350)
+$bootstrapDrugCheck.Size = New-Object System.Drawing.Size(250, 24)
+$bootstrapDrugCheck.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$bootstrapDrugCheck.ForeColor = [System.Drawing.Color]::FromArgb(32, 35, 29)
+$bootstrapDrugCheck.Checked = $true
+$card.Controls.Add($bootstrapDrugCheck)
+
+$bootstrapStockCheck = New-Object System.Windows.Forms.CheckBox
+$bootstrapStockCheck.Text = "재고 테이블 후보 탐색 리포트 전송"
+$bootstrapStockCheck.Location = New-Object System.Drawing.Point(22, 378)
+$bootstrapStockCheck.Size = New-Object System.Drawing.Size(280, 24)
+$bootstrapStockCheck.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+$bootstrapStockCheck.ForeColor = [System.Drawing.Color]::FromArgb(104, 112, 97)
+$bootstrapStockCheck.Checked = $false
+$card.Controls.Add($bootstrapStockCheck)
+
+
+$notice = New-Label "기본값은 QR 원문을 서버로 보내지 않습니다. 처방 코드는 해시로만 처리됩니다." 38 556 540 26
 $notice.ForeColor = [System.Drawing.Color]::FromArgb(47, 122, 77)
 $form.Controls.Add($notice)
 
 $installButton = New-Object System.Windows.Forms.Button
 $installButton.Text = "설치 및 시작"
-$installButton.Location = New-Object System.Drawing.Point(350, 526)
+$installButton.Location = New-Object System.Drawing.Point(350, 606)
 $installButton.Size = New-Object System.Drawing.Size(106, 36)
 $installButton.BackColor = [System.Drawing.Color]::FromArgb(47, 122, 77)
 $installButton.ForeColor = [System.Drawing.Color]::White
@@ -200,7 +224,7 @@ $form.Controls.Add($installButton)
 
 $closeButton = New-Object System.Windows.Forms.Button
 $closeButton.Text = "닫기"
-$closeButton.Location = New-Object System.Drawing.Point(468, 526)
+$closeButton.Location = New-Object System.Drawing.Point(468, 606)
 $closeButton.Size = New-Object System.Drawing.Size(106, 36)
 $closeButton.FlatStyle = "Flat"
 $closeButton.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
@@ -227,7 +251,7 @@ $installButton.Add_Click({
       return
     }
 
-    Write-Config -ApiBase $apiBase -SqlServer $sqlServer -DeviceName $deviceName -AgentSecret $secretBox.Text -IncludeRawQrText $rawCheck.Checked -IntervalSeconds $intervalSeconds
+    Write-Config -ApiBase $apiBase -SqlServer $sqlServer -DeviceName $deviceName -AgentSecret $secretBox.Text -IncludeRawQrText $rawCheck.Checked -BootstrapDrugMaster $bootstrapDrugCheck.Checked -BootstrapStockProbe $bootstrapStockCheck.Checked -IntervalSeconds $intervalSeconds
     $registered = Register-AgentTask
 
     if ($registered) {

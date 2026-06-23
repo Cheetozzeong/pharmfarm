@@ -78,3 +78,18 @@ Tray icon:
 - Shows PharmFarm running status in the Windows notification area.
 - Right-click to refresh status, open logs, open queue, start/stop the agent, or close the tray icon.
 - Closing the tray icon does not remove the background scheduled task.
+
+Bootstrap sync:
+
+- The installer can enable one-time drug master sync from eP_BASES.dbo.dgmast.
+- The installer can also send a stock candidate report. This report contains table/column metadata only, not stock row data.
+- Actual stock row migration must be enabled only after the exact EPharm stock table and safe columns are confirmed.
+- Bootstrap data is queued first, then sent through the same retry mechanism.
+
+Debug CSV export:
+
+- debug-export-last-month-csv.bat exports local CSV files only.
+- It scans visible EPharm databases and exports rows from the last 31 days.
+- Tables without a usable date column are listed in manifest.csv as NO_DATE_COLUMN.
+- Output folder: C:\ProgramData\PharmFarmAgent\debug-export\last-month-YYYYMMDD-HHMMSS
+- This may include prescription or patient-related data. Do not upload/share without legal approval.

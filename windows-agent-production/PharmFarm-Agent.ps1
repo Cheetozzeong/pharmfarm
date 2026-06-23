@@ -16,6 +16,7 @@ $SentDir = Join-Path $InstallRoot "sent"
 $DeadDir = Join-Path $InstallRoot "dead-letter"
 $LogDir = Join-Path $InstallRoot "logs"
 $StateFile = Join-Path $InstallRoot "agent.state.json"
+$BootstrapStateFile = Join-Path $InstallRoot "bootstrap.state.json"
 $LogFile = Join-Path $LogDir ("agent-{0}.log" -f (Get-Date -Format "yyyyMMdd"))
 $SeenHashes = @{}
 $Initialized = $false
@@ -209,6 +210,245 @@ function Convert-DataTableRows {
 
   return $rows.ToArray()
 }
+
+function Convert-BootstrapRows {
+  param([System.Data.DataTable]$Table)
+
+  $rows = New-Object System.Collections.Generic.List[object]
+
+  foreach ($row in $Table.Rows) {
+    $insuranceCode = Get-DataRowValue $row "insuranceCode"
+    $drugName = Get-DataRowValue $row "drugName"
+    $standardCode = Get-DataRowValue $row "standardCode"
+    $unit = Get-DataRowValue $row "unit"
+    $price = Get-DataRowValue $row "price"
+
+    if ($null -eq $insuranceCode -and $null -eq $drugName) {
+      continue
+    }
+
+    $rows.Add([ordered]@{
+      insuranceCode = if ($insuranceCode) { $insuranceCode.ToString().Trim() } else { "" }
+      drugName = if ($drugName) { $drugName.ToString().Trim() } else { "" }
+      standardCode = if ($standardCode) { $standardCode.ToString().Trim() } else { "" }
+      unit = if ($unit) { $unit.ToString().Trim() } else { "" }
+      price = Convert-NullableDouble $price
+    })
+  }
+
+  return $rows.ToArray()
+}
+
+function Get-DrugMasterRows {
+  param(
+    [object]$Config,
+    [int]$Offset,
+    [int]$Limit
+  )
+
+  $query = @"
+SELECT
+  CONVERT(NVARCHAR(80), dm_iscode) AS insuranceCode,
+  CONVERT(NVARCHAR(300), dm_drugname) AS drugName,
+  CONVERT(NVARCHAR(80), '') AS standardCode,
+  CONVERT(NVARCHAR(120), '') AS unit,
+  CONVERT(float, NULL) AS price
+FROM dbo.dgmast WITH (NOLOCK)
+WHERE dm_iscode IS NOT NULL
+   OR dm_drugname IS NOT NULL
+ORDER BY dm_iscode
+OFFSET $Offset ROWS FETCH NEXT $Limit ROWS ONLY
+"@
+
+  return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 20
+}
+
+function Get-DrugMasterCount {
+  param([object]$Config)
+
+  $query = @"
+SELECT COUNT(1) AS rowCount
+FROM dbo.dgmast WITH (NOLOCK)
+WHERE dm_iscode IS NOT NULL
+   OR dm_drugname IS NOT NULL
+"@
+  $table = Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 10
+
+  foreach ($row in $table.Rows) {
+    $value = Get-DataRowValue $row "rowCount"
+    if ($null -ne $value) {
+      return [int]$value
+    }
+  }
+
+  return 0
+}
+
+function Get-StockCandidateReport {
+  param([object]$Config)
+
+  $query = @"
+SELECT TOP (40)
+  DB_NAME() AS databaseName,
+  s.name AS schemaName,
+  t.name AS tableName,
+  SUM(p.rows) AS rowCount,
+  STRING_AGG(CONVERT(NVARCHAR(MAX), c.name), ',') WITHIN GROUP (ORDER BY c.column_id) AS columns
+FROM sys.tables t
+JOIN sys.schemas s ON t.schema_id = s.schema_id
+JOIN sys.columns c ON t.object_id = c.object_id
+LEFT JOIN sys.partitions p ON t.object_id = p.object_id AND p.index_id IN (0, 1)
+WHERE
+  t.name LIKE '%stock%' OR t.name LIKE '%stk%' OR t.name LIKE '%jae%' OR t.name LIKE '%jego%' OR
+  c.name LIKE '%stock%' OR c.name LIKE '%qty%' OR c.name LIKE '%quantity%' OR c.name LIKE '%amount%' OR
+  c.name LIKE '%iscode%' OR c.name LIKE '%drug%'
+GROUP BY s.name, t.name
+HAVING SUM(p.rows) > 0
+ORDER BY rowCount DESC, t.name
+"@
+
+  $reports = New-Object System.Collections.Generic.List[object]
+  $databases = @("eP_PHARM", "eP_BASES", "EP_IETCS", "eP_IETCS")
+
+  foreach ($db in $databases) {
+    try {
+      $rows = Convert-DataTableRows (Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName $db -Query $query -TimeoutSeconds 12)
+      foreach ($row in $rows) {
+        $reports.Add($row)
+      }
+    } catch {
+      $reports.Add([ordered]@{
+        databaseName = $db
+        schemaName = ""
+        tableName = ""
+        rowCount = 0
+        columns = ""
+        error = $_.Exception.Message
+      })
+    }
+  }
+
+  return $reports.ToArray()
+}
+
+function New-BootstrapEnvelope {
+  param(
+    [object]$Config,
+    [string]$Kind,
+    [object]$Data,
+    [int]$Part = 1,
+    [int]$TotalParts = 1
+  )
+
+  $now = (Get-Date).ToUniversalTime().ToString("o")
+  $dataJson = $Data | ConvertTo-Json -Depth 20 -Compress
+  $eventId = Get-Sha256Hex "$Kind.$Part.$TotalParts.$dataJson"
+
+  return [ordered]@{
+    eventId = $eventId
+    createdAt = $now
+    targetPath = "/samples"
+    attempts = 0
+    nextAttemptAt = $now
+    payload = [ordered]@{
+      decoderVersion = "pharmfarm-bootstrap-agent-v1"
+      prescriptionGroupId = "bootstrap-" + $Kind
+      prescriptionGroupLabel = "초기 동기화 " + $Kind
+      qrType = "EPHARM_BOOTSTRAP"
+      rawQrText = ""
+      rawQrHash = $eventId
+      memo = "PharmFarm bootstrap sync / kind=$Kind part=$Part/$TotalParts"
+      hospitalName = ""
+      patientLabel = ""
+      knownPlainText = $dataJson
+      knownFields = @(
+        [ordered]@{ id = "bootstrapKind"; label = "Bootstrap kind"; type = "OTHER"; value = $Kind; memo = "" },
+        [ordered]@{ id = "part"; label = "Part"; type = "OTHER"; value = "$Part/$TotalParts"; memo = "" }
+      )
+      rawLength = 0
+      outerPayloadSize = 0
+      outerPayloadHex = ""
+      decodeStatus = "PENDING"
+      decodeMessage = "Bootstrap data captured by PharmFarm Agent. Server should import into normalized tables."
+      decodedText = ""
+      answers = @()
+      decodedResults = @()
+      decodedAt = $now
+      createdAt = $now
+      updatedAt = $now
+    }
+  }
+}
+
+function Invoke-BootstrapSync {
+  param([object]$Config)
+
+  $state = Read-JsonFile $BootstrapStateFile
+
+  if ($null -eq $state) {
+    $state = [ordered]@{
+      drugMasterCompleted = $false
+      stockProbeCompleted = $false
+      updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+    }
+  }
+
+  if ($Config.bootstrapDrugMaster -eq $true -and $state.drugMasterCompleted -ne $true) {
+    try {
+      $limit = if ($Config.bootstrapChunkSize) { [int]$Config.bootstrapChunkSize } else { 500 }
+      if ($limit -lt 100) { $limit = 100 }
+      if ($limit -gt 1000) { $limit = 1000 }
+      $totalRows = Get-DrugMasterCount $Config
+      $totalParts = [Math]::Max(1, [Math]::Ceiling($totalRows / $limit))
+      Write-AgentLog "bootstrap drug master start rows=$totalRows chunk=$limit parts=$totalParts"
+
+      for ($offset = 0; $offset -lt $totalRows; $offset += $limit) {
+        $part = [int]([Math]::Floor($offset / $limit) + 1)
+        $rows = @(Convert-BootstrapRows (Get-DrugMasterRows -Config $Config -Offset $offset -Limit $limit))
+        $data = [ordered]@{
+          schema = "pharmfarm.bootstrap.drug-master.v1"
+          source = "eP_BASES.dbo.dgmast"
+          capturedAt = (Get-Date).ToUniversalTime().ToString("o")
+          totalRows = $totalRows
+          offset = $offset
+          limit = $limit
+          rows = $rows
+        }
+        $envelope = New-BootstrapEnvelope -Config $Config -Kind "drug-master" -Data $data -Part $part -TotalParts $totalParts
+        [void](Save-QueueItem $envelope)
+        Write-AgentLog "bootstrap drug master queued part=$part/$totalParts rows=$($rows.Count)"
+      }
+
+      $state.drugMasterCompleted = $true
+      $state.updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+      Write-JsonFile -Path $BootstrapStateFile -Value $state -Depth 8
+    } catch {
+      Write-AgentLog "bootstrap drug master error $($_.Exception.Message)" "ERROR"
+    }
+  }
+
+  if ($Config.bootstrapStockProbe -eq $true -and $state.stockProbeCompleted -ne $true) {
+    try {
+      $report = @(Get-StockCandidateReport $Config)
+      $data = [ordered]@{
+        schema = "pharmfarm.bootstrap.stock-candidate-report.v1"
+        source = "EPharm SQL catalog"
+        capturedAt = (Get-Date).ToUniversalTime().ToString("o")
+        note = "This report contains candidate table/column metadata only. It does not include stock row data."
+        candidates = $report
+      }
+      $envelope = New-BootstrapEnvelope -Config $Config -Kind "stock-candidate-report" -Data $data
+      [void](Save-QueueItem $envelope)
+      $state.stockProbeCompleted = $true
+      $state.updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+      Write-JsonFile -Path $BootstrapStateFile -Value $state -Depth 8
+      Write-AgentLog "bootstrap stock candidate report queued candidates=$($report.Count)"
+    } catch {
+      Write-AgentLog "bootstrap stock probe error $($_.Exception.Message)" "ERROR"
+    }
+  }
+}
+
 
 function Get-RecentPrescriptionRows {
   param([object]$Config)
@@ -624,6 +864,8 @@ try {
   $intervalSeconds = if ($config.intervalSeconds) { [int]$config.intervalSeconds } else { 10 }
 
   Write-AgentLog "PharmFarm Agent started api=$($config.apiBase) sql=$($config.sqlServer) interval=${intervalSeconds}s"
+  Invoke-BootstrapSync $config
+  Flush-Queue $config
 
   do {
     Watch-Once $config
