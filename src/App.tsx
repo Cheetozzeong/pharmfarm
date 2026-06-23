@@ -1504,6 +1504,24 @@ function noReceiptHistoryLookup(
   };
 }
 
+function formatTransactionAt(value: unknown, fallback = "-") {
+  const raw = String(value ?? "").trim();
+  if (!raw) return fallback;
+  if (raw === "-" || raw === "공통") return raw;
+
+  const match = raw.match(
+    /^(\d{4})[-./](\d{1,2})[-./](\d{1,2})(?:[T\s]+(\d{1,2}):(\d{2}))?/,
+  );
+
+  if (!match) return raw;
+
+  const [, year, month, day, hour, minute] = match;
+  const date = `${year}.${month.padStart(2, "0")}.${day.padStart(2, "0")}`;
+  if (!hour || !minute) return date;
+
+  return `${date} ${hour.padStart(2, "0")}:${minute}`;
+}
+
 function normalizeCandidate(raw: unknown, index: number): SellerCandidate {
   const item = asRecord(raw);
   const sellerName = String(
@@ -1530,7 +1548,7 @@ function normalizeCandidate(raw: unknown, index: number): SellerCandidate {
         index,
     ),
     sellerName,
-    transactionAt: String(
+    transactionAt: formatTransactionAt(
       item.transactionAt ??
         item.orderDate ??
         item.purchaseDate ??
@@ -6847,7 +6865,7 @@ function normalizeCmsPurchase(raw: unknown, index: number): CmsPurchaseHistory {
   return {
     id: String(item.id ?? item.purchaseHistoryId ?? index),
     sellerName: String(item.sellerName ?? item.wholesalerName ?? "-"),
-    transactionAt: String(item.transactionAt ?? item.orderDate ?? "-"),
+    transactionAt: formatTransactionAt(item.transactionAt ?? item.orderDate),
     orderItemName: String(item.orderItemName ?? item.inventoryName ?? "-"),
     productName: String(item.productName ?? item.name ?? "-"),
     quantity: Number(item.quantity ?? 0),
