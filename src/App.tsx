@@ -6262,15 +6262,26 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
         <p className="agent-eyebrow">Windows Production Agent</p>
         <h1>약국 PC에 설치하는 처방 수집 에이전트</h1>
         <p>
-          이팜 로컬 SQL Server에서 조제 약품 데이터만 읽어 서버로 전송합니다.
-          QR 원문은 기본 전송하지 않고, 네트워크가 끊기면 로컬 큐에 보관한 뒤 자동 재시도합니다.
+          이팜 로컬 SQL Server에서 조제 약품 데이터만 읽어 서버로 전송합니다. QR
+          원문은 기본 전송하지 않고, 네트워크가 끊기면 로컬 큐에 보관한 뒤 자동
+          재시도합니다.
         </p>
         <div className="agent-download-actions">
-          <a className="agent-primary-button" href="/pharmfarm-agent-production.zip" download>
+          <a
+            className="agent-primary-button"
+            href="/pharmfarm-agent-production.zip"
+            download
+          >
             <HardDriveDownload size={20} />
             Windows 설치 파일 다운로드
           </a>
-          <button type="button" className="agent-secondary-button" onClick={() => navigate("/cms")}>CMS로 이동</button>
+          <button
+            type="button"
+            className="agent-secondary-button"
+            onClick={() => navigate("/cms")}
+          >
+            CMS로 이동
+          </button>
         </div>
       </section>
 
@@ -6278,17 +6289,25 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
         <div>
           <ShieldCheck size={24} />
           <strong>보안 기본값</strong>
-          <span>처방 코드는 해시 처리하고 QR 원문은 운영 기본값에서 전송하지 않습니다.</span>
+          <span>
+            처방 코드는 해시 처리하고 QR 원문은 운영 기본값에서 전송하지
+            않습니다.
+          </span>
         </div>
         <div>
           <WifiOff size={24} />
           <strong>오프라인 큐</strong>
-          <span>API 장애나 네트워크 단절 시 C:\\ProgramData\\PharmFarmAgent\\queue에 보관합니다.</span>
+          <span>
+            API 장애나 네트워크 단절 시 C:\\ProgramData\\PharmFarmAgent\\queue에
+            보관합니다.
+          </span>
         </div>
         <div>
           <RefreshCw size={24} />
           <strong>자동 실행</strong>
-          <span>설치 마법사가 Windows 예약 작업을 만들고 로그인 시 자동 실행합니다.</span>
+          <span>
+            설치 마법사가 Windows 예약 작업을 만들고 로그인 시 자동 실행합니다.
+          </span>
         </div>
       </section>
 
@@ -6296,16 +6315,25 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
         <h2>설치 순서</h2>
         <ol>
           <li>설치 파일을 다운로드하고 압축을 해제합니다.</li>
-          <li><b>install-pharmfarm-agent.bat</b>을 실행합니다.</li>
-          <li>API 주소는 기본값을 유지하고 SQL Server는 <b>.\\EPHARM_DB</b>를 사용합니다.</li>
-          <li><b>디버깅용 QR 원문 포함</b>은 체크하지 않습니다.</li>
-          <li>이팜에서 QR을 등록한 뒤 PharmFarm 처방/리스트에서 수신 여부를 확인합니다.</li>
+          <li>
+            <b>install-pharmfarm-agent.bat</b>을 실행합니다.
+          </li>
+          <li>
+            API 주소는 기본값을 유지하고 SQL Server는 <b>.\\EPHARM_DB</b>를
+            사용합니다.
+          </li>
+          <li>
+            <b>디버깅용 QR 원문 포함</b>은 체크하지 않습니다.
+          </li>
+          <li>
+            이팜에서 QR을 등록한 뒤 PharmFarm 처방/리스트에서 수신 여부를
+            확인합니다.
+          </li>
         </ol>
       </section>
     </main>
   );
 }
-
 
 function getCmsPage(path: string): CmsPage {
   const segment = path.split("/").filter(Boolean)[1];
@@ -6341,6 +6369,7 @@ function CmsApp({
   const [apiMessage, setApiMessage] = useState(() =>
     hasStoredAuthTokens() ? "CMS 데이터 확인 중" : "CMS 로그인이 필요합니다.",
   );
+  const [cmsReady, setCmsReady] = useState(() => !hasStoredAuthTokens());
   const [authAccount, setAuthAccount] = useState<AuthAccount | null>(() =>
     getStoredAuthAccount(),
   );
@@ -6348,8 +6377,8 @@ function CmsApp({
   const [password, setPassword] = useState("");
   const [masterQuery, setMasterQuery] = useState("");
   const [includeInactive, setIncludeInactive] = useState(false);
-  const [masters, setMasters] = useState(demoCmsMasters);
-  const [stocks, setStocks] = useState(initialStocks);
+  const [masters, setMasters] = useState<CmsMaster[]>([]);
+  const [stocks, setStocks] = useState<StockItem[]>([]);
   const [wholesalers, setWholesalers] = useState<Wholesaler[]>([]);
   const [cmsWholesalerSearchStatus, setCmsWholesalerSearchStatus] = useState<
     "idle" | "short" | "loading" | "done" | "error"
@@ -6358,29 +6387,29 @@ function CmsApp({
   const [newWholesalerName, setNewWholesalerName] = useState("");
   const [selectedWholesalerId, setSelectedWholesalerId] = useState("");
   const [editingWholesalerName, setEditingWholesalerName] = useState("");
-  const [importJobs, setImportJobs] = useState(demoImportJobs);
-  const [cookieState, setCookieState] = useState(demoCookieState);
+  const [importJobs, setImportJobs] = useState<CmsImportJob[]>([]);
+  const [cookieState, setCookieState] = useState<CmsCookieState>({
+    registered: false,
+    status: "UNKNOWN",
+    maskedCookie: "",
+    message: "cookie 상태를 확인하기 전입니다.",
+  });
   const [cookieInput, setCookieInput] = useState("");
   const [syncStartDate, setSyncStartDate] = useState("2022-07-25");
   const [syncEndDate, setSyncEndDate] = useState("2025-07-25");
-  const [purchaseHistories, setPurchaseHistories] = useState(
-    demoCmsPurchaseHistories,
-  );
-  const [syncJobs, setSyncJobs] = useState(demoPurchaseSyncJobs);
-  const [deductionRecords, setDeductionRecords] =
-    useState(demoDeductionRecords);
+  const [purchaseHistories, setPurchaseHistories] = useState<
+    CmsPurchaseHistory[]
+  >([]);
+  const [syncJobs, setSyncJobs] = useState<CmsSyncJob[]>([]);
+  const [deductionRecords, setDeductionRecords] = useState<
+    CmsDeductionRecord[]
+  >([]);
   const [deductionFilter, setDeductionFilter] = useState<
     "ALL" | CmsDeductionStatus
   >("FAILED");
-  const [selectedMasterId, setSelectedMasterId] = useState(
-    demoCmsMasters[2].id,
-  );
-  const [selectedDeductionId, setSelectedDeductionId] = useState(
-    demoDeductionRecords.find((record) => record.status === "FAILED")?.id ??
-      demoDeductionRecords[0]?.id ??
-      "",
-  );
-  const [selectedStockId, setSelectedStockId] = useState(initialStocks[0].id);
+  const [selectedMasterId, setSelectedMasterId] = useState("");
+  const [selectedDeductionId, setSelectedDeductionId] = useState("");
+  const [selectedStockId, setSelectedStockId] = useState("");
   const [adjustQuantity, setAdjustQuantity] = useState(5);
   const [adjustDirection, setAdjustDirection] = useState<
     "INCREASE" | "DECREASE"
@@ -6396,14 +6425,53 @@ function CmsApp({
   const selectedWholesaler =
     wholesalers.find((wholesaler) => wholesaler.id === selectedWholesalerId) ??
     wholesalers[0];
-  const filteredDeductionRecords =
-    deductionFilter === "ALL"
-      ? deductionRecords
-      : deductionRecords.filter((record) => record.status === deductionFilter);
+  const filteredDeductionRecords = useMemo(
+    () =>
+      deductionFilter === "ALL"
+        ? deductionRecords
+        : deductionRecords.filter(
+            (record) => record.status === deductionFilter,
+          ),
+    [deductionFilter, deductionRecords],
+  );
   const selectedDeduction =
     filteredDeductionRecords.find(
       (record) => record.id === selectedDeductionId,
     ) ?? filteredDeductionRecords[0];
+
+  useEffect(() => {
+    if (masters.length === 0) {
+      if (selectedMasterId) setSelectedMasterId("");
+      return;
+    }
+    if (!masters.some((master) => master.id === selectedMasterId)) {
+      setSelectedMasterId(masters[0].id);
+    }
+  }, [masters, selectedMasterId]);
+
+  useEffect(() => {
+    if (stocks.length === 0) {
+      if (selectedStockId) setSelectedStockId("");
+      return;
+    }
+    if (!stocks.some((stock) => stock.id === selectedStockId)) {
+      setSelectedStockId(stocks[0].id);
+    }
+  }, [selectedStockId, stocks]);
+
+  useEffect(() => {
+    if (filteredDeductionRecords.length === 0) {
+      if (selectedDeductionId) setSelectedDeductionId("");
+      return;
+    }
+    if (
+      !filteredDeductionRecords.some(
+        (record) => record.id === selectedDeductionId,
+      )
+    ) {
+      setSelectedDeductionId(filteredDeductionRecords[0].id);
+    }
+  }, [filteredDeductionRecords, selectedDeductionId]);
 
   useEffect(() => {
     setEditingWholesalerName(selectedWholesaler?.name ?? "");
@@ -6423,6 +6491,7 @@ function CmsApp({
   }, [apiState, isCmsLoginRoute, navigate, postLoginPath]);
 
   const cmsFallback = useCallback((error: unknown) => {
+    setCmsReady(true);
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
       clearAuthTokens();
       setAuthAccount(null);
@@ -6436,7 +6505,7 @@ function CmsApp({
       return;
     }
     setApiState("demo");
-    setApiMessage("CMS API 연결 실패 · 데모 데이터 표시");
+    setApiMessage("CMS API 연결 실패 · 실제 데이터를 불러오지 못했습니다.");
   }, []);
 
   const refreshCms = useCallback(async () => {
@@ -6444,6 +6513,7 @@ function CmsApp({
       setAuthAccount(null);
       setApiState("unauthorized");
       setApiMessage("CMS 로그인이 필요합니다.");
+      setCmsReady(true);
       return false;
     }
 
@@ -6539,6 +6609,7 @@ function CmsApp({
       } else {
         setApiState("connected");
         setApiMessage("CMS API 연결됨");
+        setCmsReady(true);
         return true;
       }
     } catch (error) {
@@ -6955,6 +7026,10 @@ function CmsApp({
         onSubmit={submitCmsLogin}
       />
     );
+  }
+
+  if (!cmsReady && apiState === "checking") {
+    return <CmsLoadingPage apiMessage={apiMessage} />;
   }
 
   return (
@@ -7422,6 +7497,33 @@ function CmsHeader({
   );
 }
 
+function CmsLoadingPage({ apiMessage }: { apiMessage: string }) {
+  return (
+    <section className="cms-loading">
+      <div className="cms-loading-shell">
+        <div className="cms-loading-brand">
+          <img src={pharmfarmLogo} alt="" />
+          <div>
+            <strong>PharmFarm CMS</strong>
+            <span>{apiMessage || "CMS 데이터를 불러오는 중입니다."}</span>
+          </div>
+        </div>
+        <div className="cms-loading-spinner" aria-hidden="true" />
+        <div className="cms-loading-steps">
+          <span>인증 확인</span>
+          <span>기준 데이터 · 재고 조회</span>
+          <span>처방전 차감 기록 동기화</span>
+        </div>
+        <div className="cms-loading-skeleton" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function CmsLoginPage({
   apiMessage,
   apiState,
@@ -7548,6 +7650,9 @@ function CmsDashboard({
           {importJobs.map((job) => (
             <CmsJobRow key={job.id} job={job} />
           ))}
+          {importJobs.length === 0 && (
+            <p className="cms-empty">표시할 import job이 없습니다.</p>
+          )}
         </CmsPanel>
         <CmsPanel title="운영 상태">
           <div className="cms-match-bar">
@@ -7677,6 +7782,11 @@ function CmsMasterPage({
               </span>
             </button>
           ))}
+          {masters.length === 0 && (
+            <p className="cms-empty table-empty">
+              기준 데이터 API 응답을 기다리고 있습니다.
+            </p>
+          )}
         </div>
       </div>
       {selectedMaster && (
@@ -7783,6 +7893,9 @@ function CmsImportPage({
           {jobs.map((job) => (
             <CmsJobRow key={job.id} job={job} />
           ))}
+          {jobs.length === 0 && (
+            <p className="cms-empty">표시할 import job이 없습니다.</p>
+          )}
         </CmsPanel>
         <CmsPanel title="실패 상세">
           {failedJob ? (
@@ -7882,6 +7995,11 @@ function CmsInventoryPage({
               </span>
             </button>
           ))}
+          {stocks.length === 0 && (
+            <p className="cms-empty table-empty">
+              재고 API 응답을 기다리고 있습니다.
+            </p>
+          )}
         </div>
       </div>
       {selectedStock && (
@@ -8465,6 +8583,9 @@ function CmsPurchasePage({
               )}
             </div>
           ))}
+          {syncJobs.length === 0 && (
+            <p className="cms-empty">표시할 동기화 job이 없습니다.</p>
+          )}
         </CmsPanel>
         <CmsPanel title="구매 내역">
           <div className="cms-list">
@@ -8480,6 +8601,9 @@ function CmsPurchasePage({
                 <b>{history.quantity}개</b>
               </div>
             ))}
+            {histories.length === 0 && (
+              <p className="cms-empty">표시할 구매 내역이 없습니다.</p>
+            )}
           </div>
         </CmsPanel>
       </div>

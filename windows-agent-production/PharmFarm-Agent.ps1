@@ -1,4 +1,4 @@
-param(
+﻿param(
   [switch]$Console,
   [switch]$Once,
   [string]$ConfigPath = ""
