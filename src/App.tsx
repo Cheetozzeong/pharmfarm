@@ -1161,6 +1161,20 @@ async function apiFetch<T>(
   return parseApiResponse<T>(response);
 }
 
+async function optionalCmsApiFetch<T>(path: string): Promise<T | null> {
+  try {
+    return await apiFetch<T>(path);
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      (error.message === "UNAUTHORIZED" || error.message === "FORBIDDEN")
+    ) {
+      throw error;
+    }
+    return null;
+  }
+}
+
 async function login(loginId: string, password: string) {
   let data: TokenResponse;
 
@@ -1924,6 +1938,45 @@ function statusClass(status: MatchStatus) {
       return "missing";
     default:
       return "normal";
+  }
+}
+
+function deductionStatusText(status: CmsDeductionStatus) {
+  switch (status) {
+    case "DEDUCTED":
+      return "자동 차감";
+    case "RESOLVED":
+      return "처리 완료";
+    case "PENDING":
+      return "대기";
+    default:
+      return "실패";
+  }
+}
+
+function deductionStatusClass(status: CmsDeductionStatus) {
+  switch (status) {
+    case "DEDUCTED":
+      return "normal";
+    case "RESOLVED":
+      return "name";
+    case "PENDING":
+      return "virtual";
+    default:
+      return "missing";
+  }
+}
+
+function resolutionText(resolutionType: CmsDeductionResolution) {
+  switch (resolutionType) {
+    case "EXISTING_STOCK":
+      return "재고가 있는 약으로 차감";
+    case "VIRTUAL_DRUG":
+      return "가상의 약으로 차감";
+    case "UNREGISTERED_DRUG":
+      return "등록안된약 처리";
+    default:
+      return resolutionType;
   }
 }
 
@@ -3960,7 +4013,7 @@ function MobileApp() {
     setStocks((current) => applyReceiptStocks(current, items));
   }
 
-  async function commitReturn() {
+  async function commitReturn(quantityOverride?: number) {
     if (
       returnLookup?.matchType !== "CONFIRMED" &&
       returnLookup?.matchType !== "ESTIMATED"
@@ -3968,7 +4021,10 @@ function MobileApp() {
       return;
     }
 
-    const quantity = clampReturnQuantity(returnQuantity, returnMax);
+    const quantity = clampReturnQuantity(
+      quantityOverride ?? returnQuantity,
+      returnMax,
+    );
     if (quantity <= 0) return;
 
     try {
@@ -4202,6 +4258,12 @@ function MobileApp() {
               setLastScanName("QR 스캔 대기");
               setScreen("scan");
             }}
+            onFullReturn={() => {
+              const fullQuantity = returnLookup.productTotalQuantity;
+              if (fullQuantity <= 0 || fullQuantity > returnMax) return;
+              setReturnQuantity(fullQuantity);
+              void commitReturn(fullQuantity);
+            }}
             onNext={() => {
               setReturnQuantity(clampReturnQuantity(returnMax, returnMax));
               setScreen("returnQty");
@@ -4260,7 +4322,7 @@ function MobileApp() {
                   : "returnEstimated",
               )
             }
-            onCommit={commitReturn}
+            onCommit={() => void commitReturn()}
             onMemo={setReturnMemo}
             onQuantity={(next) =>
               setReturnQuantity(clampReturnQuantity(next, returnMax))
@@ -5182,12 +5244,18 @@ function ReceiptMatchItem({
 function ReturnConfirmedScreen({
   lookup,
   onClose,
+  onFullReturn,
   onNext,
 }: {
   lookup: Extract<ReturnLookup, { matchType: "CONFIRMED" }>;
   onClose: () => void;
+  onFullReturn: () => void;
   onNext: () => void;
 }) {
+  const fullQuantity = lookup.productTotalQuantity;
+  const canReturnFullBottle =
+    fullQuantity > 0 && fullQuantity <= lookup.returnableQuantity;
+
   return (
     <ReturnSheet height="confirmed">
       <span className="state-badge confirmed">
@@ -5213,15 +5281,25 @@ function ReturnConfirmedScreen({
           />
         </div>
       </div>
-      <button className="primary-btn push" type="button" onClick={onNext}>
-        반품 수량 입력
-      </button>
+      <div className="return-confirm-actions push">
+        <button
+          className="primary-btn"
+          type="button"
+          disabled={!canReturnFullBottle}
+          onClick={onFullReturn}
+        >
+          완통 반품
+        </button>
+        <button className="primary-btn" type="button" onClick={onNext}>
+          수량 입력
+        </button>
+      </div>
       <button
         className="secondary-btn return-close-btn"
         type="button"
         onClick={onClose}
       >
-        닫기
+        취소
       </button>
     </ReturnSheet>
   );
@@ -5857,7 +5935,7 @@ type CmsPage =
   | "import"
   | "inventory"
   | "wholesaler"
-  | "dispense"
+  | "prescriptions"
   | "purchase";
 
 type CmsMaster = {
@@ -5920,14 +5998,26 @@ type CmsSyncJob = {
   message: string;
 };
 
-type CmsDeductionFailure = {
+type CmsDeductionStatus = "DEDUCTED" | "FAILED" | "RESOLVED" | "PENDING";
+type CmsDeductionResolution =
+  | "VIRTUAL_DRUG"
+  | "EXISTING_STOCK"
+  | "UNREGISTERED_DRUG";
+
+type CmsDeductionRecord = {
   id: string;
   prescriptionCode: string;
   lineNo: number;
+  insuranceCode: string;
   drugName: string;
   totalQuantity: number;
-  status: "FAILED" | "RESOLVED";
+  status: CmsDeductionStatus;
   reason: string;
+  resolutionType?: CmsDeductionResolution;
+  stockId?: string;
+  stockName?: string;
+  stockAfter?: number;
+  createdAt: string;
 };
 
 const demoCmsMasters: CmsMaster[] = [
@@ -6080,24 +6170,56 @@ const demoCmsPurchaseHistories: CmsPurchaseHistory[] = [
   },
 ];
 
-const demoDeductionFailures: CmsDeductionFailure[] = [
+const demoDeductionRecords: CmsDeductionRecord[] = [
+  {
+    id: "D-500",
+    prescriptionCode: "RX-20260618-000",
+    lineNo: 1,
+    insuranceCode: "640001700",
+    drugName: "타이레놀정 500mg",
+    totalQuantity: 6,
+    status: "DEDUCTED",
+    reason: "처방 약명과 보유 재고명이 일치해 자동 차감",
+    stockId: "S-001",
+    stockName: "타이레놀정 500mg",
+    stockAfter: 24,
+    createdAt: "2026.06.18 09:20",
+  },
   {
     id: "D-501",
     prescriptionCode: "RX-20260618-001",
     lineNo: 3,
+    insuranceCode: "670001180",
     drugName: "세토펜건조시럽",
     totalQuantity: 3,
     status: "FAILED",
     reason: "보험코드 기준 재고 미조회",
+    createdAt: "2026.06.18 09:24",
   },
   {
     id: "D-502",
     prescriptionCode: "RX-20260618-006",
     lineNo: 1,
+    insuranceCode: "-",
     drugName: "미등록 감기약",
     totalQuantity: 2,
     status: "FAILED",
     reason: "기준 데이터 미등록",
+    createdAt: "2026.06.18 09:37",
+  },
+  {
+    id: "D-503",
+    prescriptionCode: "RX-20260617-022",
+    lineNo: 2,
+    insuranceCode: "3PF000124",
+    drugName: "비급여 연고 20g",
+    totalQuantity: 1,
+    status: "RESOLVED",
+    reason: "비급여 항목을 가상 약으로 처리",
+    resolutionType: "VIRTUAL_DRUG",
+    stockName: "비급여 연고 20g",
+    stockAfter: 7,
+    createdAt: "2026.06.17 16:12",
   },
 ];
 
@@ -6130,9 +6252,10 @@ function getCmsPage(path: string): CmsPage {
     segment === "inventory" ||
     segment === "wholesaler" ||
     segment === "dispense" ||
+    segment === "prescriptions" ||
     segment === "purchase"
   ) {
-    return segment;
+    return segment === "dispense" ? "prescriptions" : segment;
   }
   return "dashboard";
 }
@@ -6181,14 +6304,18 @@ function CmsApp({
     demoCmsPurchaseHistories,
   );
   const [syncJobs, setSyncJobs] = useState(demoPurchaseSyncJobs);
-  const [deductionFailures, setDeductionFailures] = useState(
-    demoDeductionFailures,
-  );
+  const [deductionRecords, setDeductionRecords] =
+    useState(demoDeductionRecords);
+  const [deductionFilter, setDeductionFilter] = useState<
+    "ALL" | CmsDeductionStatus
+  >("FAILED");
   const [selectedMasterId, setSelectedMasterId] = useState(
     demoCmsMasters[2].id,
   );
-  const [selectedFailureId, setSelectedFailureId] = useState(
-    demoDeductionFailures[0]?.id ?? "",
+  const [selectedDeductionId, setSelectedDeductionId] = useState(
+    demoDeductionRecords.find((record) => record.status === "FAILED")?.id ??
+      demoDeductionRecords[0]?.id ??
+      "",
   );
   const [selectedStockId, setSelectedStockId] = useState(initialStocks[0].id);
   const [adjustQuantity, setAdjustQuantity] = useState(5);
@@ -6206,9 +6333,14 @@ function CmsApp({
   const selectedWholesaler =
     wholesalers.find((wholesaler) => wholesaler.id === selectedWholesalerId) ??
     wholesalers[0];
-  const selectedFailure =
-    deductionFailures.find((failure) => failure.id === selectedFailureId) ??
-    deductionFailures[0];
+  const filteredDeductionRecords =
+    deductionFilter === "ALL"
+      ? deductionRecords
+      : deductionRecords.filter((record) => record.status === deductionFilter);
+  const selectedDeduction =
+    filteredDeductionRecords.find(
+      (record) => record.id === selectedDeductionId,
+    ) ?? filteredDeductionRecords[0];
 
   useEffect(() => {
     setEditingWholesalerName(selectedWholesaler?.name ?? "");
@@ -6268,6 +6400,7 @@ function CmsApp({
         purchaseResult,
         syncResult,
         failureResult,
+        deductionResult,
       ] = await Promise.allSettled([
         apiFetch<unknown>("/auth/me"),
         apiFetch<unknown>(masterPath),
@@ -6276,6 +6409,7 @@ function CmsApp({
         apiFetch<unknown>("/purchase-histories"),
         apiFetch<unknown>("/purchase-histories/sync-jobs"),
         apiFetch<unknown>("/prescription-deductions/failed"),
+        optionalCmsApiFetch<unknown>("/prescription-deductions"),
       ]);
 
       if (accountResult.status === "fulfilled") {
@@ -6306,9 +6440,23 @@ function CmsApp({
         setSyncJobs(arrayPayload(syncResult.value).map(normalizeCmsSyncJob));
       }
       if (failureResult.status === "fulfilled") {
-        setDeductionFailures(
-          arrayPayload(failureResult.value).map(normalizeCmsFailure),
+        const failures = deductionPayload(failureResult.value).map(
+          normalizeCmsDeduction,
         );
+        setDeductionRecords((current) =>
+          mergeDeductionRecords(
+            current.filter((record) => record.status !== "FAILED"),
+            failures,
+          ),
+        );
+      }
+      if (deductionResult.status === "fulfilled" && deductionResult.value) {
+        const records = deductionPayload(deductionResult.value).map(
+          normalizeCmsDeduction,
+        );
+        if (records.length > 0) {
+          setDeductionRecords(records);
+        }
       }
 
       const rejected = [
@@ -6319,6 +6467,7 @@ function CmsApp({
         purchaseResult,
         syncResult,
         failureResult,
+        deductionResult,
       ].find((result) => result.status === "rejected");
 
       if (rejected?.status === "rejected") {
@@ -6664,9 +6813,19 @@ function CmsApp({
     if (!prescriptionId.trim()) return;
 
     try {
-      await apiFetch(`/prescriptions/${prescriptionId.trim()}/deduct-stock`, {
-        method: "POST",
-      });
+      const response = await apiFetch<unknown>(
+        `/prescriptions/${prescriptionId.trim()}/deduct-stock`,
+        {
+          method: "POST",
+        },
+      );
+      const records = deductionPayload(response).map(normalizeCmsDeduction);
+      if (records.length > 0) {
+        setDeductionRecords((current) =>
+          mergeDeductionRecords(current, records),
+        );
+        setSelectedDeductionId(records[0].id);
+      }
       setApiState("connected");
       setApiMessage("처방전 재고 차감 요청 완료");
       void refreshCms();
@@ -6676,26 +6835,46 @@ function CmsApp({
   }
 
   async function resolveDeduction(
-    failure: CmsDeductionFailure,
-    resolutionType: "VIRTUAL_DRUG" | "EXISTING_STOCK" | "UNREGISTERED_DRUG",
+    record: CmsDeductionRecord,
+    resolutionType: CmsDeductionResolution,
   ) {
+    if (record.status !== "FAILED") return;
+
     try {
-      await apiFetch(`/prescription-deductions/${failure.id}/resolve`, {
-        method: "POST",
-        body: JSON.stringify({
-          resolutionType,
-          stockId:
-            resolutionType === "EXISTING_STOCK" ? selectedStock?.id : undefined,
-          memo: "CMS 수동 처리",
-        }),
-      });
-      setApiState("connected");
-      setApiMessage("처방전 차감 실패 항목 처리 완료");
-      setDeductionFailures((current) =>
+      const response = await apiFetch<unknown>(
+        `/prescription-deductions/${record.id}/resolve`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            resolutionType,
+            stockId:
+              resolutionType === "EXISTING_STOCK"
+                ? selectedStock?.id
+                : undefined,
+            memo: "CMS 수동 처리",
+          }),
+        },
+      );
+      const resolvedRecord =
+        deductionPayload(response).map(normalizeCmsDeduction)[0] ??
+        normalizeCmsDeduction(response, 0);
+      setDeductionRecords((current) =>
         current.map((item) =>
-          item.id === failure.id ? { ...item, status: "RESOLVED" } : item,
+          item.id === record.id
+            ? {
+                ...item,
+                ...resolvedRecord,
+                id: record.id,
+                status: "RESOLVED",
+                resolutionType,
+              }
+            : item,
         ),
       );
+      setDeductionFilter("ALL");
+      setApiState("connected");
+      setApiMessage("처방전 차감 실패 항목 처리 완료");
+      void refreshCms();
     } catch (error) {
       cmsFallback(error);
     }
@@ -6790,17 +6969,28 @@ function CmsApp({
               onSelect={setSelectedWholesalerId}
             />
           )}
-          {page === "dispense" && (
-            <CmsDispensePage
-              failures={deductionFailures}
+          {page === "prescriptions" && (
+            <CmsPrescriptionPage
+              filter={deductionFilter}
               prescriptionId={prescriptionId}
-              selectedFailure={selectedFailure}
+              records={deductionRecords}
+              selectedRecord={selectedDeduction}
               selectedStockId={selectedStockId}
               stocks={stocks}
               onDeduct={deductPrescriptionStock}
+              onFilter={(nextFilter) => {
+                setDeductionFilter(nextFilter);
+                const nextRecord =
+                  nextFilter === "ALL"
+                    ? deductionRecords[0]
+                    : deductionRecords.find(
+                        (record) => record.status === nextFilter,
+                      );
+                setSelectedDeductionId(nextRecord?.id ?? "");
+              }}
               onPrescriptionId={setPrescriptionId}
               onResolve={resolveDeduction}
-              onSelectFailure={setSelectedFailureId}
+              onSelectRecord={setSelectedDeductionId}
               onSelectStock={setSelectedStockId}
             />
           )}
@@ -6833,6 +7023,36 @@ function arrayPayload(raw: unknown): unknown[] {
   if (Array.isArray(item.items)) return item.items;
   if (Array.isArray(item.data)) return item.data;
   return [];
+}
+
+function deductionPayload(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  const item = asRecord(raw);
+  for (const key of [
+    "deductions",
+    "prescriptionDeductions",
+    "failedDeductions",
+    "failures",
+    "results",
+    "content",
+    "items",
+    "data",
+  ]) {
+    const value = item[key];
+    if (Array.isArray(value)) return value;
+  }
+  return [];
+}
+
+function mergeDeductionRecords(
+  current: CmsDeductionRecord[],
+  incoming: CmsDeductionRecord[],
+) {
+  const next = new Map(current.map((record) => [record.id, record]));
+  incoming.forEach((record) => next.set(record.id, record));
+  return [...next.values()].sort((a, b) =>
+    `${b.createdAt}${b.id}`.localeCompare(`${a.createdAt}${a.id}`),
+  );
 }
 
 function normalizeCmsMaster(raw: unknown, index: number): CmsMaster {
@@ -6957,17 +7177,59 @@ function normalizeCmsCookie(raw: unknown): CmsCookieState {
   };
 }
 
-function normalizeCmsFailure(raw: unknown, index: number): CmsDeductionFailure {
-  const item = raw as Record<string, unknown>;
+function normalizeCmsDeduction(
+  raw: unknown,
+  index: number,
+): CmsDeductionRecord {
+  const item = asRecord(raw);
+  const rawStatus = String(item.status ?? item.deductionStatus ?? "FAILED");
+  const status: CmsDeductionStatus =
+    rawStatus === "DEDUCTED" ||
+    rawStatus === "RESOLVED" ||
+    rawStatus === "PENDING"
+      ? rawStatus
+      : "FAILED";
+  const rawResolution = String(item.resolutionType ?? item.resolution ?? "");
+  const resolutionType = [
+    "VIRTUAL_DRUG",
+    "EXISTING_STOCK",
+    "UNREGISTERED_DRUG",
+  ].includes(rawResolution)
+    ? (rawResolution as CmsDeductionResolution)
+    : undefined;
+
   return {
     id: String(item.id ?? item.deductionId ?? index),
     prescriptionCode: String(item.prescriptionCode ?? "-"),
-    lineNo: Number(item.lineNo ?? item.lineNumber ?? 0),
-    drugName: String(item.drugName ?? item.name ?? "미확인 약품"),
-    totalQuantity: Number(item.totalQuantity ?? item.quantity ?? 0),
-    status:
-      String(item.status ?? "FAILED") === "RESOLVED" ? "RESOLVED" : "FAILED",
+    lineNo: Number(item.lineNo ?? item.lineNumber ?? item.pdNo ?? 0),
+    insuranceCode: String(
+      item.insuranceCode ?? item.productCode ?? item.pdIscode ?? "-",
+    ),
+    drugName: String(
+      item.drugName ?? item.name ?? item.drug_name ?? "미확인 약품",
+    ),
+    totalQuantity: Number(
+      item.totalQuantity ?? item.quantity ?? item.pdAmount ?? 0,
+    ),
+    status,
     reason: String(item.reason ?? item.message ?? "자동 차감 실패"),
+    resolutionType,
+    stockId:
+      item.stockId === undefined || item.stockId === null
+        ? undefined
+        : String(item.stockId),
+    stockName:
+      item.stockName === undefined && item.matchedStockName === undefined
+        ? undefined
+        : String(item.stockName ?? item.matchedStockName),
+    stockAfter:
+      item.stockAfter === undefined && item.stockQuantityAfter === undefined
+        ? undefined
+        : Number(item.stockAfter ?? item.stockQuantityAfter),
+    createdAt: formatTransactionAt(
+      item.createdAt ?? item.processedAt ?? item.deductedAt,
+      "-",
+    ),
   };
 }
 
@@ -7016,7 +7278,7 @@ function CmsSidebar({
     ["import", "Import", "/cms/import"],
     ["inventory", "재고", "/cms/inventory"],
     ["wholesaler", "도매처", "/cms/wholesaler"],
-    ["dispense", "처방전 차감", "/cms/dispense"],
+    ["prescriptions", "처방전", "/cms/prescriptions"],
     ["purchase", "구매 내역", "/cms/purchase"],
   ];
   const accountDisplay = getCmsAccountDisplay(account);
@@ -7072,7 +7334,7 @@ function CmsHeader({
     import: "기준 데이터 Import",
     inventory: "재고",
     wholesaler: "도매처 관리",
-    dispense: "처방전 차감 실패",
+    prescriptions: "처방전",
     purchase: "구매 내역",
   };
   return (
@@ -7765,35 +8027,72 @@ function CmsWholesalerPage({
   );
 }
 
-function CmsDispensePage({
-  failures,
+function CmsPrescriptionPage({
+  filter,
   prescriptionId,
-  selectedFailure,
+  records,
+  selectedRecord,
   selectedStockId,
   onDeduct,
+  onFilter,
   onPrescriptionId,
   onResolve,
-  onSelectFailure,
+  onSelectRecord,
   onSelectStock,
   stocks,
 }: {
-  failures: CmsDeductionFailure[];
+  filter: "ALL" | CmsDeductionStatus;
   prescriptionId: string;
-  selectedFailure?: CmsDeductionFailure;
+  records: CmsDeductionRecord[];
+  selectedRecord?: CmsDeductionRecord;
   selectedStockId: string;
   onDeduct: () => void;
+  onFilter: (filter: "ALL" | CmsDeductionStatus) => void;
   onPrescriptionId: (value: string) => void;
   stocks: StockItem[];
   onResolve: (
-    failure: CmsDeductionFailure,
-    resolutionType: "VIRTUAL_DRUG" | "EXISTING_STOCK" | "UNREGISTERED_DRUG",
+    record: CmsDeductionRecord,
+    resolutionType: CmsDeductionResolution,
   ) => void;
-  onSelectFailure: (id: string) => void;
+  onSelectRecord: (id: string) => void;
   onSelectStock: (id: string) => void;
 }) {
+  const visibleRecords =
+    filter === "ALL"
+      ? records
+      : records.filter((record) => record.status === filter);
+  const failedCount = records.filter(
+    (record) => record.status === "FAILED",
+  ).length;
+  const resolvedCount = records.filter(
+    (record) => record.status === "RESOLVED",
+  ).length;
+  const deductedCount = records.filter(
+    (record) => record.status === "DEDUCTED",
+  ).length;
+  const selectedStock = stocks.find((stock) => stock.id === selectedStockId);
+  const canResolve = selectedRecord?.status === "FAILED";
+  const stockAfterExisting =
+    selectedRecord && selectedStock
+      ? Math.max(0, selectedStock.quantity - selectedRecord.totalQuantity)
+      : undefined;
+  const filterItems: Array<["ALL" | CmsDeductionStatus, string, number]> = [
+    ["ALL", "전체", records.length],
+    ["FAILED", "실패", failedCount],
+    ["RESOLVED", "수동 처리", resolvedCount],
+    ["DEDUCTED", "자동 차감", deductedCount],
+  ];
+
   return (
-    <section className="cms-content">
-      <div className="cms-command-row">
+    <section className="cms-content cms-prescription-page">
+      <div className="cms-prescription-command">
+        <div>
+          <strong>처방전 분석 결과 차감</strong>
+          <span>
+            처방전 분석 API 결과의 약명과 보유 재고명을 매칭해 재고를
+            차감합니다.
+          </span>
+        </div>
         <label className="cms-input inline">
           <span>처방전 ID</span>
           <input
@@ -7802,81 +8101,193 @@ function CmsDispensePage({
             onChange={(event) => onPrescriptionId(event.target.value)}
           />
         </label>
-        <button className="cms-primary" type="button" onClick={onDeduct}>
-          처방전 분석 결과 차감
+        <button
+          className="cms-primary"
+          type="button"
+          disabled={!prescriptionId.trim()}
+          onClick={onDeduct}
+        >
+          차감 실행
         </button>
       </div>
+
+      <div className="cms-kpis compact prescription-kpis">
+        <CmsKpi label="차감 기록" value={`${records.length}`} unit="건" />
+        <CmsKpi
+          label="자동 차감"
+          value={`${deductedCount}`}
+          unit="건"
+          tone="blue"
+        />
+        <CmsKpi
+          label="수동 필요"
+          value={`${failedCount}`}
+          unit="건"
+          tone="red"
+        />
+      </div>
+
       <div className="cms-grid two">
-        <CmsPanel title="처방전 차감 실패">
-          <div className="cms-list">
-            {failures.map((failure) => (
-              <button
-                className={`cms-list-row action ${selectedFailure?.id === failure.id ? "is-selected" : ""}`}
-                key={failure.id}
-                type="button"
-                onClick={() => onSelectFailure(failure.id)}
-              >
-                <div>
-                  <strong>{failure.drugName}</strong>
-                  <span>
-                    {failure.prescriptionCode} · line {failure.lineNo} ·{" "}
-                    {failure.reason}
-                  </span>
-                </div>
-                <b>{failure.totalQuantity}개</b>
-                <span
-                  className={`cms-badge ${failure.status === "FAILED" ? "missing" : "normal"}`}
+        <div className="cms-table-card prescription-table-card">
+          <div className="cms-toolbar">
+            <div className="cms-pills prescription-filters">
+              {filterItems.map(([value, label, count]) => (
+                <button
+                  className={filter === value ? "is-active" : ""}
+                  key={value}
+                  type="button"
+                  onClick={() => onFilter(value)}
                 >
-                  {failure.status}
+                  {label}
+                  <b>{count}</b>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="cms-deduction-table">
+            <div className="cms-deduction-row cms-th">
+              <span>처방전</span>
+              <span>약품</span>
+              <span>보험코드</span>
+              <span>차감</span>
+              <span>상태</span>
+            </div>
+            {visibleRecords.map((record) => (
+              <button
+                className={`cms-deduction-row ${
+                  selectedRecord?.id === record.id ? "is-selected" : ""
+                }`}
+                key={record.id}
+                type="button"
+                onClick={() => onSelectRecord(record.id)}
+              >
+                <span>
+                  {record.prescriptionCode}
+                  <em>line {record.lineNo}</em>
+                </span>
+                <strong>
+                  {record.drugName}
+                  <em>{record.reason}</em>
+                </strong>
+                <span className="mono">{record.insuranceCode}</span>
+                <b>-{record.totalQuantity}개</b>
+                <span
+                  className={`cms-badge ${deductionStatusClass(record.status)}`}
+                >
+                  {deductionStatusText(record.status)}
                 </span>
               </button>
             ))}
+            {visibleRecords.length === 0 && (
+              <p className="cms-empty table-empty">
+                표시할 처방전 차감 기록이 없습니다.
+              </p>
+            )}
           </div>
-        </CmsPanel>
-        <CmsPanel title="수동 처리">
-          {selectedFailure ? (
+        </div>
+
+        <aside className="cms-edit-panel cms-deduction-detail">
+          {selectedRecord ? (
             <>
-              <CmsField label="대상" value={selectedFailure.drugName} />
+              <span
+                className={`cms-badge ${deductionStatusClass(selectedRecord.status)}`}
+              >
+                {deductionStatusText(selectedRecord.status)}
+              </span>
+              <h2>{selectedRecord.drugName}</h2>
+              <div className="cms-field-grid">
+                <CmsField
+                  label="처방전"
+                  value={selectedRecord.prescriptionCode}
+                />
+                <CmsField label="라인" value={`${selectedRecord.lineNo}`} />
+                <CmsField
+                  label="보험코드"
+                  mono
+                  value={selectedRecord.insuranceCode}
+                />
+                <CmsField
+                  label="차감 수량"
+                  value={`${selectedRecord.totalQuantity}개`}
+                />
+              </div>
+              <CmsField label="처리 사유" value={selectedRecord.reason} />
+              <CmsField
+                label="처리 결과"
+                value={
+                  selectedRecord.resolutionType
+                    ? resolutionText(selectedRecord.resolutionType)
+                    : selectedRecord.stockName
+                      ? selectedRecord.stockName
+                      : selectedRecord.status === "DEDUCTED"
+                        ? "자동 차감"
+                        : "수동 처리 대기"
+                }
+              />
+              {selectedRecord.stockAfter !== undefined && (
+                <CmsField
+                  label="차감 후 재고"
+                  value={`${selectedRecord.stockAfter}개`}
+                />
+              )}
+              <div className="cms-divider" />
               <label className="cms-input">
                 <span>기존 재고 후보</span>
                 <select
                   value={selectedStockId}
                   onChange={(event) => onSelectStock(event.target.value)}
+                  disabled={!canResolve}
                 >
                   {stocks.map((stock) => (
                     <option key={stock.id} value={stock.id}>
-                      {stock.name} · 보유 {stock.quantity}
+                      {stock.name} · 보유 {stock.quantity} ·{" "}
+                      {stock.insuranceCode}
                     </option>
                   ))}
                 </select>
               </label>
-              <div className="cms-actions vertical">
+              {selectedStock && selectedRecord.status === "FAILED" && (
+                <div className="cms-after">
+                  <span>기존 재고 차감 후</span>
+                  <strong>
+                    {selectedStock.quantity} → {stockAfterExisting}개
+                  </strong>
+                </div>
+              )}
+              <div className="cms-resolution-grid">
                 <button
+                  className="cms-resolution-option"
                   type="button"
-                  onClick={() => onResolve(selectedFailure, "EXISTING_STOCK")}
+                  disabled={!canResolve || !selectedStock}
+                  onClick={() => onResolve(selectedRecord, "EXISTING_STOCK")}
                 >
-                  기존 재고로 차감
+                  <strong>재고가 있는 약</strong>
+                  <span>선택한 기존 재고에서 차감</span>
                 </button>
                 <button
+                  className="cms-resolution-option"
                   type="button"
-                  onClick={() => onResolve(selectedFailure, "VIRTUAL_DRUG")}
+                  disabled={!canResolve}
+                  onClick={() => onResolve(selectedRecord, "VIRTUAL_DRUG")}
                 >
-                  가상 약 생성 후 차감
+                  <strong>가상의 약</strong>
+                  <span>가상 보험코드로 차감 이력 생성</span>
                 </button>
                 <button
+                  className="cms-resolution-option"
                   type="button"
-                  onClick={() =>
-                    onResolve(selectedFailure, "UNREGISTERED_DRUG")
-                  }
+                  disabled={!canResolve}
+                  onClick={() => onResolve(selectedRecord, "UNREGISTERED_DRUG")}
                 >
-                  등록안된약 처리
+                  <strong>등록안된약</strong>
+                  <span>재고 차감 없이 처리 완료</span>
                 </button>
               </div>
             </>
           ) : (
-            <p className="cms-empty">처리할 실패 항목이 없습니다.</p>
+            <p className="cms-empty">확인할 처방전 차감 기록이 없습니다.</p>
           )}
-        </CmsPanel>
+        </aside>
       </div>
     </section>
   );
