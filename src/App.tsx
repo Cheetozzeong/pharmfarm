@@ -6262,26 +6262,15 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
         <p className="agent-eyebrow">Windows Production Agent</p>
         <h1>약국 PC에 설치하는 처방 수집 에이전트</h1>
         <p>
-          이팜 로컬 SQL Server에서 조제 약품 데이터만 읽어 서버로 전송합니다. QR
-          원문은 기본 전송하지 않고, 네트워크가 끊기면 로컬 큐에 보관한 뒤 자동
-          재시도합니다.
+          이팜 로컬 SQL Server에서 조제 약품 데이터만 읽어 서버로 전송합니다.
+          QR 원문은 기본 전송하지 않고, 네트워크가 끊기면 로컬 큐에 보관한 뒤 자동 재시도합니다.
         </p>
         <div className="agent-download-actions">
-          <a
-            className="agent-primary-button"
-            href="/pharmfarm-agent-production.zip"
-            download
-          >
+          <a className="agent-primary-button" href="/pharmfarm-agent-production.zip" download>
             <HardDriveDownload size={20} />
             Windows 설치 파일 다운로드
           </a>
-          <button
-            type="button"
-            className="agent-secondary-button"
-            onClick={() => navigate("/cms")}
-          >
-            CMS로 이동
-          </button>
+          <button type="button" className="agent-secondary-button" onClick={() => navigate("/cms")}>CMS로 이동</button>
         </div>
       </section>
 
@@ -6289,25 +6278,17 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
         <div>
           <ShieldCheck size={24} />
           <strong>보안 기본값</strong>
-          <span>
-            처방 코드는 해시 처리하고 QR 원문은 운영 기본값에서 전송하지
-            않습니다.
-          </span>
+          <span>처방 코드는 해시 처리하고 QR 원문은 운영 기본값에서 전송하지 않습니다.</span>
         </div>
         <div>
           <WifiOff size={24} />
           <strong>오프라인 큐</strong>
-          <span>
-            API 장애나 네트워크 단절 시 C:\\ProgramData\\PharmFarmAgent\\queue에
-            보관합니다.
-          </span>
+          <span>API 장애나 네트워크 단절 시 C:\\ProgramData\\PharmFarmAgent\\queue에 보관합니다.</span>
         </div>
         <div>
           <RefreshCw size={24} />
           <strong>자동 실행</strong>
-          <span>
-            설치 마법사가 Windows 예약 작업을 만들고 로그인 시 자동 실행합니다.
-          </span>
+          <span>설치 마법사가 Windows 예약 작업을 만들고 로그인 시 자동 실행합니다.</span>
         </div>
       </section>
 
@@ -6315,25 +6296,16 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
         <h2>설치 순서</h2>
         <ol>
           <li>설치 파일을 다운로드하고 압축을 해제합니다.</li>
-          <li>
-            <b>install-pharmfarm-agent.bat</b>을 실행합니다.
-          </li>
-          <li>
-            API 주소는 기본값을 유지하고 SQL Server는 <b>.\\EPHARM_DB</b>를
-            사용합니다.
-          </li>
-          <li>
-            <b>디버깅용 QR 원문 포함</b>은 체크하지 않습니다.
-          </li>
-          <li>
-            이팜에서 QR을 등록한 뒤 PharmFarm 처방/리스트에서 수신 여부를
-            확인합니다.
-          </li>
+          <li><b>install-pharmfarm-agent.bat</b>을 실행합니다.</li>
+          <li>API 주소는 기본값을 유지하고 SQL Server는 <b>.\\EPHARM_DB</b>를 사용합니다.</li>
+          <li><b>디버깅용 QR 원문 포함</b>은 체크하지 않습니다.</li>
+          <li>이팜에서 QR을 등록한 뒤 PharmFarm 처방/리스트에서 수신 여부를 확인합니다.</li>
         </ol>
       </section>
     </main>
   );
 }
+
 
 function getCmsPage(path: string): CmsPage {
   const segment = path.split("/").filter(Boolean)[1];
