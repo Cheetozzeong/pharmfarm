@@ -9,6 +9,14 @@
       "backgroundColor": "#eef1ed"
     },
     "assetBundlePatterns": ["**/*"],
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "의약품 QR 및 바코드를 촬영해 입고와 반품 내역을 확인합니다."
+        }
+      ]
+    ],
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "kr.pharmfarm.mobile",

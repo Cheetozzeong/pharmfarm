@@ -300,7 +300,9 @@ p {
   left: 50%;
   z-index: 6;
   display: flex;
+  flex-wrap: wrap;
   gap: 6px;
+  justify-content: center;
   max-width: calc(100vw - 28px);
   transform: translateX(-50%);
 }
@@ -625,7 +627,7 @@ p {
 
 .scan-status-copy {
   position: absolute;
-  top: 155px;
+  top: 85px;
   right: 18px;
   left: 18px;
   z-index: 2;

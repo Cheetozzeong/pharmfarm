@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Linking,
   Platform,
   Pressable,
   SafeAreaView,
@@ -24,17 +25,30 @@ const webUrl =
   process.env.EXPO_PUBLIC_PHARMFARM_WEB_URL ?? "https://pharmfarm.vercel.app/";
 const nativeSafeAreaScript = `
   (() => {
-    const style = document.createElement('style');
-    style.textContent = ':root { --safe-top: 0px !important; }';
-    const attach = () => document.head && document.head.appendChild(style);
+    window.__PHARMFARM_NATIVE_APP = true;
+    document.documentElement.dataset.pharmfarmNativeApp = 'true';
+    const attach = () => {
+      if (!document.head || document.getElementById('pharmfarm-native-safe-area')) return;
+      const style = document.createElement('style');
+      style.id = 'pharmfarm-native-safe-area';
+      style.textContent = ':root { --safe-top: 0px !important; }';
+      document.head.appendChild(style);
+    };
     if (document.head) attach();
     else document.addEventListener('DOMContentLoaded', attach, { once: true });
+    window.dispatchEvent(new Event('pharmfarm-native-ready'));
   })();
   true;
 `;
 const nativeScannerFrameSize = 248;
 const nativeScannerFrameTopRatio = 0.45;
 const nativeScannerFrameTolerance = 12;
+const nativeScannerZoomLevels = {
+  far: 0,
+  near: 0.24,
+} as const;
+
+type NativeScannerZoomMode = keyof typeof nativeScannerZoomLevels;
 
 type NativeScannerLayout = {
   height: number;
@@ -123,6 +137,7 @@ function isNativeScanInsideFrame(
 export default function App() {
   const webViewRef = useRef<WebView>(null);
   const lastNativeScanRef = useRef({ value: "", at: 0 });
+  const cameraPermissionPrimedRef = useRef(false);
   const [cameraPermission, requestCameraPermission] = useCameraPermissions();
   const [loadError, setLoadError] = useState("");
   const [reloadKey, setReloadKey] = useState(0);
@@ -132,6 +147,8 @@ export default function App() {
   const [nativeScannerMessage, setNativeScannerMessage] =
     useState("QR을 사각형 안에 맞춰주세요.");
   const [nativeTorchOn, setNativeTorchOn] = useState(false);
+  const [nativeZoomMode, setNativeZoomMode] =
+    useState<NativeScannerZoomMode>("near");
   const [nativeScannerLayout, setNativeScannerLayout] =
     useState<NativeScannerLayout>({
       height: 0,
@@ -153,6 +170,23 @@ export default function App() {
     `;
     webViewRef.current?.injectJavaScript(script);
   }, []);
+
+  const primeCameraPermission = useCallback(() => {
+    if (
+      cameraPermissionPrimedRef.current ||
+      cameraPermission?.granted ||
+      cameraPermission?.canAskAgain === false
+    ) {
+      return;
+    }
+
+    cameraPermissionPrimedRef.current = true;
+    void requestCameraPermission();
+  }, [
+    cameraPermission?.canAskAgain,
+    cameraPermission?.granted,
+    requestCameraPermission,
+  ]);
 
   const stopNativeScanner = useCallback(() => {
     setNativeScannerActive(false);
@@ -272,6 +306,7 @@ export default function App() {
           automaticallyAdjustContentInsets={false}
           contentInsetAdjustmentBehavior="never"
           domStorageEnabled
+          injectedJavaScript={nativeSafeAreaScript}
           injectedJavaScriptBeforeContentLoaded={nativeSafeAreaScript}
           javaScriptEnabled
           mediaCapturePermissionGrantType="grant"
@@ -283,6 +318,7 @@ export default function App() {
           onHttpError={(event) =>
             setLoadError(`HTTP ${event.nativeEvent.statusCode}`)
           }
+          onLoadEnd={primeCameraPermission}
           onMessage={handleWebMessage}
         />
       )}
@@ -306,6 +342,17 @@ export default function App() {
               >
                 <Text style={styles.nativePrimaryText}>권한 다시 요청</Text>
               </TouchableOpacity>
+              {cameraPermission?.canAskAgain === false && (
+                <TouchableOpacity
+                  activeOpacity={0.78}
+                  style={styles.nativeSecondaryButton}
+                  onPress={() => {
+                    void Linking.openSettings();
+                  }}
+                >
+                  <Text style={styles.nativeSecondaryText}>설정 열기</Text>
+                </TouchableOpacity>
+              )}
               <TouchableOpacity
                 activeOpacity={0.78}
                 style={styles.nativeSecondaryButton}
@@ -321,11 +368,12 @@ export default function App() {
               <CameraView
                 active={nativeScannerActive}
                 animateShutter={false}
-                autofocus="off"
+                autofocus="on"
                 barcodeScannerSettings={{ barcodeTypes: ["datamatrix"] }}
                 enableTorch={nativeTorchOn}
                 facing="back"
                 style={styles.nativeCamera}
+                zoom={nativeScannerZoomLevels[nativeZoomMode]}
                 onBarcodeScanned={handleNativeBarcodeScanned}
                 onMountError={(event) =>
                   setNativeScannerMessage(event.message || "카메라 실행 실패")
@@ -347,14 +395,45 @@ export default function App() {
                 />
               </View>
               <View style={styles.nativeScannerTop}>
-                <Pressable
-                  style={styles.nativePillButton}
-                  onPress={() => setNativeTorchOn((value) => !value)}
-                >
-                  <Text style={styles.nativePillText}>
-                    {nativeTorchOn ? "플래시 끄기" : "플래시"}
-                  </Text>
-                </Pressable>
+                <View style={styles.nativeScannerControls}>
+                  <Pressable
+                    style={styles.nativePillButton}
+                    onPress={() => setNativeTorchOn((value) => !value)}
+                  >
+                    <Text style={styles.nativePillText}>
+                      {nativeTorchOn ? "플래시 끄기" : "플래시"}
+                    </Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.nativePillButton,
+                      nativeZoomMode === "far" && styles.nativePillButtonActive,
+                    ]}
+                    onPress={() => {
+                      setNativeZoomMode("far");
+                      setNativeScannerMessage(
+                        "원거리 렌즈로 전환했습니다. 초점이 맞을 때까지 거리를 조금 벌려주세요.",
+                      );
+                    }}
+                  >
+                    <Text style={styles.nativePillText}>원거리</Text>
+                  </Pressable>
+                  <Pressable
+                    style={[
+                      styles.nativePillButton,
+                      nativeZoomMode === "near" &&
+                        styles.nativePillButtonActive,
+                    ]}
+                    onPress={() => {
+                      setNativeZoomMode("near");
+                      setNativeScannerMessage(
+                        "근거리 렌즈로 전환했습니다. 작은 QR은 사각형 중앙에 크게 맞춰주세요.",
+                      );
+                    }}
+                  >
+                    <Text style={styles.nativePillText}>근거리</Text>
+                  </Pressable>
+                </View>
                 <Pressable
                   style={styles.nativePillButton}
                   onPress={closeNativeScanner}
@@ -458,6 +537,10 @@ const styles = StyleSheet.create({
     minHeight: 40,
     paddingHorizontal: 14,
     justifyContent: "center",
+  },
+  nativePillButtonActive: {
+    backgroundColor: "rgba(77,154,255,0.34)",
+    borderColor: "rgba(77,154,255,0.68)",
   },
   nativePillText: {
     color: "#ffffff",
@@ -589,6 +672,12 @@ const styles = StyleSheet.create({
     position: "absolute",
     right: 18,
     top: 18,
+  },
+  nativeScannerControls: {
+    flex: 1,
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 8,
   },
   nativeSecondaryButton: {
     alignItems: "center",

@@ -9,6 +9,7 @@ import {
   ChevronDown,
   Focus,
   RefreshCw,
+  SwitchCamera,
   Trash2,
   Zap,
   ZapOff,
@@ -203,6 +204,10 @@ type ApiState =
   | "forbidden";
 type ScanPerformanceMode = "performance" | "quality";
 type ScannerEngine = "web" | "native";
+type VideoInputDevice = {
+  deviceId: string;
+  label: string;
+};
 
 const apiBase = (
   import.meta.env.VITE_PHARMFARM_API_BASE ??
@@ -226,6 +231,10 @@ const duplicateScanCooldownMs = 2500;
 const retakeScanCooldownMs = 2800;
 const minimumReliableSnLength = 6;
 const virtualInsuranceCodeGenerationAttempts = 40;
+const missingExpiryReceiptNotice = "약통에 있는 유효기간을 확인해주세요";
+const missingExpiryAudioSrc = `/audio/${encodeURIComponent(
+  "유효기간 정보가 없습니다.포장용기를 확인해주세요.mp3",
+)}`;
 
 type TokenResponse = {
   accessToken?: string;
@@ -366,7 +375,7 @@ function storeScanPerformanceMode(mode: ScanPerformanceMode) {
 }
 
 function getStoredScannerEngine(): ScannerEngine {
-  if (!getReactNativeWebView()) return "web";
+  if (!isNativeAppShell()) return "web";
 
   return localStorage.getItem(storageKeys.scannerEngine) === "native"
     ? "native"
@@ -377,22 +386,44 @@ function storeScannerEngine(engine: ScannerEngine) {
   localStorage.setItem(storageKeys.scannerEngine, engine);
 }
 
-function getReactNativeWebView() {
-  return (
-    window as Window & {
-      ReactNativeWebView?: { postMessage: (message: string) => void };
-    }
-  ).ReactNativeWebView;
+function getNativeWindow() {
+  return window as Window & {
+    ReactNativeWebView?: { postMessage: (message: string) => void };
+    __PHARMFARM_NATIVE_APP?: boolean;
+  };
 }
 
-function postNativeScannerMessage(action: "start" | "stop") {
-  getReactNativeWebView()?.postMessage(
+function getReactNativeWebView() {
+  const bridge = getNativeWindow().ReactNativeWebView;
+  return typeof bridge?.postMessage === "function" ? bridge : null;
+}
+
+function isNativeAppShell() {
+  return Boolean(
+    getReactNativeWebView() || getNativeWindow().__PHARMFARM_NATIVE_APP,
+  );
+}
+
+function postNativeScannerMessage(action: "start" | "stop", attempt = 0) {
+  const bridge = getReactNativeWebView();
+  if (!bridge) {
+    if (isNativeAppShell() && attempt < 8) {
+      window.setTimeout(
+        () => postNativeScannerMessage(action, attempt + 1),
+        120,
+      );
+    }
+    return false;
+  }
+
+  bridge.postMessage(
     JSON.stringify({
       action,
       barcodeTypes: ["datamatrix"],
       type: "pharmfarm-native-scanner",
     }),
   );
+  return true;
 }
 
 function createScannerReader(scanPerformanceMode: ScanPerformanceMode) {
@@ -410,6 +441,7 @@ function createScannerReader(scanPerformanceMode: ScanPerformanceMode) {
 
 function getCameraConstraints(
   scanPerformanceMode: ScanPerformanceMode,
+  deviceId?: string,
 ): MediaStreamConstraints {
   const performanceMode = isScanPerformanceMode(scanPerformanceMode);
   const advanced: CameraConstraintSet[] = [
@@ -423,7 +455,9 @@ function getCameraConstraints(
   return {
     audio: false,
     video: {
-      facingMode: { ideal: "environment" },
+      ...(deviceId
+        ? { deviceId: { exact: deviceId } }
+        : { facingMode: { ideal: "environment" } }),
       width: { ideal: performanceMode ? 1280 : 1920 },
       height: { ideal: performanceMode ? 720 : 1080 },
       frameRate: performanceMode
@@ -432,6 +466,51 @@ function getCameraConstraints(
       advanced,
     },
   };
+}
+
+async function listVideoInputDevices(): Promise<VideoInputDevice[]> {
+  if (!navigator.mediaDevices?.enumerateDevices) return [];
+
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  return devices
+    .filter((device) => device.kind === "videoinput" && device.deviceId)
+    .map((device, index) => ({
+      deviceId: device.deviceId,
+      label: device.label || `카메라 ${index + 1}`,
+    }));
+}
+
+function isBackCameraLabel(label: string) {
+  const normalized = label.toLowerCase();
+  return /back|rear|environment|후면/.test(normalized);
+}
+
+function cameraLabelPenalty(label: string) {
+  const normalized = label.toLowerCase();
+  let penalty = 0;
+  if (/front|user|selfie|전면/.test(normalized)) penalty += 100;
+  if (/ultra|0\.5|wide angle|초광각/.test(normalized)) penalty += 18;
+  if (/macro|close|근접/.test(normalized)) penalty -= 4;
+  if (/back|rear|environment|후면/.test(normalized)) penalty -= 12;
+  return penalty;
+}
+
+function getPreferredVideoInputDeviceId(devices: VideoInputDevice[]) {
+  const labeledBackDevices = devices.filter((device) =>
+    isBackCameraLabel(device.label),
+  );
+  if (labeledBackDevices.length === 0) return "";
+
+  return (
+    [...labeledBackDevices].sort(
+      (left, right) =>
+        cameraLabelPenalty(left.label) - cameraLabelPenalty(right.label),
+    )[0]?.deviceId ?? ""
+  );
+}
+
+function formatVideoInputLabel(device: VideoInputDevice, index: number) {
+  return device.label || `카메라 ${index + 1}`;
 }
 
 function getGuidedScanSourceRect(
@@ -1477,8 +1556,9 @@ function parseQrPayload(rawValue: string): QrFields {
   const raw = rawValue.trim();
   const queryFields = parseQueryQr(raw);
   const gs1Fields = parseGs1Qr(raw);
+  const plainPcFields = parsePlainPcQr(raw);
   const textFields = parseTextQr(raw);
-  const fields = queryFields ?? gs1Fields ?? textFields;
+  const fields = queryFields ?? gs1Fields ?? plainPcFields ?? textFields;
   const format = queryFields ? "query" : gs1Fields ? "gs1" : "text";
 
   const result: QrFields = {
@@ -1492,9 +1572,6 @@ function parseQrPayload(rawValue: string): QrFields {
   };
 
   if (!result.pc) result.errors.push("PC 없음");
-  if (!result.sn) result.errors.push("SN 없음");
-  if (!result.lot) result.errors.push("LOT 없음");
-  if (!result.exp) result.errors.push("EXP 없음");
 
   return result;
 }
@@ -1570,6 +1647,18 @@ function parseGs1Qr(raw: string) {
   }
 
   return parseCompactGs1(raw);
+}
+
+function parsePlainPcQr(raw: string) {
+  const compact = raw.trim();
+  if (!/^\d{13,14}$/.test(compact)) return null;
+
+  return {
+    pc: compact,
+    sn: "",
+    lot: "",
+    exp: "",
+  };
 }
 
 function parseCompactGs1(raw: string) {
@@ -1739,7 +1828,7 @@ function formatExpiryNotice(exp: string): ScanExpiryNotice {
 
   if (!parts) {
     return {
-      display: trimmed || "확인 필요",
+      display: trimmed || missingExpiryReceiptNotice,
       year: null,
       month: null,
     };
@@ -1770,7 +1859,11 @@ function formatExpiryNotice(exp: string): ScanExpiryNotice {
 }
 
 function getExpiryAudioSources(notice: ScanExpiryNotice) {
-  if (!notice.year || !notice.month) return [];
+  if (!notice.year || !notice.month) {
+    return notice.display === missingExpiryReceiptNotice
+      ? [missingExpiryAudioSrc]
+      : [];
+  }
 
   return [
     `/audio/year/${notice.year}.mp3`,
@@ -2191,6 +2284,8 @@ function MobileApp() {
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraRestartKey, setCameraRestartKey] = useState(0);
   const [cameraError, setCameraError] = useState("");
+  const [cameraDevices, setCameraDevices] = useState<VideoInputDevice[]>([]);
+  const [selectedCameraDeviceId, setSelectedCameraDeviceId] = useState("");
   const [torchAvailable, setTorchAvailable] = useState(false);
   const [torchOn, setTorchOn] = useState(false);
   const [scanPerformanceMode, setScanPerformanceMode] =
@@ -3035,9 +3130,11 @@ function MobileApp() {
       ]);
       setLastScanName(drug.name);
       setScanNotice(
-        drug.matchStatus === "MISSING"
-          ? "기준 데이터 미등록 QR입니다. 가상약 정보 입력 후 입고할 수 있습니다."
-          : `${drug.name} 입고 스캔 완료 · 목록에 추가했습니다.`,
+        !qr.exp
+          ? missingExpiryReceiptNotice
+          : drug.matchStatus === "MISSING"
+            ? "기준 데이터 미등록 QR입니다. 가상약 정보 입력 후 입고할 수 있습니다."
+            : `${drug.name} 입고 스캔 완료 · 목록에 추가했습니다.`,
       );
       return true;
     },
@@ -3196,7 +3293,7 @@ function MobileApp() {
 
       if (qr.errors.length > 0) {
         setLastScanName(qr.errors.join(", "));
-        setScanNotice("QR 값은 읽었지만 입고 필수 필드를 파싱하지 못했습니다.");
+        setScanNotice("QR 값은 읽었지만 PC 값을 파싱하지 못했습니다.");
         return null;
       }
 
@@ -3322,6 +3419,68 @@ function MobileApp() {
     unlockScanAudio,
   ]);
 
+  const refreshCameraDevices = useCallback(async (activeDeviceId?: string) => {
+    try {
+      const devices = await listVideoInputDevices();
+      setCameraDevices(devices);
+      if (
+        activeDeviceId &&
+        devices.some((device) => device.deviceId === activeDeviceId)
+      ) {
+        setSelectedCameraDeviceId(activeDeviceId);
+      }
+      return devices;
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const switchCameraDevice = useCallback(async () => {
+    if (!navigator.mediaDevices?.enumerateDevices) {
+      setScanNotice("이 기기에서는 카메라 전환 정보를 가져올 수 없습니다.");
+      return;
+    }
+
+    const currentTrack = videoRef.current
+      ? getCameraTrack(videoRef.current)
+      : null;
+    const activeDeviceId =
+      currentTrack?.getSettings().deviceId ?? selectedCameraDeviceId;
+    const devices = await refreshCameraDevices(activeDeviceId);
+    if (devices.length <= 1) {
+      setScanNotice("전환할 다른 카메라가 없습니다.");
+      return;
+    }
+
+    const currentIndex = devices.findIndex(
+      (device) => device.deviceId === activeDeviceId,
+    );
+    const nextIndex =
+      currentIndex >= 0 ? (currentIndex + 1) % devices.length : 0;
+    const nextDevice = devices[nextIndex];
+
+    setSelectedCameraDeviceId(nextDevice.deviceId);
+    lastDetectedRef.current = {
+      value: "",
+      at: 0,
+      cooldownMs: defaultScanCooldownMs,
+    };
+    setScanNotice(
+      `${formatVideoInputLabel(nextDevice, nextIndex)}로 전환합니다.`,
+    );
+
+    if (cameraActive) {
+      setCameraRestartKey((value) => value + 1);
+    } else {
+      activateCamera();
+    }
+  }, [
+    activateCamera,
+    cameraActive,
+    refreshCameraDevices,
+    selectedCameraDeviceId,
+  ]);
+
   const toggleScanPerformanceMode = useCallback(() => {
     setScanPerformanceMode((current) => {
       const next = current === "performance" ? "quality" : "performance";
@@ -3341,7 +3500,7 @@ function MobileApp() {
   }, []);
 
   const toggleScannerEngine = useCallback(() => {
-    if (!getReactNativeWebView()) {
+    if (!isNativeAppShell()) {
       storeScannerEngine("web");
       setScannerEngine("web");
       setScanNotice("네이티브 리더는 앱에서만 사용할 수 있습니다.");
@@ -3363,7 +3522,7 @@ function MobileApp() {
         setTorchAvailable(false);
         setTorchOn(false);
         setScanNotice(
-          getReactNativeWebView()
+          isNativeAppShell()
             ? "네이티브 QR 리더로 전환했습니다."
             : "네이티브 리더 UI 미리보기입니다. 실제 스캔은 앱에서만 동작합니다.",
         );
@@ -3377,7 +3536,7 @@ function MobileApp() {
   }, []);
 
   useEffect(() => {
-    if (scannerEngine !== "native" || getReactNativeWebView()) return;
+    if (scannerEngine !== "native" || isNativeAppShell()) return;
 
     storeScannerEngine("web");
     setScannerEngine("web");
@@ -3470,7 +3629,7 @@ function MobileApp() {
     }
 
     setCameraActive(false);
-    if (!getReactNativeWebView()) {
+    if (!isNativeAppShell()) {
       setScanNotice(
         "네이티브 리더 UI 미리보기입니다. 실제 스캔은 앱에서만 동작합니다.",
       );
@@ -3513,44 +3672,71 @@ function MobileApp() {
         const reader = createScannerReader(scanPerformanceMode);
         const scanModeLabel =
           scanPerformanceMode === "performance" ? "저사양" : "정밀";
+        const availableDevices = selectedCameraDeviceId
+          ? cameraDevices
+          : await refreshCameraDevices();
+        const preferredDeviceId =
+          selectedCameraDeviceId ||
+          getPreferredVideoInputDeviceId(availableDevices);
+        if (preferredDeviceId && preferredDeviceId !== selectedCameraDeviceId) {
+          setSelectedCameraDeviceId(preferredDeviceId);
+        }
         setScanNotice(`카메라 실행 중`);
-        const controls = await startGuidedWebScanner({
-          constraints: getCameraConstraints(scanPerformanceMode),
-          guideElement: scanGuideRef.current,
-          reader,
-          scanPerformanceMode,
-          video,
-          onResult: (value) => {
-            if (!value) return;
-            if (focusHintTimer) {
-              window.clearTimeout(focusHintTimer);
-              focusHintTimer = null;
-            }
+        const handleScannerResult = (value: string) => {
+          if (!value) return;
+          if (focusHintTimer) {
+            window.clearTimeout(focusHintTimer);
+            focusHintTimer = null;
+          }
 
-            const now = Date.now();
-            const lastDetected = lastDetectedRef.current;
-            if (
-              value === lastDetected.value &&
-              now - lastDetected.at < lastDetected.cooldownMs
-            ) {
-              return;
-            }
+          const now = Date.now();
+          const lastDetected = lastDetectedRef.current;
+          if (
+            value === lastDetected.value &&
+            now - lastDetected.at < lastDetected.cooldownMs
+          ) {
+            return;
+          }
 
-            const handled = handlePayload(value);
-            if (handled) {
-              lastDetectedRef.current = {
-                value,
-                at: now,
-                cooldownMs: handled.cooldownMs ?? defaultScanCooldownMs,
-              };
-            }
+          const handled = handlePayload(value);
+          if (handled) {
+            lastDetectedRef.current = {
+              value,
+              at: now,
+              cooldownMs: handled.cooldownMs ?? defaultScanCooldownMs,
+            };
+          }
 
-            if (handled?.kind === "accepted") {
-              playScanSound();
-              presentScanExpiry(handled.qr);
-            }
-          },
-        });
+          if (handled?.kind === "accepted") {
+            playScanSound();
+            presentScanExpiry(handled.qr);
+          }
+        };
+        let controls: IScannerControls;
+        try {
+          controls = await startGuidedWebScanner({
+            constraints: getCameraConstraints(
+              scanPerformanceMode,
+              preferredDeviceId,
+            ),
+            guideElement: scanGuideRef.current,
+            reader,
+            scanPerformanceMode,
+            video,
+            onResult: handleScannerResult,
+          });
+        } catch (error) {
+          if (!preferredDeviceId) throw error;
+          setSelectedCameraDeviceId("");
+          controls = await startGuidedWebScanner({
+            constraints: getCameraConstraints(scanPerformanceMode),
+            guideElement: scanGuideRef.current,
+            reader,
+            scanPerformanceMode,
+            video,
+            onResult: handleScannerResult,
+          });
+        }
 
         if (cancelled) {
           controls.stop();
@@ -3559,6 +3745,8 @@ function MobileApp() {
         scannerControlsRef.current = controls;
         setTorchAvailable(Boolean(controls.switchTorch));
         setTorchOn(false);
+        const activeDeviceId = getCameraTrack(video)?.getSettings().deviceId;
+        void refreshCameraDevices(activeDeviceId);
         const tuningStatus = await tuneCameraTrack(video, "startup");
         if (cancelled) return;
 
@@ -3599,10 +3787,13 @@ function MobileApp() {
   }, [
     cameraActive,
     cameraRestartKey,
+    cameraDevices,
     handlePayload,
     playScanSound,
     presentScanExpiry,
+    refreshCameraDevices,
     scanPerformanceMode,
+    selectedCameraDeviceId,
     stopCamera,
   ]);
 
@@ -3964,6 +4155,7 @@ function MobileApp() {
           onRefreshCamera={refreshCamera}
           onScanPerformanceMode={toggleScanPerformanceMode}
           onScannerEngine={toggleScannerEngine}
+          onSwitchCamera={switchCameraDevice}
           onStocks={() => setScreen("stocks")}
           onToggleCamera={toggleCamera}
           onToggleTorch={toggleTorch}
@@ -4273,6 +4465,7 @@ function ScanScreen({
   onScanPerformanceMode,
   onScannerEngine,
   onStocks,
+  onSwitchCamera,
   onToggleCamera,
   onToggleTorch,
   onWholesaler,
@@ -4300,6 +4493,7 @@ function ScanScreen({
   onScanPerformanceMode: () => void;
   onScannerEngine: () => void;
   onStocks: () => void;
+  onSwitchCamera: () => void;
   onToggleCamera: () => void;
   onToggleTorch: () => void;
   onWholesaler: () => void;
@@ -4309,7 +4503,7 @@ function ScanScreen({
   const canUseCamera = !isReceipt || Boolean(selectedWholesaler);
   const usingNativeScanner = scannerEngine === "native";
   const scannerActive = cameraActive || usingNativeScanner;
-  const nativeAppBridgeAvailable = Boolean(getReactNativeWebView());
+  const nativeAppBridgeAvailable = isNativeAppShell();
   const nativePreview = usingNativeScanner && !nativeAppBridgeAvailable;
   const scanStatusText =
     scanNotice ||
@@ -4458,6 +4652,10 @@ function ScanScreen({
             <button type="button" onClick={onRefocusCamera}>
               <Focus size={15} strokeWidth={2.4} />
               초점
+            </button>
+            <button type="button" onClick={onSwitchCamera}>
+              <SwitchCamera size={15} strokeWidth={2.4} />
+              전환
             </button>
             <button type="button" onClick={onRefreshCamera}>
               <RefreshCw size={15} strokeWidth={2.4} />
