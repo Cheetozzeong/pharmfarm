@@ -5,10 +5,13 @@ Add-Type -AssemblyName System.Drawing
 
 $AppName = "PharmFarmAgent"
 $TaskName = "PharmFarmAgent"
+$TrayTaskName = "PharmFarmAgentTray"
 $InstallRoot = Join-Path $env:ProgramData $AppName
 $SourceRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $AgentSource = Join-Path $SourceRoot "PharmFarm-Agent.ps1"
 $AgentTarget = Join-Path $InstallRoot "PharmFarm-Agent.ps1"
+$TraySource = Join-Path $SourceRoot "PharmFarm-AgentTray.ps1"
+$TrayTarget = Join-Path $InstallRoot "PharmFarm-AgentTray.ps1"
 $ConfigTarget = Join-Path $InstallRoot "agent.config.json"
 
 function Ensure-Directory {
@@ -71,6 +74,7 @@ function Write-Config {
 
   Ensure-Directory $InstallRoot
   Copy-Item -LiteralPath $AgentSource -Destination $AgentTarget -Force
+  Copy-Item -LiteralPath $TraySource -Destination $TrayTarget -Force
 
   $deviceIdSeed = "{0}|{1}|{2}" -f $env:COMPUTERNAME, $env:USERNAME, $DeviceName
   $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -102,13 +106,18 @@ function Write-Config {
 function Register-AgentTask {
   $psExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
   $argument = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$AgentTarget`""
+  $trayArgument = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$TrayTarget`""
   $action = New-ScheduledTaskAction -Execute $psExe -Argument $argument
+  $trayAction = New-ScheduledTaskAction -Execute $psExe -Argument $trayArgument
   $trigger = New-ScheduledTaskTrigger -AtLogOn
   $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+  $traySettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
 
   try {
     Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description "PharmFarm Windows prescription collection agent" -Force | Out-Null
+    Register-ScheduledTask -TaskName $TrayTaskName -Action $trayAction -Trigger $trigger -Settings $traySettings -Description "PharmFarm tray status icon" -Force | Out-Null
     Start-ScheduledTask -TaskName $TaskName
+    Start-ScheduledTask -TaskName $TrayTaskName
     return $true
   } catch {
     [System.Windows.Forms.MessageBox]::Show("예약 작업 등록에 실패했습니다.`r`n$($_.Exception.Message)`r`n`r`n관리자 권한으로 다시 실행하거나 run-agent-console.bat으로 수동 실행하세요.", "PharmFarm Agent", "OK", "Warning") | Out-Null
@@ -222,7 +231,7 @@ $installButton.Add_Click({
     $registered = Register-AgentTask
 
     if ($registered) {
-      [System.Windows.Forms.MessageBox]::Show("설치가 완료되었습니다.`r`n로그인 시 자동 실행되며 지금 바로 시작했습니다.`r`n`r`n설치 위치: $InstallRoot", "PharmFarm Agent", "OK", "Information") | Out-Null
+      [System.Windows.Forms.MessageBox]::Show("설치가 완료되었습니다.`r`n로그인 시 자동 실행되며 우측 하단 트레이 아이콘도 함께 시작했습니다.`r`n`r`n설치 위치: $InstallRoot", "PharmFarm Agent", "OK", "Information") | Out-Null
       $form.Close()
     }
   } catch {

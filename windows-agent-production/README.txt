@@ -16,10 +16,14 @@ Files:
    Reads EPharm SQL Server with SELECT only.
    Queues data locally before sending it to the API.
 
-3. run-agent-console.bat
+3. PharmFarm-AgentTray.ps1
+   Shows a PharmFarm status icon in the Windows tray area.
+   The installer registers it as PharmFarmAgentTray.
+
+4. run-agent-console.bat
    Runs the agent in a visible console for troubleshooting.
 
-4. uninstall-pharmfarm-agent.bat
+5. uninstall-pharmfarm-agent.bat
    Removes the Scheduled Task.
    Runtime queue/log files remain in ProgramData for recovery/audit.
 
@@ -68,3 +72,9 @@ If data does not arrive:
 4. If queue files remain, the SQL side worked but API transmission failed.
 5. If queue is empty and no logs appear, the agent may not be running.
 
+
+Tray icon:
+
+- Shows PharmFarm running status in the Windows notification area.
+- Right-click to refresh status, open logs, open queue, start/stop the agent, or close the tray icon.
+- Closing the tray icon does not remove the background scheduled task.
