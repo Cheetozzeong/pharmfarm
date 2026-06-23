@@ -93,3 +93,19 @@ Debug CSV export:
 - Tables without a usable date column are listed in manifest.csv as NO_DATE_COLUMN.
 - Output folder: C:\ProgramData\PharmFarmAgent\debug-export\last-month-YYYYMMDD-HHMMSS
 - This may include prescription or patient-related data. Do not upload/share without legal approval.
+
+Debug table samples:
+
+- debug-export-table-samples.bat exports local CSV files only.
+- It scans visible EPharm databases and exports TOP 20 sample rows per table.
+- It also writes manifest.csv with row counts and columns.csv with column metadata.
+- Sensitive-looking columns are masked by column name pattern in sample CSV files.
+- Output folder: C:\ProgramData\PharmFarmAgent\debug-export\table-samples-YYYYMMDD-HHMMSS
+- This may still include prescription or pharmacy business data. Do not upload/share without legal approval.
+
+Codex sharing helper:
+
+- debug-export-table-samples.bat also creates SEND_TO_CODEX.txt.
+- Send SEND_TO_CODEX.txt first. It summarizes table names, row counts, candidate columns, and sample file paths.
+- Send manifest.csv/columns.csv only if more detail is needed.
+- Avoid sending sample CSV files unless specifically requested.
