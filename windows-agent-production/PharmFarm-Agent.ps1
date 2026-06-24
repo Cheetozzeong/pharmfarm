@@ -342,11 +342,11 @@ function Get-TableCount {
     [string]$Where = "1=1"
   )
 
-  $query = "SELECT COUNT(1) AS rowCount FROM $TableName WITH (NOLOCK) WHERE $Where"
+  $query = "SELECT COUNT(1) AS row_count FROM $TableName WITH (NOLOCK) WHERE $Where"
   $table = Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName $DbName -Query $query -TimeoutSeconds 10
 
   foreach ($row in $table.Rows) {
-    $value = Get-DataRowValue $row "rowCount"
+    $value = Get-DataRowValue $row "row_count"
     if ($null -ne $value) {
       return [int]$value
     }
@@ -445,7 +445,7 @@ function Get-DrugMasterCount {
   param([object]$Config)
 
   $query = @"
-SELECT COUNT(1) AS rowCount
+SELECT COUNT(1) AS row_count
 FROM dbo.dgmast WITH (NOLOCK)
 WHERE dm_iscode IS NOT NULL
    OR dm_drugname IS NOT NULL
@@ -453,7 +453,7 @@ WHERE dm_iscode IS NOT NULL
   $table = Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 10
 
   foreach ($row in $table.Rows) {
-    $value = Get-DataRowValue $row "rowCount"
+    $value = Get-DataRowValue $row "row_count"
     if ($null -ne $value) {
       return [int]$value
     }
