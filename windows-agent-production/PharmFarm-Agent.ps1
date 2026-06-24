@@ -139,6 +139,10 @@ function Get-Sha256Hex {
   }
 }
 
+function Get-AgentTimestamp {
+  return [DateTimeOffset]::Now.ToString("o")
+}
+
 function Convert-NullableDouble {
   param($Value)
 
@@ -291,19 +295,31 @@ function Get-DrugMasterRows {
     [int]$Limit
   )
 
+  $end = $Offset + $Limit
   $query = @"
 SELECT
-  CONVERT(NVARCHAR(80), dm_iscode) AS insuranceCode,
-  CONVERT(NVARCHAR(300), dm_drugname) AS drugName,
-  CONVERT(NVARCHAR(80), dm_stockno) AS stockNo,
-  CONVERT(NVARCHAR(80), dm_drugcode) AS drugCode,
-  CONVERT(NVARCHAR(120), dm_StockViewUnit) AS stockViewUnit,
-  TRY_CONVERT(float, dm_StockViewQty) AS stockViewQty
-FROM dbo.dgmast WITH (NOLOCK)
-WHERE dm_iscode IS NOT NULL
-   OR dm_drugname IS NOT NULL
-ORDER BY dm_iscode
-OFFSET $Offset ROWS FETCH NEXT $Limit ROWS ONLY
+  q.insuranceCode,
+  q.drugName,
+  q.stockNo,
+  q.drugCode,
+  q.stockViewUnit,
+  q.stockViewQty
+FROM (
+  SELECT
+    CONVERT(NVARCHAR(80), dm_iscode) AS insuranceCode,
+    CONVERT(NVARCHAR(300), dm_drugname) AS drugName,
+    CONVERT(NVARCHAR(80), dm_stockno) AS stockNo,
+    CONVERT(NVARCHAR(80), dm_drugcode) AS drugCode,
+    CONVERT(NVARCHAR(120), dm_StockViewUnit) AS stockViewUnit,
+    CONVERT(NVARCHAR(80), dm_StockViewQty) AS stockViewQty,
+    ROW_NUMBER() OVER (ORDER BY dm_iscode) AS row_num
+  FROM dbo.dgmast WITH (NOLOCK)
+  WHERE dm_iscode IS NOT NULL
+     OR dm_drugname IS NOT NULL
+) q
+WHERE q.row_num > $Offset
+  AND q.row_num <= $end
+ORDER BY q.row_num
 "@
 
   return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 20
@@ -316,19 +332,32 @@ function Get-StockRows {
     [int]$Limit
   )
 
+  $end = $Offset + $Limit
   $query = @"
 SELECT
-  CONVERT(NVARCHAR(80), so_IsCode) AS insuranceCode,
-  CONVERT(NVARCHAR(80), so_SNo) AS stockNo,
-  TRY_CONVERT(float, so_Stock) AS stockQuantity,
-  TRY_CONVERT(float, so_FairStock) AS fairStockQuantity,
-  CONVERT(NVARCHAR(40), so_BuyDate) AS buyDate,
-  TRY_CONVERT(float, so_BuyPrice) AS buyPrice,
-  CONVERT(NVARCHAR(80), so_CorpCode) AS corporationCode
-FROM dbo.STOCK WITH (NOLOCK)
-WHERE so_IsCode IS NOT NULL
-ORDER BY so_IsCode, so_SNo
-OFFSET $Offset ROWS FETCH NEXT $Limit ROWS ONLY
+  q.insuranceCode,
+  q.stockNo,
+  q.stockQuantity,
+  q.fairStockQuantity,
+  q.buyDate,
+  q.buyPrice,
+  q.corporationCode
+FROM (
+  SELECT
+    CONVERT(NVARCHAR(80), so_IsCode) AS insuranceCode,
+    CONVERT(NVARCHAR(80), so_SNo) AS stockNo,
+    CONVERT(NVARCHAR(80), so_Stock) AS stockQuantity,
+    CONVERT(NVARCHAR(80), so_FairStock) AS fairStockQuantity,
+    CONVERT(NVARCHAR(40), so_BuyDate) AS buyDate,
+    CONVERT(NVARCHAR(80), so_BuyPrice) AS buyPrice,
+    CONVERT(NVARCHAR(80), so_CorpCode) AS corporationCode,
+    ROW_NUMBER() OVER (ORDER BY so_IsCode, so_SNo) AS row_num
+  FROM dbo.STOCK WITH (NOLOCK)
+  WHERE so_IsCode IS NOT NULL
+) q
+WHERE q.row_num > $Offset
+  AND q.row_num <= $end
+ORDER BY q.row_num
 "@
 
   return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_PHARM" -Query $query -TimeoutSeconds 20
@@ -362,20 +391,34 @@ function Get-BarcodeRows {
     [int]$Limit
   )
 
+  $end = $Offset + $Limit
   $query = @"
 SELECT
-  CONVERT(NVARCHAR(160), db_barcode) AS barcode,
-  CONVERT(NVARCHAR(80), db_iscode) AS insuranceCode,
-  CONVERT(NVARCHAR(80), db_drugcode) AS drugCode,
-  CONVERT(NVARCHAR(160), db_extbarcode) AS extBarcode,
-  CONVERT(NVARCHAR(160), db_majbarcode) AS majorBarcode,
-  TRY_CONVERT(float, db_packamt) AS packAmount,
-  TRY_CONVERT(float, db_amt) AS amount,
-  CONVERT(NVARCHAR(80), db_unit) AS unit
-FROM dbo.dgbarcode WITH (NOLOCK)
-WHERE db_barcode IS NOT NULL
-ORDER BY db_barcode
-OFFSET $Offset ROWS FETCH NEXT $Limit ROWS ONLY
+  q.barcode,
+  q.insuranceCode,
+  q.drugCode,
+  q.extBarcode,
+  q.majorBarcode,
+  q.packAmount,
+  q.amount,
+  q.unit
+FROM (
+  SELECT
+    CONVERT(NVARCHAR(160), db_barcode) AS barcode,
+    CONVERT(NVARCHAR(80), db_iscode) AS insuranceCode,
+    CONVERT(NVARCHAR(80), db_drugcode) AS drugCode,
+    CONVERT(NVARCHAR(160), db_extbarcode) AS extBarcode,
+    CONVERT(NVARCHAR(160), db_majbarcode) AS majorBarcode,
+    CONVERT(NVARCHAR(80), db_packamt) AS packAmount,
+    CONVERT(NVARCHAR(80), db_amt) AS amount,
+    CONVERT(NVARCHAR(80), db_unit) AS unit,
+    ROW_NUMBER() OVER (ORDER BY db_barcode) AS row_num
+  FROM dbo.dgbarcode WITH (NOLOCK)
+  WHERE db_barcode IS NOT NULL
+) q
+WHERE q.row_num > $Offset
+  AND q.row_num <= $end
+ORDER BY q.row_num
 "@
 
   return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 20
@@ -388,21 +431,36 @@ function Get-WholesalerRows {
     [int]$Limit
   )
 
+  $end = $Offset + $Limit
   $query = @"
 SELECT
-  CONVERT(NVARCHAR(80), dcp_code) AS externalCode,
-  CONVERT(NVARCHAR(300), dcp_dealname) AS name,
-  CONVERT(NVARCHAR(300), dcp_corpname) AS corporationName,
-  CONVERT(NVARCHAR(80), dcp_corpno) AS businessNumber,
-  CONVERT(NVARCHAR(120), dcp_tel) AS phone,
-  CONVERT(NVARCHAR(500), dcp_addr) AS address,
-  CONVERT(NVARCHAR(160), DCP_NIMS_BSSH_CD) AS nimsCode,
-  CONVERT(NVARCHAR(300), DCP_NIMS_BSSH_NM) AS nimsName,
-  CONVERT(NVARCHAR(20), dcp_used) AS active
-FROM dbo.dealcorp WITH (NOLOCK)
-WHERE dcp_code IS NOT NULL
-ORDER BY dcp_code
-OFFSET $Offset ROWS FETCH NEXT $Limit ROWS ONLY
+  q.externalCode,
+  q.name,
+  q.corporationName,
+  q.businessNumber,
+  q.phone,
+  q.address,
+  q.nimsCode,
+  q.nimsName,
+  q.active
+FROM (
+  SELECT
+    CONVERT(NVARCHAR(80), dcp_code) AS externalCode,
+    CONVERT(NVARCHAR(300), dcp_dealname) AS name,
+    CONVERT(NVARCHAR(300), dcp_corpname) AS corporationName,
+    CONVERT(NVARCHAR(80), dcp_corpno) AS businessNumber,
+    CONVERT(NVARCHAR(120), dcp_tel) AS phone,
+    CONVERT(NVARCHAR(500), dcp_addr) AS address,
+    CONVERT(NVARCHAR(160), DCP_NIMS_BSSH_CD) AS nimsCode,
+    CONVERT(NVARCHAR(300), DCP_NIMS_BSSH_NM) AS nimsName,
+    CONVERT(NVARCHAR(20), dcp_used) AS active,
+    ROW_NUMBER() OVER (ORDER BY dcp_code) AS row_num
+  FROM dbo.dealcorp WITH (NOLOCK)
+  WHERE dcp_code IS NOT NULL
+) q
+WHERE q.row_num > $Offset
+  AND q.row_num <= $end
+ORDER BY q.row_num
 "@
 
   return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 20
@@ -415,27 +473,45 @@ function Get-PurchaseRows {
     [int]$Limit
   )
 
+  $end = $Offset + $Limit
   $query = @"
 SELECT
-  CONVERT(NVARCHAR(80), t.TR_CODE) AS tradeCode,
-  CONVERT(NVARCHAR(40), t.TR_DATE) AS tradeDate,
-  CONVERT(NVARCHAR(80), t.TR_DEALCORP) AS wholesalerCode,
-  CONVERT(NVARCHAR(300), c.dcp_dealname) AS wholesalerName,
-  CONVERT(NVARCHAR(80), d.TD_SEQ) AS lineNo,
-  CONVERT(NVARCHAR(80), d.TD_ISCODE) AS insuranceCode,
-  CONVERT(NVARCHAR(300), d.TD_DRUGNAME) AS drugName,
-  TRY_CONVERT(float, d.TD_AMOUNT) AS quantity,
-  TRY_CONVERT(float, d.TD_PRICE) AS price,
-  CONVERT(NVARCHAR(160), d.TD_MMF_NO) AS lot,
-  CONVERT(NVARCHAR(40), d.TD_TERMDATE) AS exp,
-  CONVERT(NVARCHAR(300), d.TD_SGTIN_KEY) AS sgtinKey
-FROM dbo.TRADE t WITH (NOLOCK)
-JOIN dbo.tradedrug d WITH (NOLOCK)
-  ON d.TD_CODE = t.TR_CODE
-LEFT JOIN eP_BASES.dbo.dealcorp c WITH (NOLOCK)
-  ON c.dcp_code = t.TR_DEALCORP
-ORDER BY t.TR_CODE DESC, d.TD_SEQ
-OFFSET $Offset ROWS FETCH NEXT $Limit ROWS ONLY
+  q.tradeCode,
+  q.tradeDate,
+  q.wholesalerCode,
+  q.wholesalerName,
+  q.lineNo,
+  q.insuranceCode,
+  q.drugName,
+  q.quantity,
+  q.price,
+  q.lot,
+  q.exp,
+  q.sgtinKey
+FROM (
+  SELECT
+    CONVERT(NVARCHAR(80), t.TR_CODE) AS tradeCode,
+    CONVERT(NVARCHAR(40), t.TR_DATE) AS tradeDate,
+    CONVERT(NVARCHAR(80), t.TR_DEALCORP) AS wholesalerCode,
+    CONVERT(NVARCHAR(300), c.dcp_dealname) AS wholesalerName,
+    CONVERT(NVARCHAR(80), d.TD_SEQ) AS lineNo,
+    CONVERT(NVARCHAR(80), d.TD_ISCODE) AS insuranceCode,
+    CONVERT(NVARCHAR(300), d.TD_DRUGNAME) AS drugName,
+    CONVERT(NVARCHAR(80), d.TD_AMOUNT) AS quantity,
+    CONVERT(NVARCHAR(80), d.TD_PRICE) AS price,
+    CONVERT(NVARCHAR(160), d.TD_MMF_NO) AS lot,
+    CONVERT(NVARCHAR(40), d.TD_TERMDATE) AS exp,
+    CONVERT(NVARCHAR(300), d.TD_SGTIN_KEY) AS sgtinKey,
+    ROW_NUMBER() OVER (ORDER BY t.TR_CODE DESC, d.TD_SEQ) AS row_num
+  FROM dbo.TRADE t WITH (NOLOCK)
+  JOIN dbo.tradedrug d WITH (NOLOCK)
+    ON d.TD_CODE = t.TR_CODE
+  LEFT JOIN eP_BASES.dbo.dealcorp c WITH (NOLOCK)
+    ON c.dcp_code = t.TR_DEALCORP
+) q
+WHERE q.row_num > $Offset
+  AND q.row_num <= $end
+ORDER BY q.row_num
 "@
 
   return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_PHARM" -Query $query -TimeoutSeconds 20
@@ -518,7 +594,7 @@ function New-BootstrapEnvelope {
     [int]$TotalParts = 1
   )
 
-  $now = (Get-Date).ToUniversalTime().ToString("o")
+  $now = Get-AgentTimestamp
   $dataJson = $Data | ConvertTo-Json -Depth 20 -Compress
   $eventId = Get-Sha256Hex "$Kind.$Part.$TotalParts.$dataJson"
 
@@ -568,7 +644,7 @@ function New-AgentEnvelope {
     [int]$TotalParts = 1
   )
 
-  $now = (Get-Date).ToUniversalTime().ToString("o")
+  $now = Get-AgentTimestamp
   $itemsJson = $Items | ConvertTo-Json -Depth 24 -Compress
   $eventId = Get-Sha256Hex "$Kind.$Part.$TotalParts.$itemsJson"
 
@@ -624,7 +700,7 @@ function Queue-AgentTableSync {
     }
 
     $State.$StateKey = $true
-    $State.updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+    $State.updatedAt = Get-AgentTimestamp
     Write-JsonFile -Path $BootstrapStateFile -Value $State -Depth 8
   } catch {
     Write-AgentLog "bootstrap $Kind error $($_.Exception.Message)" "ERROR"
@@ -644,7 +720,7 @@ function Invoke-BootstrapSync {
       barcodeCompleted = $false
       wholesalerCompleted = $false
       purchaseCompleted = $false
-      updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+      updatedAt = Get-AgentTimestamp
     }
   }
 
@@ -672,7 +748,7 @@ function Invoke-BootstrapSync {
       }
 
       $state.drugMasterCompleted = $true
-      $state.updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+      $state.updatedAt = Get-AgentTimestamp
       Write-JsonFile -Path $BootstrapStateFile -Value $state -Depth 8
     } catch {
       Write-AgentLog "bootstrap drug master error $($_.Exception.Message)" "ERROR"
@@ -701,14 +777,14 @@ function Invoke-BootstrapSync {
       $data = [ordered]@{
         schema = "pharmfarm.bootstrap.stock-candidate-report.v1"
         source = "EPharm SQL catalog"
-        capturedAt = (Get-Date).ToUniversalTime().ToString("o")
+        capturedAt = Get-AgentTimestamp
         note = "This report contains candidate table/column metadata only. It does not include stock row data."
         candidates = $report
       }
       $envelope = New-BootstrapEnvelope -Config $Config -Kind "stock-candidate-report" -Data $data
       [void](Save-QueueItem $envelope)
       $state.stockProbeCompleted = $true
-      $state.updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+      $state.updatedAt = Get-AgentTimestamp
       Write-JsonFile -Path $BootstrapStateFile -Value $state -Depth 8
       Write-AgentLog "bootstrap stock candidate report queued candidates=$($report.Count)"
     } catch {
@@ -840,7 +916,7 @@ function New-Payload {
   }
   $identityJson = $identity | ConvertTo-Json -Depth 20 -Compress
   $eventId = Get-Sha256Hex $identityJson
-  $now = (Get-Date).ToUniversalTime().ToString("o")
+  $now = Get-AgentTimestamp
 
   return [ordered]@{
     eventId = $eventId
@@ -1020,7 +1096,7 @@ function Flush-Queue {
     $delay = Get-RetryDelaySeconds $attempts
     $envelope.attempts = $attempts
     $envelope.lastError = $result.message
-    $envelope.nextAttemptAt = (Get-Date).ToUniversalTime().AddSeconds($delay).ToString("o")
+    $envelope.nextAttemptAt = [DateTimeOffset]::Now.AddSeconds($delay).ToString("o")
     Write-JsonFile -Path $file.FullName -Value $envelope -Depth 30
     Write-AgentLog "retry scheduled event=$($envelope.eventId) attempts=$attempts delay=${delay}s error=$($result.message)" "WARN"
   }
@@ -1042,7 +1118,7 @@ function Write-State {
     pharmacyId = $Config.pharmacyId
     deviceId = $Config.deviceId
     queueCount = $queueCount
-    updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+    updatedAt = Get-AgentTimestamp
   }
 
   Write-JsonFile -Path $StateFile -Value $state -Depth 8
