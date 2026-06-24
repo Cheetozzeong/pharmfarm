@@ -65,6 +65,7 @@ function New-TextBox {
 function Write-Config {
   param(
     [string]$ApiBase,
+    [string]$PharmacyId,
     [string]$SqlServer,
     [string]$DeviceName,
     [string]$AgentSecret,
@@ -91,6 +92,7 @@ function Write-Config {
 
   $config = [ordered]@{
     apiBase = $ApiBase.TrimEnd("/")
+    pharmacyId = [int]$PharmacyId
     sqlServer = $SqlServer
     deviceName = $DeviceName
     deviceId = "win-" + $deviceHash
@@ -98,7 +100,10 @@ function Write-Config {
     intervalSeconds = $IntervalSeconds
     includeRawQrText = $IncludeRawQrText
     bootstrapDrugMaster = $BootstrapDrugMaster
-    bootstrapStockProbe = $BootstrapStockProbe
+    bootstrapStock = $BootstrapStockProbe
+    bootstrapBarcode = $BootstrapStockProbe
+    bootstrapWholesaler = $BootstrapStockProbe
+    bootstrapStockProbe = $false
     bootstrapChunkSize = 500
     createdAt = (Get-Date).ToUniversalTime().ToString("o")
   }
@@ -132,7 +137,7 @@ function Register-AgentTask {
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "PharmFarm Agent Setup"
-$form.Size = New-Object System.Drawing.Size(620, 700)
+$form.Size = New-Object System.Drawing.Size(620, 760)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
@@ -152,7 +157,7 @@ $form.Controls.Add($subtitle)
 
 $card = New-Object System.Windows.Forms.Panel
 $card.Location = New-Object System.Drawing.Point(34, 118)
-$card.Size = New-Object System.Drawing.Size(540, 420)
+$card.Size = New-Object System.Drawing.Size(540, 480)
 $card.BackColor = [System.Drawing.Color]::White
 $card.BorderStyle = "FixedSingle"
 $form.Controls.Add($card)
@@ -162,22 +167,29 @@ $card.Controls.Add((New-Label "API 주소" 22 58 120 22 $true))
 $apiBox = New-TextBox "https://api.solusi.co.kr/api/v1/pharmfarm" 22 82 492
 $card.Controls.Add($apiBox)
 
-$card.Controls.Add((New-Label "SQL Server" 22 122 120 22 $true))
-$sqlBox = New-TextBox ".\EPHARM_DB" 22 146 492
+$card.Controls.Add((New-Label "약국 ID" 22 122 120 22 $true))
+$pharmacyIdBox = New-TextBox "" 22 146 120
+$card.Controls.Add($pharmacyIdBox)
+$pharmacyIdHelp = New-Label "CMS에 등록된 약국 번호를 입력하세요." 156 150 340 22
+$pharmacyIdHelp.ForeColor = [System.Drawing.Color]::FromArgb(104, 112, 97)
+$card.Controls.Add($pharmacyIdHelp)
+
+$card.Controls.Add((New-Label "SQL Server" 22 186 120 22 $true))
+$sqlBox = New-TextBox ".\EPHARM_DB" 22 210 492
 $card.Controls.Add($sqlBox)
 
-$card.Controls.Add((New-Label "기기 별칭" 22 186 120 22 $true))
-$deviceBox = New-TextBox "$env:COMPUTERNAME" 22 210 492
+$card.Controls.Add((New-Label "기기 별칭" 22 250 120 22 $true))
+$deviceBox = New-TextBox "$env:COMPUTERNAME" 22 274 492
 $card.Controls.Add($deviceBox)
 
-$card.Controls.Add((New-Label "Agent Secret 또는 설치 토큰" 22 250 220 22 $true))
-$secretBox = New-TextBox "" 22 274 492
+$card.Controls.Add((New-Label "Agent Secret 또는 설치 토큰" 22 314 220 22 $true))
+$secretBox = New-TextBox "" 22 338 492
 $secretBox.PasswordChar = "*"
 $card.Controls.Add($secretBox)
 
 $rawCheck = New-Object System.Windows.Forms.CheckBox
 $rawCheck.Text = "디버깅용 QR 원문 포함"
-$rawCheck.Location = New-Object System.Drawing.Point(22, 314)
+$rawCheck.Location = New-Object System.Drawing.Point(22, 378)
 $rawCheck.Size = New-Object System.Drawing.Size(190, 24)
 $rawCheck.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $rawCheck.ForeColor = [System.Drawing.Color]::FromArgb(104, 112, 97)
@@ -185,13 +197,14 @@ $rawCheck.Checked = $false
 $card.Controls.Add($rawCheck)
 
 $intervalLabel = New-Label "조회 주기(초)" 242 314 92 22 $true
+$intervalLabel.Location = New-Object System.Drawing.Point(242, 378)
 $card.Controls.Add($intervalLabel)
-$intervalBox = New-TextBox "10" 340 310 60
+$intervalBox = New-TextBox "10" 340 374 60
 $card.Controls.Add($intervalBox)
 
 $bootstrapDrugCheck = New-Object System.Windows.Forms.CheckBox
 $bootstrapDrugCheck.Text = "설치 시 약품 마스터 1회 동기화"
-$bootstrapDrugCheck.Location = New-Object System.Drawing.Point(22, 350)
+$bootstrapDrugCheck.Location = New-Object System.Drawing.Point(22, 414)
 $bootstrapDrugCheck.Size = New-Object System.Drawing.Size(250, 24)
 $bootstrapDrugCheck.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $bootstrapDrugCheck.ForeColor = [System.Drawing.Color]::FromArgb(32, 35, 29)
@@ -199,22 +212,22 @@ $bootstrapDrugCheck.Checked = $true
 $card.Controls.Add($bootstrapDrugCheck)
 
 $bootstrapStockCheck = New-Object System.Windows.Forms.CheckBox
-$bootstrapStockCheck.Text = "재고 테이블 후보 탐색 리포트 전송"
-$bootstrapStockCheck.Location = New-Object System.Drawing.Point(22, 378)
-$bootstrapStockCheck.Size = New-Object System.Drawing.Size(280, 24)
+$bootstrapStockCheck.Text = "현재 재고/바코드/도매처 1회 동기화"
+$bootstrapStockCheck.Location = New-Object System.Drawing.Point(22, 442)
+$bootstrapStockCheck.Size = New-Object System.Drawing.Size(310, 24)
 $bootstrapStockCheck.Font = New-Object System.Drawing.Font("Segoe UI", 9)
 $bootstrapStockCheck.ForeColor = [System.Drawing.Color]::FromArgb(104, 112, 97)
 $bootstrapStockCheck.Checked = $false
 $card.Controls.Add($bootstrapStockCheck)
 
 
-$notice = New-Label "기본값은 QR 원문을 서버로 보내지 않습니다. 처방 코드는 해시로만 처리됩니다." 38 556 540 26
+$notice = New-Label "기본값은 QR 원문을 서버로 보내지 않습니다. 처방/재고/마스터 데이터는 약국 ID 기준으로 연결됩니다." 38 616 540 26
 $notice.ForeColor = [System.Drawing.Color]::FromArgb(47, 122, 77)
 $form.Controls.Add($notice)
 
 $installButton = New-Object System.Windows.Forms.Button
 $installButton.Text = "설치 및 시작"
-$installButton.Location = New-Object System.Drawing.Point(350, 606)
+$installButton.Location = New-Object System.Drawing.Point(350, 666)
 $installButton.Size = New-Object System.Drawing.Size(106, 36)
 $installButton.BackColor = [System.Drawing.Color]::FromArgb(47, 122, 77)
 $installButton.ForeColor = [System.Drawing.Color]::White
@@ -224,7 +237,7 @@ $form.Controls.Add($installButton)
 
 $closeButton = New-Object System.Windows.Forms.Button
 $closeButton.Text = "닫기"
-$closeButton.Location = New-Object System.Drawing.Point(468, 606)
+$closeButton.Location = New-Object System.Drawing.Point(468, 666)
 $closeButton.Size = New-Object System.Drawing.Size(106, 36)
 $closeButton.FlatStyle = "Flat"
 $closeButton.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
@@ -237,12 +250,19 @@ $closeButton.Add_Click({
 $installButton.Add_Click({
   try {
     $apiBase = $apiBox.Text.Trim()
+    $pharmacyId = $pharmacyIdBox.Text.Trim()
     $sqlServer = $sqlBox.Text.Trim()
     $deviceName = $deviceBox.Text.Trim()
     $intervalSeconds = [int]$intervalBox.Text.Trim()
 
-    if ([string]::IsNullOrWhiteSpace($apiBase) -or [string]::IsNullOrWhiteSpace($sqlServer) -or [string]::IsNullOrWhiteSpace($deviceName)) {
-      [System.Windows.Forms.MessageBox]::Show("API 주소, SQL Server, 기기 별칭을 입력하세요.", "PharmFarm Agent", "OK", "Warning") | Out-Null
+    if ([string]::IsNullOrWhiteSpace($apiBase) -or [string]::IsNullOrWhiteSpace($pharmacyId) -or [string]::IsNullOrWhiteSpace($sqlServer) -or [string]::IsNullOrWhiteSpace($deviceName)) {
+      [System.Windows.Forms.MessageBox]::Show("API 주소, 약국 ID, SQL Server, 기기 별칭을 입력하세요.", "PharmFarm Agent", "OK", "Warning") | Out-Null
+      return
+    }
+
+    $parsedPharmacyId = 0
+    if (![int]::TryParse($pharmacyId, [ref]$parsedPharmacyId) -or $parsedPharmacyId -le 0) {
+      [System.Windows.Forms.MessageBox]::Show("약국 ID는 CMS에 등록된 숫자 ID여야 합니다.", "PharmFarm Agent", "OK", "Warning") | Out-Null
       return
     }
 
@@ -251,7 +271,7 @@ $installButton.Add_Click({
       return
     }
 
-    Write-Config -ApiBase $apiBase -SqlServer $sqlServer -DeviceName $deviceName -AgentSecret $secretBox.Text -IncludeRawQrText $rawCheck.Checked -BootstrapDrugMaster $bootstrapDrugCheck.Checked -BootstrapStockProbe $bootstrapStockCheck.Checked -IntervalSeconds $intervalSeconds
+    Write-Config -ApiBase $apiBase -PharmacyId $pharmacyId -SqlServer $sqlServer -DeviceName $deviceName -AgentSecret $secretBox.Text -IncludeRawQrText $rawCheck.Checked -BootstrapDrugMaster $bootstrapDrugCheck.Checked -BootstrapStockProbe $bootstrapStockCheck.Checked -IntervalSeconds $intervalSeconds
     $registered = Register-AgentTask
 
     if ($registered) {

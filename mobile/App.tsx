@@ -13,6 +13,7 @@ import {
   CameraView,
   useCameraPermissions,
   type BarcodeScanningResult,
+  type BarcodeType,
 } from "expo-camera";
 import {
   StatusBar,
@@ -41,6 +42,8 @@ const nativeSafeAreaScript = `
   true;
 `;
 const nativeScannerFrameSize = 248;
+const nativeScannerBarcodeFrameWidth = 308;
+const nativeScannerBarcodeFrameHeight = 132;
 const nativeScannerFrameTopRatio = 0.45;
 const nativeScannerFrameTolerance = 12;
 const nativeScannerZoomLevels = {
@@ -49,11 +52,49 @@ const nativeScannerZoomLevels = {
 } as const;
 
 type NativeScannerZoomMode = keyof typeof nativeScannerZoomLevels;
+type NativeScanCodeMode = "datamatrix" | "barcode";
 
 type NativeScannerLayout = {
   height: number;
   width: number;
 };
+
+const nativeDataMatrixBarcodeTypes: BarcodeType[] = ["datamatrix", "qr"];
+const nativeOneDimensionalBarcodeTypes: BarcodeType[] = [
+  "ean13",
+  "ean8",
+  "upc_a",
+  "upc_e",
+  "code128",
+  "code39",
+  "code93",
+  "itf14",
+  "codabar",
+];
+const nativeSupportedBarcodeTypes = new Set<BarcodeType>([
+  ...nativeDataMatrixBarcodeTypes,
+  ...nativeOneDimensionalBarcodeTypes,
+]);
+
+function normalizeNativeBarcodeTypes(value: unknown, mode: NativeScanCodeMode) {
+  if (!Array.isArray(value)) {
+    return mode === "barcode"
+      ? nativeOneDimensionalBarcodeTypes
+      : nativeDataMatrixBarcodeTypes;
+  }
+
+  const barcodeTypes = value.filter(
+    (item): item is BarcodeType =>
+      typeof item === "string" &&
+      nativeSupportedBarcodeTypes.has(item as BarcodeType),
+  );
+
+  if (barcodeTypes.length > 0) return barcodeTypes;
+
+  return mode === "barcode"
+    ? nativeOneDimensionalBarcodeTypes
+    : nativeDataMatrixBarcodeTypes;
+}
 
 function normalizeScannerPoint(
   point: { x: number; y: number },
@@ -65,15 +106,25 @@ function normalizeScannerPoint(
   };
 }
 
-function getNativeScannerFrame(layout: NativeScannerLayout) {
-  const size = Math.min(nativeScannerFrameSize, layout.width * 0.72);
-  const left = (layout.width - size) / 2;
-  const top = layout.height * nativeScannerFrameTopRatio - size / 2;
+function getNativeScannerFrame(
+  layout: NativeScannerLayout,
+  mode: NativeScanCodeMode,
+) {
+  const width =
+    mode === "barcode"
+      ? Math.min(nativeScannerBarcodeFrameWidth, layout.width * 0.78)
+      : Math.min(nativeScannerFrameSize, layout.width * 0.72);
+  const height =
+    mode === "barcode"
+      ? Math.min(nativeScannerBarcodeFrameHeight, layout.width * 0.34)
+      : width;
+  const left = (layout.width - width) / 2;
+  const top = layout.height * nativeScannerFrameTopRatio - height / 2;
 
   return {
-    bottom: top + size,
+    bottom: top + height,
     left,
-    right: left + size,
+    right: left + width,
     top,
   };
 }
@@ -93,10 +144,11 @@ function isPointInsideFrame(
 function isNativeScanInsideFrame(
   result: BarcodeScanningResult,
   layout: NativeScannerLayout,
+  mode: NativeScanCodeMode,
 ) {
   if (!layout.width || !layout.height) return true;
 
-  const frame = getNativeScannerFrame(layout);
+  const frame = getNativeScannerFrame(layout, mode);
   const cornerPoints = result.cornerPoints
     ?.filter((point) => Number.isFinite(point.x) && Number.isFinite(point.y))
     .map((point) => normalizeScannerPoint(point, layout));
@@ -146,6 +198,11 @@ export default function App() {
     useState(false);
   const [nativeScannerMessage, setNativeScannerMessage] =
     useState("QR을 사각형 안에 맞춰주세요.");
+  const [nativeScanCodeMode, setNativeScanCodeMode] =
+    useState<NativeScanCodeMode>("datamatrix");
+  const [nativeBarcodeTypes, setNativeBarcodeTypes] = useState<BarcodeType[]>(
+    nativeDataMatrixBarcodeTypes,
+  );
   const [nativeTorchOn, setNativeTorchOn] = useState(false);
   const [nativeZoomMode, setNativeZoomMode] =
     useState<NativeScannerZoomMode>("near");
@@ -199,23 +256,30 @@ export default function App() {
     sendMessageToWeb({ type: "pharmfarm-native-scanner-closed" });
   }, [sendMessageToWeb, stopNativeScanner]);
 
-  const startNativeScanner = useCallback(async () => {
-    setNativeScannerActive(true);
-    setNativeScannerMessage("QR을 사각형 안에 맞춰주세요.");
-
-    if (cameraPermission?.granted) {
-      setNativeScannerPermissionBlocked(false);
-      return;
-    }
-
-    const nextPermission = await requestCameraPermission();
-    setNativeScannerPermissionBlocked(!nextPermission.granted);
-    if (!nextPermission.granted) {
+  const startNativeScanner = useCallback(
+    async (mode: NativeScanCodeMode) => {
+      setNativeScannerActive(true);
       setNativeScannerMessage(
-        "네이티브 리더를 사용하려면 카메라 권한이 필요합니다.",
+        mode === "barcode"
+          ? "바코드를 가로 프레임 안에 맞춰주세요."
+          : "QR을 사각형 안에 맞춰주세요.",
       );
-    }
-  }, [cameraPermission?.granted, requestCameraPermission]);
+
+      if (cameraPermission?.granted) {
+        setNativeScannerPermissionBlocked(false);
+        return;
+      }
+
+      const nextPermission = await requestCameraPermission();
+      setNativeScannerPermissionBlocked(!nextPermission.granted);
+      if (!nextPermission.granted) {
+        setNativeScannerMessage(
+          "네이티브 리더를 사용하려면 카메라 권한이 필요합니다.",
+        );
+      }
+    },
+    [cameraPermission?.granted, requestCameraPermission],
+  );
 
   const sendNativeScanToWeb = useCallback(
     (value: string, barcodeType: string) => {
@@ -233,8 +297,18 @@ export default function App() {
       const value = result.data || result.raw || "";
       if (!value) return;
 
-      if (!isNativeScanInsideFrame(result, nativeScannerLayout)) {
-        setNativeScannerMessage("QR을 가이드 안쪽에 맞춰주세요.");
+      if (
+        !isNativeScanInsideFrame(
+          result,
+          nativeScannerLayout,
+          nativeScanCodeMode,
+        )
+      ) {
+        setNativeScannerMessage(
+          nativeScanCodeMode === "barcode"
+            ? "바코드를 가이드 안쪽에 맞춰주세요."
+            : "QR을 가이드 안쪽에 맞춰주세요.",
+        );
         return;
       }
 
@@ -243,10 +317,14 @@ export default function App() {
       if (value === lastScan.value && now - lastScan.at < 1200) return;
 
       lastNativeScanRef.current = { value, at: now };
-      setNativeScannerMessage("인식 완료 · 다음 QR을 스캔할 수 있습니다.");
+      setNativeScannerMessage(
+        nativeScanCodeMode === "barcode"
+          ? "인식 완료 · 다음 바코드를 스캔할 수 있습니다."
+          : "인식 완료 · 다음 QR을 스캔할 수 있습니다.",
+      );
       sendNativeScanToWeb(value, result.type);
     },
-    [nativeScannerLayout, sendNativeScanToWeb],
+    [nativeScanCodeMode, nativeScannerLayout, sendNativeScanToWeb],
   );
 
   const handleWebMessage = useCallback(
@@ -260,10 +338,21 @@ export default function App() {
       }
 
       if (!message || typeof message !== "object") return;
-      const item = message as { action?: string; type?: string };
+      const item = message as {
+        action?: string;
+        barcodeTypes?: unknown;
+        scanCodeMode?: string;
+        type?: string;
+      };
       if (item.type !== "pharmfarm-native-scanner") return;
 
       if (item.action === "start") {
+        const mode: NativeScanCodeMode =
+          item.scanCodeMode === "barcode" ? "barcode" : "datamatrix";
+        setNativeScanCodeMode(mode);
+        setNativeBarcodeTypes(
+          normalizeNativeBarcodeTypes(item.barcodeTypes, mode),
+        );
         primeCameraPermission();
         stopNativeScanner();
       } else if (item.action === "stop") {
@@ -338,7 +427,7 @@ export default function App() {
                 activeOpacity={0.78}
                 style={styles.nativePrimaryButton}
                 onPress={() => {
-                  void startNativeScanner();
+                  void startNativeScanner(nativeScanCodeMode);
                 }}
               >
                 <Text style={styles.nativePrimaryText}>권한 다시 요청</Text>
@@ -370,7 +459,7 @@ export default function App() {
                 active={nativeScannerActive}
                 animateShutter={false}
                 autofocus="on"
-                barcodeScannerSettings={{ barcodeTypes: ["datamatrix"] }}
+                barcodeScannerSettings={{ barcodeTypes: nativeBarcodeTypes }}
                 enableTorch={nativeTorchOn}
                 facing="back"
                 style={styles.nativeCamera}
@@ -381,7 +470,14 @@ export default function App() {
                 }
               />
               <View style={styles.nativeScannerShade} pointerEvents="none" />
-              <View style={styles.nativeScannerFrame} pointerEvents="none">
+              <View
+                style={[
+                  styles.nativeScannerFrame,
+                  nativeScanCodeMode === "barcode" &&
+                    styles.nativeScannerFrameBarcode,
+                ]}
+                pointerEvents="none"
+              >
                 <View
                   style={[styles.nativeCorner, styles.nativeCornerTopLeft]}
                 />
@@ -640,6 +736,12 @@ const styles = StyleSheet.create({
     position: "absolute",
     top: `${nativeScannerFrameTopRatio * 100}%`,
     width: nativeScannerFrameSize,
+  },
+  nativeScannerFrameBarcode: {
+    height: nativeScannerBarcodeFrameHeight,
+    marginLeft: -(nativeScannerBarcodeFrameWidth / 2),
+    marginTop: -(nativeScannerBarcodeFrameHeight / 2),
+    width: nativeScannerBarcodeFrameWidth,
   },
   nativeScannerLayer: {
     ...StyleSheet.absoluteFillObject,

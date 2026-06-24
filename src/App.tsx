@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, ReactNode, RefObject } from "react";
 import {
   BrowserDatamatrixCodeReader,
+  BrowserMultiFormatOneDReader,
   type IScannerControls,
 } from "@zxing/browser";
-import { DecodeHintType } from "@zxing/library";
+import { BarcodeFormat, DecodeHintType } from "@zxing/library";
 import {
   ChevronDown,
   Focus,
@@ -41,7 +42,7 @@ type QrFields = {
   lot: string;
   exp: string;
   raw: string;
-  format: "query" | "gs1" | "text";
+  format: "query" | "gs1" | "text" | "barcode";
   errors: string[];
 };
 
@@ -207,6 +208,10 @@ type ApiState =
   | "forbidden";
 type ScanPerformanceMode = "performance" | "quality";
 type ScannerEngine = "web" | "native";
+type ScanCodeMode = "datamatrix" | "barcode";
+type WebScannerReader =
+  | BrowserDatamatrixCodeReader
+  | BrowserMultiFormatOneDReader;
 type VideoInputDevice = {
   deviceId: string;
   label: string;
@@ -225,6 +230,7 @@ const storageKeys = {
   authAccount: "pharmfarm.authAccount",
   scanPerformanceMode: "pharmfarm.scanPerformanceMode",
   scannerEngine: "pharmfarm.scannerEngine",
+  scanCodeMode: "pharmfarm.scanCodeMode",
 };
 
 const alreadyProcessedAudioSrc =
@@ -387,6 +393,20 @@ function storeScannerEngine(engine: ScannerEngine) {
   localStorage.setItem(storageKeys.scannerEngine, engine);
 }
 
+function getStoredScanCodeMode(): ScanCodeMode {
+  return localStorage.getItem(storageKeys.scanCodeMode) === "barcode"
+    ? "barcode"
+    : "datamatrix";
+}
+
+function storeScanCodeMode(mode: ScanCodeMode) {
+  localStorage.setItem(storageKeys.scanCodeMode, mode);
+}
+
+function scanCodeModeLabel(mode: ScanCodeMode) {
+  return mode === "barcode" ? "바코드" : "QR/DM";
+}
+
 function getNativeWindow() {
   return window as Window & {
     ReactNativeWebView?: { postMessage: (message: string) => void };
@@ -405,12 +425,32 @@ function isNativeAppShell() {
   );
 }
 
-function postNativeScannerMessage(action: "start" | "stop", attempt = 0) {
+function getNativeBarcodeTypes(scanCodeMode: ScanCodeMode) {
+  return scanCodeMode === "barcode"
+    ? [
+        "ean13",
+        "ean8",
+        "upc_a",
+        "upc_e",
+        "code128",
+        "code39",
+        "code93",
+        "itf14",
+        "codabar",
+      ]
+    : ["datamatrix", "qr"];
+}
+
+function postNativeScannerMessage(
+  action: "start" | "stop",
+  scanCodeMode: ScanCodeMode = "datamatrix",
+  attempt = 0,
+) {
   const bridge = getReactNativeWebView();
   if (!bridge) {
     if (isNativeAppShell() && attempt < 8) {
       window.setTimeout(
-        () => postNativeScannerMessage(action, attempt + 1),
+        () => postNativeScannerMessage(action, scanCodeMode, attempt + 1),
         120,
       );
     }
@@ -420,24 +460,44 @@ function postNativeScannerMessage(action: "start" | "stop", attempt = 0) {
   bridge.postMessage(
     JSON.stringify({
       action,
-      barcodeTypes: ["datamatrix"],
+      barcodeTypes: getNativeBarcodeTypes(scanCodeMode),
+      scanCodeMode,
       type: "pharmfarm-native-scanner",
     }),
   );
   return true;
 }
 
-function createScannerReader(scanPerformanceMode: ScanPerformanceMode) {
+function createScannerReader(
+  scanPerformanceMode: ScanPerformanceMode,
+  scanCodeMode: ScanCodeMode,
+) {
   const hints = new Map<DecodeHintType, unknown>();
   hints.set(DecodeHintType.TRY_HARDER, true);
   hints.set(DecodeHintType.CHARACTER_SET, "UTF-8");
   const performanceMode = isScanPerformanceMode(scanPerformanceMode);
-
-  return new BrowserDatamatrixCodeReader(hints, {
+  const options = {
     delayBetweenScanAttempts: performanceMode ? 140 : 70,
     delayBetweenScanSuccess: performanceMode ? 420 : 220,
     tryPlayVideoTimeout: 5000,
-  });
+  };
+
+  if (scanCodeMode === "barcode") {
+    hints.set(DecodeHintType.POSSIBLE_FORMATS, [
+      BarcodeFormat.EAN_13,
+      BarcodeFormat.EAN_8,
+      BarcodeFormat.UPC_A,
+      BarcodeFormat.UPC_E,
+      BarcodeFormat.CODE_128,
+      BarcodeFormat.CODE_39,
+      BarcodeFormat.CODE_93,
+      BarcodeFormat.ITF,
+      BarcodeFormat.CODABAR,
+    ]);
+    return new BrowserMultiFormatOneDReader(hints, options);
+  }
+
+  return new BrowserDatamatrixCodeReader(hints, options);
 }
 
 function getCameraConstraints(
@@ -615,7 +675,7 @@ async function startGuidedWebScanner({
   constraints: MediaStreamConstraints;
   guideElement: HTMLElement | null;
   onResult: (value: string) => void;
-  reader: BrowserDatamatrixCodeReader;
+  reader: WebScannerReader;
   scanPerformanceMode: ScanPerformanceMode;
   video: HTMLVideoElement;
 }): Promise<IScannerControls> {
@@ -1609,6 +1669,33 @@ function parseQrPayload(rawValue: string): QrFields {
   return result;
 }
 
+function parseBarcodePayload(rawValue: string): QrFields {
+  const raw = rawValue.trim();
+  const structured = parseQrPayload(raw);
+  if (structured.pc) {
+    return {
+      ...structured,
+      format: "barcode",
+    };
+  }
+
+  const digits = raw.replace(/\D/g, "");
+  const pc = normalizePc(digits || raw);
+  const result: QrFields = {
+    pc,
+    sn: "",
+    lot: "",
+    exp: "",
+    raw,
+    format: "barcode",
+    errors: [],
+  };
+
+  if (!result.pc) result.errors.push("PC 없음");
+
+  return result;
+}
+
 function getLowConfidenceSnReason(qr: QrFields) {
   const sn = qr.sn.trim();
   if (!sn) return "";
@@ -2330,9 +2417,6 @@ function MobileApp() {
   const scanAudioRef = useRef<HTMLAudioElement | null>(null);
   const expiryAudioRef = useRef<HTMLAudioElement | null>(null);
   const alreadyProcessedAudioRef = useRef<HTMLAudioElement | null>(null);
-  const audioUnlockedRef = useRef(false);
-  const expiryAudioUnlockedRef = useRef(false);
-  const alreadyProcessedAudioUnlockedRef = useRef(false);
   const scannerControlsRef = useRef<IScannerControls | null>(null);
   const wholesalerSearchRequestRef = useRef(0);
   const lastDetectedRef = useRef({
@@ -2364,6 +2448,9 @@ function MobileApp() {
     useState<ScanPerformanceMode>(() => getStoredScanPerformanceMode());
   const [scannerEngine, setScannerEngine] = useState<ScannerEngine>(() =>
     getStoredScannerEngine(),
+  );
+  const [scanCodeMode, setScanCodeMode] = useState<ScanCodeMode>(() =>
+    getStoredScanCodeMode(),
   );
   const [apiState, setApiState] = useState<ApiState>(() =>
     receiptMatchPreview ? "demo" : "checking",
@@ -2474,25 +2561,6 @@ function MobileApp() {
     };
   }, []);
 
-  const unlockScanAudio = useCallback(() => {
-    const audio = scanAudioRef.current;
-    if (!audio || audioUnlockedRef.current) return;
-
-    const previousVolume = audio.volume;
-    audio.volume = 0;
-    void audio
-      .play()
-      .then(() => {
-        audio.pause();
-        audio.currentTime = 0;
-        audio.volume = previousVolume;
-        audioUnlockedRef.current = true;
-      })
-      .catch(() => {
-        audio.volume = previousVolume;
-      });
-  }, []);
-
   const playScanSound = useCallback(() => {
     const audio = scanAudioRef.current;
     if (!audio) return;
@@ -2503,26 +2571,6 @@ function MobileApp() {
     void audio.play().catch(() => undefined);
   }, []);
 
-  const unlockAlreadyProcessedAudio = useCallback(() => {
-    const audio = alreadyProcessedAudioRef.current;
-    if (!audio || alreadyProcessedAudioUnlockedRef.current) return;
-
-    const previousVolume = audio.volume;
-    audio.volume = 0;
-    audio.currentTime = 0;
-    void audio
-      .play()
-      .then(() => {
-        audio.pause();
-        audio.currentTime = 0;
-        audio.volume = previousVolume;
-        alreadyProcessedAudioUnlockedRef.current = true;
-      })
-      .catch(() => {
-        audio.volume = previousVolume;
-      });
-  }, []);
-
   const playAlreadyProcessedAudio = useCallback(() => {
     const audio = alreadyProcessedAudioRef.current;
     if (!audio) return;
@@ -2531,30 +2579,6 @@ function MobileApp() {
     audio.currentTime = 0;
     audio.volume = 1;
     void audio.play().catch(() => undefined);
-  }, []);
-
-  const unlockExpiryAudio = useCallback(() => {
-    const audio = expiryAudioRef.current;
-    if (!audio || expiryAudioUnlockedRef.current) return;
-
-    const previousVolume = audio.volume;
-    audio.volume = 0;
-    audio.src = "/audio/year/2027.mp3";
-    audio.load();
-    void audio
-      .play()
-      .then(() => {
-        audio.pause();
-        audio.removeAttribute("src");
-        audio.load();
-        audio.volume = previousVolume;
-        expiryAudioUnlockedRef.current = true;
-      })
-      .catch(() => {
-        audio.removeAttribute("src");
-        audio.load();
-        audio.volume = previousVolume;
-      });
   }, []);
 
   const clearExpiryAudio = useCallback(() => {
@@ -3172,10 +3196,11 @@ function MobileApp() {
   const addReceiptQr = useCallback(
     async (qr: QrFields) => {
       const alreadyReceived = traces.some(
-        (trace) => trace.pc === qr.pc && trace.sn === qr.sn,
+        (trace) => Boolean(qr.sn) && trace.pc === qr.pc && trace.sn === qr.sn,
       );
       const duplicated = receiptQueue.some(
-        (item) => item.qr.pc === qr.pc && item.qr.sn === qr.sn,
+        (item) =>
+          Boolean(qr.sn) && item.qr.pc === qr.pc && item.qr.sn === qr.sn,
       );
 
       if (alreadyReceived || duplicated) {
@@ -3342,13 +3367,17 @@ function MobileApp() {
 
   const handlePayload = useCallback(
     (payload: string): ScanHandleResult => {
-      const qr = parseQrPayload(payload);
+      const qr =
+        scanCodeMode === "barcode"
+          ? parseBarcodePayload(payload)
+          : parseQrPayload(payload);
       const lowConfidenceSnReason = getLowConfidenceSnReason(qr);
+      const codeLabel = scanCodeModeLabel(scanCodeMode);
 
       if (lowConfidenceSnReason) {
         setLastScanName("SN 재촬영 필요");
         setScanNotice(
-          `${lowConfidenceSnReason}\n카메라를 조금 떨어뜨리고 QR 전체를 다시 맞춰주세요.`,
+          `${lowConfidenceSnReason}\n카메라를 조금 떨어뜨리고 ${codeLabel} 전체를 다시 맞춰주세요.`,
         );
         return { kind: "handled", cooldownMs: retakeScanCooldownMs };
       }
@@ -3365,21 +3394,26 @@ function MobileApp() {
 
       if (qr.errors.length > 0) {
         setLastScanName(qr.errors.join(", "));
-        setScanNotice("QR 값은 읽었지만 PC 값을 파싱하지 못했습니다.");
+        setScanNotice(
+          `${codeLabel} 값은 읽었지만 PC 값을 파싱하지 못했습니다.`,
+        );
         return null;
       }
 
       if (!selectedWholesaler) {
         setLastScanName("도매처 선택 필요");
-        setScanNotice("입고 QR을 처리하려면 먼저 도매처를 선택해야 합니다.");
+        setScanNotice(
+          `입고 ${codeLabel}을 처리하려면 먼저 도매처를 선택해야 합니다.`,
+        );
         setScreen("wholesaler");
         return null;
       }
       const alreadyReceived = traces.some(
-        (trace) => trace.pc === qr.pc && trace.sn === qr.sn,
+        (trace) => Boolean(qr.sn) && trace.pc === qr.pc && trace.sn === qr.sn,
       );
       const duplicated = receiptQueue.some(
-        (item) => item.qr.pc === qr.pc && item.qr.sn === qr.sn,
+        (item) =>
+          Boolean(qr.sn) && item.qr.pc === qr.pc && item.qr.sn === qr.sn,
       );
 
       if (alreadyReceived || duplicated) {
@@ -3395,6 +3429,7 @@ function MobileApp() {
       lookupReturn,
       notifyDuplicateReceiptQr,
       receiptQueue,
+      scanCodeMode,
       selectedWholesaler,
       traces,
     ],
@@ -3460,13 +3495,8 @@ function MobileApp() {
       at: 0,
       cooldownMs: defaultScanCooldownMs,
     };
-    unlockAlreadyProcessedAudio();
-    unlockScanAudio();
-    if (modeRef.current === "receipt") {
-      unlockExpiryAudio();
-    }
     setCameraActive(true);
-  }, [unlockAlreadyProcessedAudio, unlockExpiryAudio, unlockScanAudio]);
+  }, []);
 
   const refreshCamera = useCallback(() => {
     lastDetectedRef.current = {
@@ -3476,20 +3506,10 @@ function MobileApp() {
     };
     setCameraError("");
     setScanNotice("카메라를 새로고침하고 있습니다.");
-    unlockAlreadyProcessedAudio();
-    unlockScanAudio();
-    if (modeRef.current === "receipt") {
-      unlockExpiryAudio();
-    }
     stopCamera();
     setCameraActive(true);
     setCameraRestartKey((value) => value + 1);
-  }, [
-    stopCamera,
-    unlockAlreadyProcessedAudio,
-    unlockExpiryAudio,
-    unlockScanAudio,
-  ]);
+  }, [stopCamera]);
 
   const refreshCameraDevices = useCallback(async (activeDeviceId?: string) => {
     try {
@@ -3566,6 +3586,31 @@ function MobileApp() {
     });
   }, []);
 
+  const chooseScanCodeMode = useCallback(
+    (next: ScanCodeMode) => {
+      setScanCodeMode((current) => {
+        if (current === next) return current;
+
+        storeScanCodeMode(next);
+        lastDetectedRef.current = {
+          value: "",
+          at: 0,
+          cooldownMs: defaultScanCooldownMs,
+        };
+        setScanNotice(
+          next === "barcode"
+            ? "바코드 인식 모드로 전환했습니다. 가로 프레임 안에 바코드를 맞춰주세요."
+            : "QR/DM 인식 모드로 전환했습니다. 코드를 사각형 안에 맞춰주세요.",
+        );
+        if (cameraActive) {
+          setCameraRestartKey((value) => value + 1);
+        }
+        return next;
+      });
+    },
+    [cameraActive],
+  );
+
   const toggleScannerEngine = useCallback(() => {
     if (!isNativeAppShell()) {
       storeScannerEngine("web");
@@ -3585,16 +3630,18 @@ function MobileApp() {
       };
 
       if (next === "native") {
-        postNativeScannerMessage("stop");
+        postNativeScannerMessage("stop", scanCodeMode);
         setScanNotice("네이티브 리더 모드를 기본값으로 저장했습니다.");
       } else {
-        postNativeScannerMessage("stop");
-        setScanNotice("웹 QR 리더로 전환했습니다.");
+        postNativeScannerMessage("stop", scanCodeMode);
+        setScanNotice(
+          `웹 ${scanCodeModeLabel(scanCodeMode)} 리더로 전환했습니다.`,
+        );
       }
 
       return next;
     });
-  }, []);
+  }, [scanCodeMode]);
 
   useEffect(() => {
     if (scannerEngine !== "native" || isNativeAppShell()) return;
@@ -3673,8 +3720,8 @@ function MobileApp() {
   ]);
 
   useEffect(() => {
-    postNativeScannerMessage("stop");
-  }, [scannerEngine]);
+    postNativeScannerMessage("stop", scanCodeMode);
+  }, [scanCodeMode, scannerEngine]);
 
   useEffect(() => {
     if (screen === "stocks") {
@@ -3701,9 +3748,8 @@ function MobileApp() {
         const video = videoRef.current;
         if (!video) throw new Error("카메라 화면을 준비하지 못했습니다.");
 
-        const reader = createScannerReader(scanPerformanceMode);
-        const scanModeLabel =
-          scanPerformanceMode === "performance" ? "저사양" : "정밀";
+        const reader = createScannerReader(scanPerformanceMode, scanCodeMode);
+        const codeModeLabel = scanCodeModeLabel(scanCodeMode);
         const selectedCameraDeviceId = selectedCameraDeviceIdRef.current;
         const availableDevices = selectedCameraDeviceId
           ? cameraDevicesRef.current
@@ -3714,7 +3760,7 @@ function MobileApp() {
         if (preferredDeviceId && preferredDeviceId !== selectedCameraDeviceId) {
           selectedCameraDeviceIdRef.current = preferredDeviceId;
         }
-        setScanNotice(`카메라 실행 중`);
+        setScanNotice(`${codeModeLabel} 카메라 실행 중`);
         const handleScannerResult = (value: string) => {
           if (!value) return;
           if (focusHintTimer) {
@@ -3785,13 +3831,17 @@ function MobileApp() {
 
         if (tuningStatus === "applied") {
           setScanNotice(
-            "카메라 초점과 줌을 최적화했습니다. QR을 사각형 안에 맞춰주세요.",
+            scanCodeMode === "barcode"
+              ? "카메라 초점과 줌을 최적화했습니다. 바코드를 가로 프레임 안에 맞춰주세요."
+              : "카메라 초점과 줌을 최적화했습니다. QR/DM을 사각형 안에 맞춰주세요.",
           );
         }
 
         focusHintTimer = window.setTimeout(() => {
           setScanNotice(
-            "인식이 늦으면 카메라를 조금 떨어뜨리고\n초점 버튼을 눌러주세요.",
+            scanCodeMode === "barcode"
+              ? "인식이 늦으면 바코드를 가로로 맞추고\n초점 버튼을 눌러주세요."
+              : "인식이 늦으면 카메라를 조금 떨어뜨리고\n초점 버튼을 눌러주세요.",
           );
         }, 4500);
       } catch (error) {
@@ -3824,6 +3874,7 @@ function MobileApp() {
     playScanSound,
     presentScanExpiry,
     refreshCameraDevices,
+    scanCodeMode,
     scanPerformanceMode,
     stopCamera,
   ]);
@@ -4131,7 +4182,7 @@ function MobileApp() {
     <main
       className={`phone ${screenClass(screen, mode)} ${
         scanPerformanceMode === "performance" ? "is-scan-performance" : ""
-      }`}
+      } ${scanCodeMode === "barcode" ? "is-barcode-scan" : ""}`}
     >
       {screen === "wholesaler" && (
         <WholesalerScreen
@@ -4172,6 +4223,7 @@ function MobileApp() {
           mode={mode}
           queueCount={receiptQueue.length}
           lastScanName={lastScanName}
+          scanCodeMode={scanCodeMode}
           scanPerformanceMode={scanPerformanceMode}
           scannerEngine={scannerEngine}
           scanNotice={scanNotice}
@@ -4187,6 +4239,7 @@ function MobileApp() {
           }}
           onRefocusCamera={refocusCamera}
           onRefreshCamera={refreshCamera}
+          onScanCodeMode={chooseScanCodeMode}
           onScanPerformanceMode={toggleScanPerformanceMode}
           onScannerEngine={toggleScannerEngine}
           onSwitchCamera={switchCameraDevice}
@@ -4489,6 +4542,7 @@ function ScanScreen({
   lastScanName,
   mode,
   queueCount,
+  scanCodeMode,
   scanPerformanceMode,
   scannerEngine,
   scanNotice,
@@ -4502,6 +4556,7 @@ function ScanScreen({
   onRefocusCamera,
   onRefreshCamera,
   onReview,
+  onScanCodeMode,
   onScanPerformanceMode,
   onScannerEngine,
   onStocks,
@@ -4517,6 +4572,7 @@ function ScanScreen({
   lastScanName: string;
   mode: Mode;
   queueCount: number;
+  scanCodeMode: ScanCodeMode;
   scanPerformanceMode: ScanPerformanceMode;
   scannerEngine: ScannerEngine;
   scanNotice: string;
@@ -4530,6 +4586,7 @@ function ScanScreen({
   onRefocusCamera: () => void;
   onRefreshCamera: () => void;
   onReview: () => void;
+  onScanCodeMode: (mode: ScanCodeMode) => void;
   onScanPerformanceMode: () => void;
   onScannerEngine: () => void;
   onStocks: () => void;
@@ -4542,10 +4599,11 @@ function ScanScreen({
   const accent = isReceipt ? "#4D9AFF" : "#FFB44D";
   const canUseCamera = !isReceipt || Boolean(selectedWholesaler);
   const scannerActive = cameraActive;
+  const codeLabel = scanCodeModeLabel(scanCodeMode);
   const scanStatusText =
     scanNotice ||
     (isReceipt
-      ? "QR이 인식되면 자동으로 스캔됩니다"
+      ? `${codeLabel}가 인식되면 자동으로 스캔됩니다`
       : "입고 이력 또는 구매 내역에서 판매처를 찾아드려요");
   const [menuOpen, setMenuOpen] = useState(false);
 
@@ -4640,6 +4698,29 @@ function ScanScreen({
         </div>
       </div>
 
+      <div className="scan-code-mode-row">
+        <div
+          className="scan-code-mode-switch"
+          role="group"
+          aria-label="스캔 코드 종류"
+        >
+          <button
+            className={scanCodeMode === "datamatrix" ? "is-active" : ""}
+            type="button"
+            onClick={() => onScanCodeMode("datamatrix")}
+          >
+            QR/DM
+          </button>
+          <button
+            className={scanCodeMode === "barcode" ? "is-active" : ""}
+            type="button"
+            onClick={() => onScanCodeMode("barcode")}
+          >
+            바코드
+          </button>
+        </div>
+      </div>
+
       <section className="scanner-zone">
         {canUseCamera && (
           <div className="camera-actions">
@@ -4682,7 +4763,9 @@ function ScanScreen({
         />
         <button
           ref={scanGuideRef}
-          className={`scan-box ${scannerActive ? "is-active" : ""}`}
+          className={`scan-box ${scannerActive ? "is-active" : ""} ${
+            scanCodeMode === "barcode" ? "is-barcode" : ""
+          }`}
           style={{ "--accent": accent } as CSSProperties}
           type="button"
           onClick={scannerActive ? undefined : onToggleCamera}
@@ -4695,9 +4778,13 @@ function ScanScreen({
         </button>
         <div className="scan-copy">
           <strong>
-            {isReceipt
-              ? "QR을 사각형 안에 맞춰주세요"
-              : "반품할 약품의 QR을 스캔하세요"}
+            {scanCodeMode === "barcode"
+              ? isReceipt
+                ? "바코드를 가로 프레임 안에 맞춰주세요"
+                : "반품할 약품의 바코드를 스캔하세요"
+              : isReceipt
+                ? "QR/DM을 사각형 안에 맞춰주세요"
+                : "반품할 약품의 QR/DM을 스캔하세요"}
           </strong>
         </div>
         <div className="scan-result-stack">
@@ -6262,16 +6349,27 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
         <p className="agent-eyebrow">Windows Production Agent</p>
         <h1>약국 PC에 설치하는 처방 수집 에이전트</h1>
         <p>
-          이팜 로컬 SQL Server에서 조제 약품 데이터만 읽어 서버로 전송합니다.
-          QR 원문은 기본 전송하지 않고, 네트워크가 끊기면 로컬 큐에 보관한 뒤 자동 재시도합니다.
-          설치 시 약품 마스터 1회 동기화도 선택할 수 있습니다.
+          이팜 로컬 SQL Server에서 처방 조제약, 현재 재고, 약품 마스터, 바코드,
+          도매처 데이터를 읽어 PharmFarm API로 전송합니다. 설치 시 CMS 약국 ID를
+          입력해 계정과 기기를 연결하고, 네트워크가 끊기면 로컬 큐에 보관한 뒤
+          자동 재시도합니다.
         </p>
         <div className="agent-download-actions">
-          <a className="agent-primary-button" href="/pharmfarm-agent-production.zip" download>
+          <a
+            className="agent-primary-button"
+            href="/pharmfarm-agent-production.zip"
+            download
+          >
             <HardDriveDownload size={20} />
             Windows 설치 파일 다운로드
           </a>
-          <button type="button" className="agent-secondary-button" onClick={() => navigate("/cms")}>CMS로 이동</button>
+          <button
+            type="button"
+            className="agent-secondary-button"
+            onClick={() => navigate("/cms")}
+          >
+            CMS로 이동
+          </button>
         </div>
       </section>
 
@@ -6279,17 +6377,24 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
         <div>
           <ShieldCheck size={24} />
           <strong>보안 기본값</strong>
-          <span>처방 코드는 해시 처리하고 QR 원문은 운영 기본값에서 전송하지 않습니다.</span>
+          <span>
+            환자 직접 식별자는 수집하지 않고 QR 원문은 운영 기본값에서 전송하지
+            않습니다.
+          </span>
         </div>
         <div>
           <WifiOff size={24} />
           <strong>오프라인 큐</strong>
-          <span>API 장애나 네트워크 단절 시 C:\\ProgramData\\PharmFarmAgent\\queue에 보관합니다.</span>
+          <span>
+            API 장애나 네트워크 단절 시 큐에 보관하고 성공할 때까지 재시도합니다.
+          </span>
         </div>
         <div>
           <RefreshCw size={24} />
           <strong>자동 실행</strong>
-          <span>설치 마법사가 Windows 예약 작업을 만들고 로그인 시 자동 실행합니다.</span>
+          <span>
+            Windows 예약 작업과 트레이 아이콘을 등록해 로그인 시 자동 실행합니다.
+          </span>
         </div>
       </section>
 
@@ -6297,17 +6402,32 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
         <h2>설치 순서</h2>
         <ol>
           <li>설치 파일을 다운로드하고 압축을 해제합니다.</li>
-          <li><b>install-pharmfarm-agent.bat</b>을 실행합니다.</li>
-          <li>API 주소는 기본값을 유지하고 SQL Server는 <b>.\\EPHARM_DB</b>를 사용합니다.</li>
-          <li><b>디버깅용 QR 원문 포함</b>은 체크하지 않습니다.</li>
-          <li><b>약품 마스터 1회 동기화</b>는 켜도 되고, 재고 후보 리포트는 테이블 확인이 필요할 때만 켭니다.</li>
-          <li>이팜에서 QR을 등록한 뒤 PharmFarm 처방/리스트에서 수신 여부를 확인합니다.</li>
+          <li>
+            <b>install-pharmfarm-agent.bat</b>을 실행합니다.
+          </li>
+          <li>
+            API 주소는 기본값을 유지하고 SQL Server는 <b>.\\EPHARM_DB</b>를
+            사용합니다.
+          </li>
+          <li>
+            CMS에서 확인한 <b>약국 ID</b>를 입력해 서버 계정과 기기를 연결합니다.
+          </li>
+          <li>
+            <b>디버깅용 QR 원문 포함</b>은 체크하지 않습니다.
+          </li>
+          <li>
+            <b>약품 마스터</b>와 <b>현재 재고/바코드/도매처 1회 동기화</b>를
+            선택합니다.
+          </li>
+          <li>
+            이팜에서 QR을 등록한 뒤 PharmFarm 처방/리스트에서 수신 여부를
+            확인합니다.
+          </li>
         </ol>
       </section>
     </main>
   );
 }
-
 
 function getCmsPage(path: string): CmsPage {
   const segment = path.split("/").filter(Boolean)[1];

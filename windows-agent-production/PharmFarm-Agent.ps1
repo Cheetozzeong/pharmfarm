@@ -44,6 +44,49 @@ function Write-AgentLog {
   Add-Content -LiteralPath $LogFile -Value $line -Encoding UTF8
 }
 
+function Convert-LogText {
+  param(
+    [string]$Value,
+    [int]$MaxLength = 500
+  )
+
+  if ([string]::IsNullOrWhiteSpace($Value)) {
+    return ""
+  }
+
+  $text = ($Value -replace "[\r\n\t]+", " ").Trim()
+  if ($text.Length -gt $MaxLength) {
+    return $text.Substring(0, $MaxLength) + "...(truncated len=$($text.Length))"
+  }
+
+  return $text
+}
+
+function Get-ResponseBodyFromException {
+  param($ErrorRecord)
+
+  try {
+    $response = $ErrorRecord.Exception.Response
+    if ($null -eq $response) {
+      return ""
+    }
+
+    $stream = $response.GetResponseStream()
+    if ($null -eq $stream) {
+      return ""
+    }
+
+    $reader = New-Object System.IO.StreamReader($stream, [Text.Encoding]::UTF8)
+    try {
+      return $reader.ReadToEnd()
+    } finally {
+      $reader.Dispose()
+    }
+  } catch {
+    return ""
+  }
+}
+
 function Read-JsonFile {
   param([string]$Path)
 
@@ -219,9 +262,10 @@ function Convert-BootstrapRows {
   foreach ($row in $Table.Rows) {
     $insuranceCode = Get-DataRowValue $row "insuranceCode"
     $drugName = Get-DataRowValue $row "drugName"
-    $standardCode = Get-DataRowValue $row "standardCode"
-    $unit = Get-DataRowValue $row "unit"
-    $price = Get-DataRowValue $row "price"
+    $stockNo = Get-DataRowValue $row "stockNo"
+    $drugCode = Get-DataRowValue $row "drugCode"
+    $stockViewUnit = Get-DataRowValue $row "stockViewUnit"
+    $stockViewQty = Get-DataRowValue $row "stockViewQty"
 
     if ($null -eq $insuranceCode -and $null -eq $drugName) {
       continue
@@ -230,9 +274,10 @@ function Convert-BootstrapRows {
     $rows.Add([ordered]@{
       insuranceCode = if ($insuranceCode) { $insuranceCode.ToString().Trim() } else { "" }
       drugName = if ($drugName) { $drugName.ToString().Trim() } else { "" }
-      standardCode = if ($standardCode) { $standardCode.ToString().Trim() } else { "" }
-      unit = if ($unit) { $unit.ToString().Trim() } else { "" }
-      price = Convert-NullableDouble $price
+      stockNo = if ($stockNo) { $stockNo.ToString().Trim() } else { "" }
+      drugCode = if ($drugCode) { $drugCode.ToString().Trim() } else { "" }
+      stockViewUnit = if ($stockViewUnit) { $stockViewUnit.ToString().Trim() } else { "" }
+      stockViewQty = Convert-NullableDouble $stockViewQty
     })
   }
 
@@ -250,9 +295,10 @@ function Get-DrugMasterRows {
 SELECT
   CONVERT(NVARCHAR(80), dm_iscode) AS insuranceCode,
   CONVERT(NVARCHAR(300), dm_drugname) AS drugName,
-  CONVERT(NVARCHAR(80), '') AS standardCode,
-  CONVERT(NVARCHAR(120), '') AS unit,
-  CONVERT(float, NULL) AS price
+  CONVERT(NVARCHAR(80), dm_stockno) AS stockNo,
+  CONVERT(NVARCHAR(80), dm_drugcode) AS drugCode,
+  CONVERT(NVARCHAR(120), dm_StockViewUnit) AS stockViewUnit,
+  TRY_CONVERT(float, dm_StockViewQty) AS stockViewQty
 FROM dbo.dgmast WITH (NOLOCK)
 WHERE dm_iscode IS NOT NULL
    OR dm_drugname IS NOT NULL
@@ -261,6 +307,138 @@ OFFSET $Offset ROWS FETCH NEXT $Limit ROWS ONLY
 "@
 
   return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 20
+}
+
+function Get-StockRows {
+  param(
+    [object]$Config,
+    [int]$Offset,
+    [int]$Limit
+  )
+
+  $query = @"
+SELECT
+  CONVERT(NVARCHAR(80), so_IsCode) AS insuranceCode,
+  CONVERT(NVARCHAR(80), so_SNo) AS stockNo,
+  TRY_CONVERT(float, so_Stock) AS stockQuantity,
+  TRY_CONVERT(float, so_FairStock) AS fairStockQuantity,
+  CONVERT(NVARCHAR(40), so_BuyDate) AS buyDate,
+  TRY_CONVERT(float, so_BuyPrice) AS buyPrice,
+  CONVERT(NVARCHAR(80), so_CorpCode) AS corporationCode
+FROM dbo.STOCK WITH (NOLOCK)
+WHERE so_IsCode IS NOT NULL
+ORDER BY so_IsCode, so_SNo
+OFFSET $Offset ROWS FETCH NEXT $Limit ROWS ONLY
+"@
+
+  return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_PHARM" -Query $query -TimeoutSeconds 20
+}
+
+function Get-TableCount {
+  param(
+    [object]$Config,
+    [string]$DbName,
+    [string]$TableName,
+    [string]$Where = "1=1"
+  )
+
+  $query = "SELECT COUNT(1) AS rowCount FROM $TableName WITH (NOLOCK) WHERE $Where"
+  $table = Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName $DbName -Query $query -TimeoutSeconds 10
+
+  foreach ($row in $table.Rows) {
+    $value = Get-DataRowValue $row "rowCount"
+    if ($null -ne $value) {
+      return [int]$value
+    }
+  }
+
+  return 0
+}
+
+function Get-BarcodeRows {
+  param(
+    [object]$Config,
+    [int]$Offset,
+    [int]$Limit
+  )
+
+  $query = @"
+SELECT
+  CONVERT(NVARCHAR(160), db_barcode) AS barcode,
+  CONVERT(NVARCHAR(80), db_iscode) AS insuranceCode,
+  CONVERT(NVARCHAR(80), db_drugcode) AS drugCode,
+  CONVERT(NVARCHAR(160), db_extbarcode) AS extBarcode,
+  CONVERT(NVARCHAR(160), db_majbarcode) AS majorBarcode,
+  TRY_CONVERT(float, db_packamt) AS packAmount,
+  TRY_CONVERT(float, db_amt) AS amount,
+  CONVERT(NVARCHAR(80), db_unit) AS unit
+FROM dbo.dgbarcode WITH (NOLOCK)
+WHERE db_barcode IS NOT NULL
+ORDER BY db_barcode
+OFFSET $Offset ROWS FETCH NEXT $Limit ROWS ONLY
+"@
+
+  return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 20
+}
+
+function Get-WholesalerRows {
+  param(
+    [object]$Config,
+    [int]$Offset,
+    [int]$Limit
+  )
+
+  $query = @"
+SELECT
+  CONVERT(NVARCHAR(80), dcp_code) AS externalCode,
+  CONVERT(NVARCHAR(300), dcp_dealname) AS name,
+  CONVERT(NVARCHAR(300), dcp_corpname) AS corporationName,
+  CONVERT(NVARCHAR(80), dcp_corpno) AS businessNumber,
+  CONVERT(NVARCHAR(120), dcp_tel) AS phone,
+  CONVERT(NVARCHAR(500), dcp_addr) AS address,
+  CONVERT(NVARCHAR(160), DCP_NIMS_BSSH_CD) AS nimsCode,
+  CONVERT(NVARCHAR(300), DCP_NIMS_BSSH_NM) AS nimsName,
+  CONVERT(NVARCHAR(20), dcp_used) AS active
+FROM dbo.dealcorp WITH (NOLOCK)
+WHERE dcp_code IS NOT NULL
+ORDER BY dcp_code
+OFFSET $Offset ROWS FETCH NEXT $Limit ROWS ONLY
+"@
+
+  return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 20
+}
+
+function Get-PurchaseRows {
+  param(
+    [object]$Config,
+    [int]$Offset,
+    [int]$Limit
+  )
+
+  $query = @"
+SELECT
+  CONVERT(NVARCHAR(80), t.TR_CODE) AS tradeCode,
+  CONVERT(NVARCHAR(40), t.TR_DATE) AS tradeDate,
+  CONVERT(NVARCHAR(80), t.TR_DEALCORP) AS wholesalerCode,
+  CONVERT(NVARCHAR(300), c.dcp_dealname) AS wholesalerName,
+  CONVERT(NVARCHAR(80), d.TD_SEQ) AS lineNo,
+  CONVERT(NVARCHAR(80), d.TD_ISCODE) AS insuranceCode,
+  CONVERT(NVARCHAR(300), d.TD_DRUGNAME) AS drugName,
+  TRY_CONVERT(float, d.TD_AMOUNT) AS quantity,
+  TRY_CONVERT(float, d.TD_PRICE) AS price,
+  CONVERT(NVARCHAR(160), d.TD_MMF_NO) AS lot,
+  CONVERT(NVARCHAR(40), d.TD_TERMDATE) AS exp,
+  CONVERT(NVARCHAR(300), d.TD_SGTIN_KEY) AS sgtinKey
+FROM dbo.TRADE t WITH (NOLOCK)
+JOIN dbo.tradedrug d WITH (NOLOCK)
+  ON d.TD_CODE = t.TR_CODE
+LEFT JOIN eP_BASES.dbo.dealcorp c WITH (NOLOCK)
+  ON c.dcp_code = t.TR_DEALCORP
+ORDER BY t.TR_CODE DESC, d.TD_SEQ
+OFFSET $Offset ROWS FETCH NEXT $Limit ROWS ONLY
+"@
+
+  return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_PHARM" -Query $query -TimeoutSeconds 20
 }
 
 function Get-DrugMasterCount {
@@ -347,7 +525,7 @@ function New-BootstrapEnvelope {
   return [ordered]@{
     eventId = $eventId
     createdAt = $now
-    targetPath = "/samples"
+    targetPath = "/agent/disabled-bootstrap"
     attempts = 0
     nextAttemptAt = $now
     payload = [ordered]@{
@@ -380,16 +558,99 @@ function New-BootstrapEnvelope {
   }
 }
 
+function New-AgentEnvelope {
+  param(
+    [object]$Config,
+    [string]$Kind,
+    [string]$TargetPath,
+    [object[]]$Items,
+    [int]$Part = 1,
+    [int]$TotalParts = 1
+  )
+
+  $now = (Get-Date).ToUniversalTime().ToString("o")
+  $itemsJson = $Items | ConvertTo-Json -Depth 24 -Compress
+  $eventId = Get-Sha256Hex "$Kind.$Part.$TotalParts.$itemsJson"
+
+  return [ordered]@{
+    eventId = $eventId
+    createdAt = $now
+    targetPath = $TargetPath
+    attempts = 0
+    nextAttemptAt = $now
+    payload = [ordered]@{
+      pharmacyId = Convert-NullableInt $Config.pharmacyId
+      deviceId = $Config.deviceId
+      deviceName = $Config.deviceName
+      agentVersion = "1.1.0-ps"
+      batchId = "$Kind-$($eventId.Substring(0, 16))-$Part-$TotalParts"
+      capturedAt = $now
+      items = $Items
+    }
+  }
+}
+
+function Queue-AgentTableSync {
+  param(
+    [object]$Config,
+    [object]$State,
+    [string]$StateKey,
+    [string]$Kind,
+    [string]$TargetPath,
+    [string]$DbName,
+    [string]$TableName,
+    [scriptblock]$FetchRows,
+    [string]$Where = "1=1"
+  )
+
+  if ($State.$StateKey -eq $true) {
+    return
+  }
+
+  try {
+    $limit = if ($Config.bootstrapChunkSize) { [int]$Config.bootstrapChunkSize } else { 500 }
+    if ($limit -lt 100) { $limit = 100 }
+    if ($limit -gt 1000) { $limit = 1000 }
+    $totalRows = Get-TableCount -Config $Config -DbName $DbName -TableName $TableName -Where $Where
+    $totalParts = [Math]::Max(1, [Math]::Ceiling($totalRows / $limit))
+    Write-AgentLog "bootstrap $Kind start rows=$totalRows chunk=$limit parts=$totalParts"
+
+    for ($offset = 0; $offset -lt $totalRows; $offset += $limit) {
+      $part = [int]([Math]::Floor($offset / $limit) + 1)
+      $rows = @(Convert-DataTableRows (& $FetchRows $Config $offset $limit))
+      $envelope = New-AgentEnvelope -Config $Config -Kind $Kind -TargetPath $TargetPath -Items $rows -Part $part -TotalParts $totalParts
+      [void](Save-QueueItem $envelope)
+      Write-AgentLog "bootstrap $Kind queued part=$part/$totalParts rows=$($rows.Count)"
+    }
+
+    $State.$StateKey = $true
+    $State.updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+    Write-JsonFile -Path $BootstrapStateFile -Value $State -Depth 8
+  } catch {
+    Write-AgentLog "bootstrap $Kind error $($_.Exception.Message)" "ERROR"
+  }
+}
+
 function Invoke-BootstrapSync {
   param([object]$Config)
 
   $state = Read-JsonFile $BootstrapStateFile
 
   if ($null -eq $state) {
-    $state = [ordered]@{
+    $state = [pscustomobject][ordered]@{
       drugMasterCompleted = $false
       stockProbeCompleted = $false
+      stockCompleted = $false
+      barcodeCompleted = $false
+      wholesalerCompleted = $false
+      purchaseCompleted = $false
       updatedAt = (Get-Date).ToUniversalTime().ToString("o")
+    }
+  }
+
+  foreach ($stateKey in @("drugMasterCompleted", "stockProbeCompleted", "stockCompleted", "barcodeCompleted", "wholesalerCompleted", "purchaseCompleted")) {
+    if ($null -eq $state.PSObject.Properties[$stateKey]) {
+      $state | Add-Member -NotePropertyName $stateKey -NotePropertyValue $false
     }
   }
 
@@ -405,16 +666,7 @@ function Invoke-BootstrapSync {
       for ($offset = 0; $offset -lt $totalRows; $offset += $limit) {
         $part = [int]([Math]::Floor($offset / $limit) + 1)
         $rows = @(Convert-BootstrapRows (Get-DrugMasterRows -Config $Config -Offset $offset -Limit $limit))
-        $data = [ordered]@{
-          schema = "pharmfarm.bootstrap.drug-master.v1"
-          source = "eP_BASES.dbo.dgmast"
-          capturedAt = (Get-Date).ToUniversalTime().ToString("o")
-          totalRows = $totalRows
-          offset = $offset
-          limit = $limit
-          rows = $rows
-        }
-        $envelope = New-BootstrapEnvelope -Config $Config -Kind "drug-master" -Data $data -Part $part -TotalParts $totalParts
+        $envelope = New-AgentEnvelope -Config $Config -Kind "drug-master" -TargetPath "/agent/drug-masters" -Items $rows -Part $part -TotalParts $totalParts
         [void](Save-QueueItem $envelope)
         Write-AgentLog "bootstrap drug master queued part=$part/$totalParts rows=$($rows.Count)"
       }
@@ -427,7 +679,23 @@ function Invoke-BootstrapSync {
     }
   }
 
-  if ($Config.bootstrapStockProbe -eq $true -and $state.stockProbeCompleted -ne $true) {
+  if ($Config.bootstrapStock -eq $true -or $Config.bootstrapStocks -eq $true) {
+    Queue-AgentTableSync -Config $Config -State $state -StateKey "stockCompleted" -Kind "stock" -TargetPath "/agent/stocks" -DbName "eP_PHARM" -TableName "dbo.STOCK" -Where "so_IsCode IS NOT NULL" -FetchRows { param($c, $o, $l) Get-StockRows -Config $c -Offset $o -Limit $l }
+  }
+
+  if ($Config.bootstrapBarcode -eq $true -or $Config.bootstrapBarcodes -eq $true) {
+    Queue-AgentTableSync -Config $Config -State $state -StateKey "barcodeCompleted" -Kind "barcode" -TargetPath "/agent/barcodes" -DbName "eP_BASES" -TableName "dbo.dgbarcode" -Where "db_barcode IS NOT NULL" -FetchRows { param($c, $o, $l) Get-BarcodeRows -Config $c -Offset $o -Limit $l }
+  }
+
+  if ($Config.bootstrapWholesaler -eq $true -or $Config.bootstrapWholesalers -eq $true) {
+    Queue-AgentTableSync -Config $Config -State $state -StateKey "wholesalerCompleted" -Kind "wholesaler" -TargetPath "/agent/wholesalers" -DbName "eP_BASES" -TableName "dbo.dealcorp" -Where "dcp_code IS NOT NULL" -FetchRows { param($c, $o, $l) Get-WholesalerRows -Config $c -Offset $o -Limit $l }
+  }
+
+  if ($Config.bootstrapPurchase -eq $true -or $Config.bootstrapPurchases -eq $true) {
+    Queue-AgentTableSync -Config $Config -State $state -StateKey "purchaseCompleted" -Kind "purchase" -TargetPath "/agent/purchases" -DbName "eP_PHARM" -TableName "dbo.tradedrug" -Where "TD_CODE IS NOT NULL" -FetchRows { param($c, $o, $l) Get-PurchaseRows -Config $c -Offset $o -Limit $l }
+  }
+
+  if ($false -and $Config.bootstrapStockProbe -eq $true -and $state.stockProbeCompleted -ne $true) {
     try {
       $report = @(Get-StockCandidateReport $Config)
       $data = [ordered]@{
@@ -531,9 +799,8 @@ function New-Payload {
     $qrText = $QrRow.ps_edbBarcode.ToString()
   }
 
-  $drugs = New-Object System.Collections.Generic.List[object]
-  $answers = New-Object System.Collections.Generic.List[object]
-  $decodedResults = New-Object System.Collections.Generic.List[object]
+  $items = New-Object System.Collections.Generic.List[object]
+  $psDate = if ($QrRow.ps_Date) { $QrRow.ps_Date.ToString() } else { "" }
 
   foreach ($drug in $DrugRows) {
     $lineNo = Convert-NullableInt $drug.pd_no
@@ -543,47 +810,33 @@ function New-Payload {
     $dailyFrequency = Convert-NullableInt $drug.pd_dnum
     $medicationDays = Convert-NullableInt $drug.pd_dday
     $totalQuantity = Convert-NullableDouble $drug.pd_amount
-    $drugId = "{0}-{1}" -f (Get-Sha256Hex $prescriptionCode).Substring(0, 12), $lineNo
 
-    $drugs.Add([ordered]@{
+    $items.Add([ordered]@{
+      prescriptionCode = $prescriptionCode
+      pd_code = $prescriptionCode
+      ps_code = $prescriptionCode
+      ps_dosdate = $psDate
       lineNo = $lineNo
+      pd_no = $lineNo
       insuranceCode = $insuranceCode
+      pd_iscode = $insuranceCode
       drugName = $drugName
+      drug_name = $drugName
       quantityPerDose = $quantityPerDose
+      pd_dose = $quantityPerDose
       dailyFrequency = $dailyFrequency
+      pd_dnum = $dailyFrequency
       medicationDays = $medicationDays
+      pd_dday = $medicationDays
       totalQuantity = $totalQuantity
-    })
-
-    $answers.Add([ordered]@{
-      id = $drugId
-      blockType = "EPHARM_PRSDRUG"
-      insuranceCode = $insuranceCode
-      drugName = $drugName
-      quantityPerDose = $quantityPerDose
-      dailyFrequency = $dailyFrequency
-      medicationDays = $medicationDays
-      totalQuantity = $totalQuantity
-      memo = "lineNo=$lineNo"
-    })
-
-    $decodedResults.Add([ordered]@{
-      id = $drugId
-      blockType = "EPHARM_PRSDRUG"
-      insuranceCode = $insuranceCode
-      dailyAmountEstimated = $quantityPerDose
-      medicationDays = $medicationDays
-      totalQuantityEstimated = $totalQuantity
-      confidence = 1
-      rawBlock = ""
-      decodeNote = "Structured from EPharm prsdrug"
+      pd_amount = $totalQuantity
     })
   }
 
   $identity = [ordered]@{
     source = "EPHARM_DB"
     prescriptionRefHash = Get-Sha256Hex $prescriptionCode
-    drugs = $drugs.ToArray()
+    drugs = $items.ToArray()
   }
   $identityJson = $identity | ConvertTo-Json -Depth 20 -Compress
   $eventId = Get-Sha256Hex $identityJson
@@ -592,40 +845,17 @@ function New-Payload {
   return [ordered]@{
     eventId = $eventId
     createdAt = $now
-    targetPath = "/samples"
+    targetPath = "/agent/prescriptions"
     attempts = 0
     nextAttemptAt = $now
     payload = [ordered]@{
-      decoderVersion = "pharmfarm-production-agent-v1"
-      prescriptionGroupId = "epharm-" + $eventId.Substring(0, 16)
-      prescriptionGroupLabel = "EPharm " + (Get-Date -Format "MM.dd HH:mm")
-      qrType = "EPHARM_DB"
-      rawQrText = $qrText
-      rawQrHash = if ($qrText) { Get-Sha256Hex $qrText } else { $eventId }
-      memo = "PharmFarm production agent / source=EPHARM_DB"
-      hospitalName = ""
-      patientLabel = ""
-      knownPlainText = ""
-      knownFields = @(
-        [ordered]@{
-          id = "prescriptionRefHash"
-          label = "Prescription reference hash"
-          type = "OTHER"
-          value = (Get-Sha256Hex $prescriptionCode)
-          memo = "Original prescription code is not transmitted."
-        }
-      )
-      rawLength = $qrText.Length
-      outerPayloadSize = 0
-      outerPayloadHex = ""
-      decodeStatus = "PENDING"
-      decodeMessage = "Structured EPharm prescription captured by production agent."
-      decodedText = ""
-      answers = $answers.ToArray()
-      decodedResults = $decodedResults.ToArray()
-      decodedAt = $now
-      createdAt = $now
-      updatedAt = $now
+      pharmacyId = Convert-NullableInt $Config.pharmacyId
+      deviceId = $Config.deviceId
+      deviceName = $Config.deviceName
+      agentVersion = "1.1.0-ps"
+      batchId = "prescription-$($eventId.Substring(0, 16))"
+      capturedAt = $now
+      items = $items.ToArray()
     }
   }
 }
@@ -637,6 +867,7 @@ function Save-QueueItem {
   $path = Join-Path $QueueDir ("{0}.json" -f $Envelope.eventId)
 
   if (Test-Path -LiteralPath $path) {
+    Write-AgentLog "queue duplicate event=$($Envelope.eventId) path=$path" "WARN"
     return $false
   }
 
@@ -671,6 +902,10 @@ function New-RequestHeaders {
     "X-PharmFarm-Device-Id" = $Config.deviceId
   }
 
+  if ($Config.pharmacyId) {
+    $headers["X-PharmFarm-Pharmacy-Id"] = $Config.pharmacyId.ToString()
+  }
+
   if (![string]::IsNullOrWhiteSpace($Config.agentSecret)) {
     $timestamp = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds().ToString()
     $nonce = [Guid]::NewGuid().ToString("N")
@@ -702,23 +937,33 @@ function Submit-Envelope {
   $json = $Envelope.payload | ConvertTo-Json -Depth 30 -Compress
   $body = [Text.Encoding]::UTF8.GetBytes($json)
   $headers = New-RequestHeaders -Config $Config -BodyText $json
+  $itemCount = if ($Envelope.payload.items) { $Envelope.payload.items.Count } else { 0 }
 
   try {
+    Write-AgentLog "submit start event=$($Envelope.eventId) url=$url bytes=$($body.Length) items=$itemCount pharmacyId=$($Config.pharmacyId)"
     [void](Invoke-RestMethod -Method Post -Uri $url -ContentType "application/json; charset=utf-8" -Headers $headers -Body $body -TimeoutSec 20)
     return @{ ok = $true; retry = $false; status = 200; message = "sent" }
   } catch {
     $statusCode = $null
+    $responseBody = Get-ResponseBodyFromException $_
+    $safeBody = Convert-LogText $responseBody
 
     if ($_.Exception.Response) {
       $statusCode = [int]$_.Exception.Response.StatusCode
     }
+
+    Write-AgentLog "submit failed event=$($Envelope.eventId) status=$statusCode error=$($_.Exception.Message) response=$safeBody" "WARN"
 
     if ($statusCode -eq 409) {
       return @{ ok = $true; retry = $false; status = 409; message = "duplicate" }
     }
 
     if ($statusCode -ge 400 -and $statusCode -lt 500) {
-      return @{ ok = $false; retry = $false; status = $statusCode; message = $_.Exception.Message }
+      $message = $_.Exception.Message
+      if (![string]::IsNullOrWhiteSpace($safeBody)) {
+        $message = "$message response=$safeBody"
+      }
+      return @{ ok = $false; retry = $false; status = $statusCode; message = $message }
     }
 
     return @{ ok = $false; retry = $true; status = $statusCode; message = $_.Exception.Message }
@@ -732,6 +977,10 @@ function Flush-Queue {
   Ensure-Directory $DeadDir
   $now = Get-Date
   $files = Get-QueueFiles
+
+  if ($files.Count -gt 0) {
+    Write-AgentLog "flush queue count=$($files.Count)"
+  }
 
   foreach ($file in $files) {
     $envelope = Read-JsonFile $file.FullName
@@ -790,6 +1039,7 @@ function Write-State {
     message = $Message
     apiBase = $Config.apiBase
     sqlServer = $Config.sqlServer
+    pharmacyId = $Config.pharmacyId
     deviceId = $Config.deviceId
     queueCount = $queueCount
     updatedAt = (Get-Date).ToUniversalTime().ToString("o")
@@ -803,6 +1053,16 @@ function Watch-Once {
 
   try {
     $rows = @(Convert-DataTableRows (Get-RecentPrescriptionRows $Config))
+    $latest = if ($rows.Count -gt 0) { $rows[0] } else { $null }
+    if ($null -ne $latest) {
+      $latestCode = if ($latest.ps_Code) { $latest.ps_Code.ToString() } else { "" }
+      $latestDate = if ($latest.ps_Date) { $latest.ps_Date.ToString() } else { "" }
+      $latestBarcodeLen = if ($latest.ps_edbBarcode) { $latest.ps_edbBarcode.ToString().Length } else { 0 }
+      $latestHash = if (![string]::IsNullOrWhiteSpace($latestCode)) { (Get-Sha256Hex $latestCode).Substring(0, 12) } else { "" }
+      Write-AgentLog "watch scan rows=$($rows.Count) initialized=$script:Initialized latestHash=$latestHash latestDate=$latestDate latestBarcodeLen=$latestBarcodeLen includeRawQr=$($Config.includeRawQrText)"
+    } else {
+      Write-AgentLog "watch scan rows=0 initialized=$script:Initialized includeRawQr=$($Config.includeRawQrText)" "WARN"
+    }
 
     if (!$script:Initialized) {
       foreach ($row in $rows) {
@@ -831,14 +1091,14 @@ function Watch-Once {
         continue
       }
 
-      $script:SeenHashes[$seenKey] = $true
       $drugRows = @(Convert-DataTableRows (Get-PrescriptionDrugs -Config $Config -PrescriptionCode $code))
 
       if ($drugRows.Count -eq 0) {
-        Write-AgentLog "skip prescription=$((Get-Sha256Hex $code).Substring(0, 12)) drugs=0" "WARN"
+        Write-AgentLog "pending prescription=$((Get-Sha256Hex $code).Substring(0, 12)) drugs=0 willRetry=true" "WARN"
         continue
       }
 
+      $script:SeenHashes[$seenKey] = $true
       $envelope = New-Payload -Config $Config -QrRow $row -DrugRows $drugRows
 
       if (Save-QueueItem $envelope) {
@@ -863,7 +1123,13 @@ try {
   $config = Get-Config
   $intervalSeconds = if ($config.intervalSeconds) { [int]$config.intervalSeconds } else { 10 }
 
-  Write-AgentLog "PharmFarm Agent started api=$($config.apiBase) sql=$($config.sqlServer) interval=${intervalSeconds}s"
+  if (!$config.pharmacyId) {
+    Write-AgentLog "missing pharmacyId in config. Re-run installer and enter CMS pharmacy ID." "ERROR"
+    Write-State -Config $config -Status "ERROR" -Message "missing pharmacyId"
+    exit 1
+  }
+
+  Write-AgentLog "PharmFarm Agent started api=$($config.apiBase) sql=$($config.sqlServer) interval=${intervalSeconds}s pharmacyId=$($config.pharmacyId) deviceId=$($config.deviceId) includeRawQr=$($config.includeRawQrText) secretConfigured=$(![string]::IsNullOrWhiteSpace($config.agentSecret))"
   Invoke-BootstrapSync $config
   Flush-Queue $config
 

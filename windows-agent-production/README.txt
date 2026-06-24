@@ -58,11 +58,12 @@ Recommended operation:
 
 1. Double-click install-pharmfarm-agent.bat.
 2. Keep the default API unless the server changes.
-3. Keep SQL Server as .\EPHARM_DB unless the pharmacy PC differs.
-4. Set a device alias that is easy to recognize in the web admin.
-5. Leave "Include raw QR text" unchecked for production.
-6. Finish setup.
-7. Check the web prescription list after scanning/registering a QR in EPharm.
+3. Enter the CMS pharmacy ID. This must match pharmfarm_pharmacy.id on the server.
+4. Keep SQL Server as .\EPHARM_DB unless the pharmacy PC differs.
+5. Set a device alias that is easy to recognize in the web admin.
+6. Leave "Include raw QR text" unchecked for production.
+7. Finish setup.
+8. Check the web prescription list after scanning/registering a QR in EPharm.
 
 If data does not arrive:
 
@@ -82,8 +83,8 @@ Tray icon:
 Bootstrap sync:
 
 - The installer can enable one-time drug master sync from eP_BASES.dbo.dgmast.
-- The installer can also send a stock candidate report. This report contains table/column metadata only, not stock row data.
-- Actual stock row migration must be enabled only after the exact EPharm stock table and safe columns are confirmed.
+- The installer can enable one-time stock/barcode/wholesaler sync from eP_PHARM.dbo.STOCK, eP_BASES.dbo.dgbarcode, and eP_BASES.dbo.dealcorp.
+- Purchase sync can be enabled by setting bootstrapPurchase=true in C:\ProgramData\PharmFarmAgent\agent.config.json.
 - Bootstrap data is queued first, then sent through the same retry mechanism.
 
 Debug CSV export:
