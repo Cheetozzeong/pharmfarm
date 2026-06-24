@@ -52,14 +52,14 @@ const nativeScannerZoomLevels = {
 } as const;
 
 type NativeScannerZoomMode = keyof typeof nativeScannerZoomLevels;
-type NativeScanCodeMode = "datamatrix" | "barcode";
+type NativeScanCodeMode = "qr" | "barcode";
 
 type NativeScannerLayout = {
   height: number;
   width: number;
 };
 
-const nativeDataMatrixBarcodeTypes: BarcodeType[] = ["datamatrix", "qr"];
+const nativeQrBarcodeTypes: BarcodeType[] = ["datamatrix", "qr"];
 const nativeOneDimensionalBarcodeTypes: BarcodeType[] = [
   "ean13",
   "ean8",
@@ -72,7 +72,7 @@ const nativeOneDimensionalBarcodeTypes: BarcodeType[] = [
   "codabar",
 ];
 const nativeSupportedBarcodeTypes = new Set<BarcodeType>([
-  ...nativeDataMatrixBarcodeTypes,
+  ...nativeQrBarcodeTypes,
   ...nativeOneDimensionalBarcodeTypes,
 ]);
 
@@ -80,7 +80,7 @@ function normalizeNativeBarcodeTypes(value: unknown, mode: NativeScanCodeMode) {
   if (!Array.isArray(value)) {
     return mode === "barcode"
       ? nativeOneDimensionalBarcodeTypes
-      : nativeDataMatrixBarcodeTypes;
+      : nativeQrBarcodeTypes;
   }
 
   const barcodeTypes = value.filter(
@@ -93,7 +93,7 @@ function normalizeNativeBarcodeTypes(value: unknown, mode: NativeScanCodeMode) {
 
   return mode === "barcode"
     ? nativeOneDimensionalBarcodeTypes
-    : nativeDataMatrixBarcodeTypes;
+    : nativeQrBarcodeTypes;
 }
 
 function normalizeScannerPoint(
@@ -199,10 +199,9 @@ export default function App() {
   const [nativeScannerMessage, setNativeScannerMessage] =
     useState("QR을 사각형 안에 맞춰주세요.");
   const [nativeScanCodeMode, setNativeScanCodeMode] =
-    useState<NativeScanCodeMode>("datamatrix");
-  const [nativeBarcodeTypes, setNativeBarcodeTypes] = useState<BarcodeType[]>(
-    nativeDataMatrixBarcodeTypes,
-  );
+    useState<NativeScanCodeMode>("qr");
+  const [nativeBarcodeTypes, setNativeBarcodeTypes] =
+    useState<BarcodeType[]>(nativeQrBarcodeTypes);
   const [nativeTorchOn, setNativeTorchOn] = useState(false);
   const [nativeZoomMode, setNativeZoomMode] =
     useState<NativeScannerZoomMode>("near");
@@ -348,7 +347,7 @@ export default function App() {
 
       if (item.action === "start") {
         const mode: NativeScanCodeMode =
-          item.scanCodeMode === "barcode" ? "barcode" : "datamatrix";
+          item.scanCodeMode === "barcode" ? "barcode" : "qr";
         setNativeScanCodeMode(mode);
         setNativeBarcodeTypes(
           normalizeNativeBarcodeTypes(item.barcodeTypes, mode),

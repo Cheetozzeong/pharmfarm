@@ -208,7 +208,7 @@ type ApiState =
   | "forbidden";
 type ScanPerformanceMode = "performance" | "quality";
 type ScannerEngine = "web" | "native";
-type ScanCodeMode = "datamatrix" | "barcode";
+type ScanCodeMode = "qr" | "barcode";
 type WebScannerReader =
   | BrowserDatamatrixCodeReader
   | BrowserMultiFormatOneDReader;
@@ -396,7 +396,7 @@ function storeScannerEngine(engine: ScannerEngine) {
 function getStoredScanCodeMode(): ScanCodeMode {
   return localStorage.getItem(storageKeys.scanCodeMode) === "barcode"
     ? "barcode"
-    : "datamatrix";
+    : "qr";
 }
 
 function storeScanCodeMode(mode: ScanCodeMode) {
@@ -404,7 +404,7 @@ function storeScanCodeMode(mode: ScanCodeMode) {
 }
 
 function scanCodeModeLabel(mode: ScanCodeMode) {
-  return mode === "barcode" ? "바코드" : "QR/DM";
+  return mode === "barcode" ? "바코드" : "QR";
 }
 
 function getNativeWindow() {
@@ -443,7 +443,7 @@ function getNativeBarcodeTypes(scanCodeMode: ScanCodeMode) {
 
 function postNativeScannerMessage(
   action: "start" | "stop",
-  scanCodeMode: ScanCodeMode = "datamatrix",
+  scanCodeMode: ScanCodeMode = "qr",
   attempt = 0,
 ) {
   const bridge = getReactNativeWebView();
@@ -3600,7 +3600,7 @@ function MobileApp() {
         setScanNotice(
           next === "barcode"
             ? "바코드 인식 모드로 전환했습니다. 가로 프레임 안에 바코드를 맞춰주세요."
-            : "QR/DM 인식 모드로 전환했습니다. 코드를 사각형 안에 맞춰주세요.",
+            : "QR 인식 모드로 전환했습니다. 코드를 사각형 안에 맞춰주세요.",
         );
         if (cameraActive) {
           setCameraRestartKey((value) => value + 1);
@@ -3833,7 +3833,7 @@ function MobileApp() {
           setScanNotice(
             scanCodeMode === "barcode"
               ? "카메라 초점과 줌을 최적화했습니다. 바코드를 가로 프레임 안에 맞춰주세요."
-              : "카메라 초점과 줌을 최적화했습니다. QR/DM을 사각형 안에 맞춰주세요.",
+              : "카메라 초점과 줌을 최적화했습니다. QR을 사각형 안에 맞춰주세요.",
           );
         }
 
@@ -4705,11 +4705,11 @@ function ScanScreen({
           aria-label="스캔 코드 종류"
         >
           <button
-            className={scanCodeMode === "datamatrix" ? "is-active" : ""}
+            className={scanCodeMode === "qr" ? "is-active" : ""}
             type="button"
-            onClick={() => onScanCodeMode("datamatrix")}
+            onClick={() => onScanCodeMode("qr")}
           >
-            QR/DM
+            QR
           </button>
           <button
             className={scanCodeMode === "barcode" ? "is-active" : ""}
@@ -4783,8 +4783,8 @@ function ScanScreen({
                 ? "바코드를 가로 프레임 안에 맞춰주세요"
                 : "반품할 약품의 바코드를 스캔하세요"
               : isReceipt
-                ? "QR/DM을 사각형 안에 맞춰주세요"
-                : "반품할 약품의 QR/DM을 스캔하세요"}
+                ? "QR을 사각형 안에 맞춰주세요"
+                : "반품할 약품의 QR을 스캔하세요"}
           </strong>
         </div>
         <div className="scan-result-stack">
