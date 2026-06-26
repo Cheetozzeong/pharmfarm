@@ -103,8 +103,13 @@ function Write-Config {
     bootstrapStock = $BootstrapStockProbe
     bootstrapBarcode = $BootstrapStockProbe
     bootstrapWholesaler = $BootstrapStockProbe
+    bootstrapControlledDrug = $BootstrapStockProbe
+    bootstrapDrugPrice = $BootstrapStockProbe
+    bootstrapDrugUnit = $BootstrapStockProbe
     bootstrapStockProbe = $false
     bootstrapChunkSize = 500
+    deltaSyncOnStart = $true
+    referenceSyncIntervalMinutes = 1440
     createdAt = (Get-Date).ToUniversalTime().ToString("o")
   }
 
@@ -212,7 +217,7 @@ $bootstrapDrugCheck.Checked = $true
 $card.Controls.Add($bootstrapDrugCheck)
 
 $bootstrapStockCheck = New-Object System.Windows.Forms.CheckBox
-$bootstrapStockCheck.Text = "현재 재고/바코드/도매처 1회 동기화"
+$bootstrapStockCheck.Text = "재고/바코드/도매처/가격/향정 정보 동기화"
 $bootstrapStockCheck.Location = New-Object System.Drawing.Point(22, 442)
 $bootstrapStockCheck.Size = New-Object System.Drawing.Size(310, 24)
 $bootstrapStockCheck.Font = New-Object System.Drawing.Font("Segoe UI", 9)

@@ -37,6 +37,7 @@ Runtime folders:
   sent        Successfully sent events
   dead-letter Payload errors that should not be retried
   logs        Daily log files
+  sync-state  Local row hashes used to send only changed reference rows
 
 Default SQL Server:
 
@@ -84,8 +85,25 @@ Bootstrap sync:
 
 - The installer can enable one-time drug master sync from eP_BASES.dbo.dgmast.
 - The installer can enable one-time stock/barcode/wholesaler sync from eP_PHARM.dbo.STOCK, eP_BASES.dbo.dgbarcode, and eP_BASES.dbo.dealcorp.
+- The same option also syncs controlled-drug candidates from eP_BASES.dbo.habitdrug, latest drug prices from eP_BASES.dbo.dgtrans, and unit/barcode price data from eP_BASES.dbo.dgunit.
 - Purchase sync can be enabled by setting bootstrapPurchase=true in C:\ProgramData\PharmFarmAgent\agent.config.json.
 - Bootstrap data is queued first, then sent through the same retry mechanism.
+- After the first run, the agent compares each row with C:\ProgramData\PharmFarmAgent\sync-state and queues only changed rows.
+- Reference data is rescanned on agent start and then every 24 hours while the agent stays running.
+- To force a full resend for one data type, delete the matching *.hashes.json file in sync-state and restart the agent.
+
+Server tables added for reference sync:
+
+  pharmfarm_agent_controlled_drug
+  pharmfarm_agent_drug_price
+  pharmfarm_agent_drug_unit
+
+Server progress check:
+
+  select payload_type, count(*), sum(row_count)
+  from pharmfarm_agent_ingest_event
+  where pharmacy_id = 3
+  group by payload_type;
 
 Debug CSV export:
 
