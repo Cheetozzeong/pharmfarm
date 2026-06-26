@@ -20,6 +20,9 @@ import {
 } from "lucide-react";
 import pharmfarmLogo from "../logo_1.png";
 
+const APP_BUILD_TIME = __APP_BUILD_TIME__;
+const APP_COMMIT_SHA = __APP_COMMIT_SHA__;
+
 type Screen =
   | "scan"
   | "wholesaler"
@@ -6339,12 +6342,31 @@ function App() {
 }
 
 function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
+  const buildDate = new Date(APP_BUILD_TIME);
+  const buildTimeLabel = Number.isNaN(buildDate.getTime())
+    ? APP_BUILD_TIME
+    : new Intl.DateTimeFormat("ko-KR", {
+        timeZone: "Asia/Seoul",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }).format(buildDate);
+  const commitLabel = APP_COMMIT_SHA ? APP_COMMIT_SHA.slice(0, 7) : "local";
+
   return (
     <main className="agent-download-page">
       <section className="agent-download-hero">
         <div className="agent-brand-row">
           <img src={pharmfarmLogo} alt="PharmFarm" />
           <span>PharmFarm</span>
+        </div>
+        <div className="agent-build-badge" aria-label="배포 버전 정보">
+          <span>최근 업데이트 {buildTimeLabel}</span>
+          <span>build {commitLabel}</span>
         </div>
         <p className="agent-eyebrow">Windows Production Agent</p>
         <h1>약국 PC에 설치하는 처방 수집 에이전트</h1>
