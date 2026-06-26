@@ -506,14 +506,9 @@ SELECT $topClause
   CONVERT(NVARCHAR(80), DM_DAREGNO) AS dareRegistrationNo,
   CONVERT(NVARCHAR(40), DM_GODANG) AS godangCode,
   CONVERT(NVARCHAR(40), dm_applydate) AS appliedDate,
-  CASE
-    WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(80), DM_DAREGNO))), '') IS NOT NULL THEN 'true'
-    WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(40), DM_GODANG))), '') IS NOT NULL THEN 'true'
-    WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(500), DM_WARRINGMEMO))), '') IS NOT NULL THEN 'true'
-    WHEN ISNULL(CONVERT(NVARCHAR(40), dm_extype), '') <> '' AND CONVERT(NVARCHAR(40), dm_extype) <> '0' THEN 'true'
-    ELSE 'false'
-  END AS agentControlledCandidate,
+  'true' AS agentControlledCandidate,
   LTRIM(RTRIM(
+    N'PDF_REFERENCE ' +
     CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(80), DM_DAREGNO))), '') IS NOT NULL THEN 'DM_DAREGNO ' ELSE '' END +
     CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(40), DM_GODANG))), '') IS NOT NULL THEN 'DM_GODANG ' ELSE '' END +
     CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(500), DM_WARRINGMEMO))), '') IS NOT NULL THEN 'DM_WARRINGMEMO ' ELSE '' END +
@@ -589,8 +584,10 @@ $summary = @(
   "reference.dgmastControlledCandidate=$candidateCount",
   "",
   "Current agent criteria:",
-  "- Direct controlled source: eP_BASES.dbo.habitdrug where hd_iscode is not null.",
-  "- Master candidate source: eP_BASES.dbo.dgmast where dm_iscode is not null and one or more of DM_DAREGNO, DM_GODANG, DM_WARRINGMEMO is non-empty, or dm_extype is non-empty and not 0.",
+  "- Primary source: controlled-drug-reference.csv extracted from 약품기본정보.pdf.",
+  "- Direct source match: eP_BASES.dbo.habitdrug where hd_iscode/HD_STORE matches PDF drugCode.",
+  "- Master source match: eP_BASES.dbo.dgmast where dm_iscode/dm_drugcode matches PDF drugCode or componentCode.",
+  "- DM_DAREGNO, DM_GODANG, DM_WARRINGMEMO, and dm_extype are exported as DB evidence only; they are not the primary inclusion rule.",
   "- dgtrans is exported for context only; current controlled-drug candidate logic does not use dgtrans.",
   "",
   "Files:",

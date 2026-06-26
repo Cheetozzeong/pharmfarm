@@ -17,9 +17,11 @@ $DeadDir = Join-Path $InstallRoot "dead-letter"
 $LogDir = Join-Path $InstallRoot "logs"
 $StateFile = Join-Path $InstallRoot "agent.state.json"
 $BootstrapStateFile = Join-Path $InstallRoot "bootstrap.state.json"
+$ControlledDrugReferenceFile = Join-Path $InstallRoot "controlled-drug-reference.csv"
 $SyncStateDir = Join-Path $InstallRoot "sync-state"
 $LogFile = Join-Path $LogDir ("agent-{0}.log" -f (Get-Date -Format "yyyyMMdd"))
 $SeenHashes = @{}
+$ControlledDrugReferenceCache = $null
 $Initialized = $false
 $LastReferenceSyncAt = $null
 
@@ -307,6 +309,124 @@ function Quote-SqlLiteral {
   return "N'" + $Value.Replace("'", "''") + "'"
 }
 
+function Convert-AgentText {
+  param($Value)
+
+  if ($null -eq $Value -or $Value -is [DBNull]) {
+    return ""
+  }
+
+  return $Value.ToString().Trim()
+}
+
+function Get-ControlledDrugReferencePath {
+  param([object]$Config)
+
+  if ($null -ne $Config -and $null -ne $Config.PSObject.Properties["controlledDrugReferenceCsv"]) {
+    $configuredPath = Convert-AgentText $Config.controlledDrugReferenceCsv
+    if (![string]::IsNullOrWhiteSpace($configuredPath) -and (Test-Path -LiteralPath $configuredPath)) {
+      return $configuredPath
+    }
+  }
+
+  if (Test-Path -LiteralPath $ControlledDrugReferenceFile) {
+    return $ControlledDrugReferenceFile
+  }
+
+  return ""
+}
+
+function Get-ControlledDrugReferenceRows {
+  param([object]$Config)
+
+  if ($null -ne $script:ControlledDrugReferenceCache) {
+    return $script:ControlledDrugReferenceCache
+  }
+
+  $path = Get-ControlledDrugReferencePath $Config
+  if ([string]::IsNullOrWhiteSpace($path)) {
+    Write-AgentLog "controlled-drug PDF reference CSV missing; controlled-drug sync will be skipped" "WARN"
+    $script:ControlledDrugReferenceCache = @()
+    return $script:ControlledDrugReferenceCache
+  }
+
+  try {
+    $rows = @(Import-Csv -LiteralPath $path -Encoding UTF8)
+    $script:ControlledDrugReferenceCache = @($rows | Where-Object {
+      ![string]::IsNullOrWhiteSpace((Convert-AgentText $_.drugCode))
+    })
+    Write-AgentLog "controlled-drug PDF reference loaded rows=$($script:ControlledDrugReferenceCache.Count) path=$path"
+    return $script:ControlledDrugReferenceCache
+  } catch {
+    Write-AgentLog "controlled-drug PDF reference load failed path=$path error=$($_.Exception.Message)" "ERROR"
+    $script:ControlledDrugReferenceCache = @()
+    return $script:ControlledDrugReferenceCache
+  }
+}
+
+function Get-ControlledDrugReferenceCodes {
+  param(
+    [object]$Config,
+    [bool]$IncludeComponentCode = $false
+  )
+
+  $seen = @{}
+  $codes = New-Object System.Collections.Generic.List[string]
+
+  foreach ($row in @(Get-ControlledDrugReferenceRows $Config)) {
+    $candidateCodes = @($row.drugCode)
+    if ($IncludeComponentCode) {
+      $candidateCodes += $row.componentCode
+    }
+
+    foreach ($candidate in $candidateCodes) {
+      $code = Convert-AgentText $candidate
+      if ([string]::IsNullOrWhiteSpace($code) -or $seen.ContainsKey($code)) {
+        continue
+      }
+
+      $seen[$code] = $true
+      [void]$codes.Add($code)
+    }
+  }
+
+  return $codes.ToArray()
+}
+
+function New-SqlInCondition {
+  param(
+    [string[]]$Columns,
+    [string[]]$Codes
+  )
+
+  if ($Codes.Count -eq 0) {
+    return "1=0"
+  }
+
+  $literals = ($Codes | ForEach-Object { Quote-SqlLiteral $_ }) -join ","
+  $conditions = foreach ($column in $Columns) {
+    "LTRIM(RTRIM(CONVERT(NVARCHAR(120), $column))) IN ($literals)"
+  }
+
+  return "(" + ($conditions -join " OR ") + ")"
+}
+
+function New-ControlledDrugReferenceCondition {
+  param(
+    [object]$Config,
+    [ValidateSet("habitdrug", "dgmast")]
+    [string]$Source
+  )
+
+  if ($Source -eq "habitdrug") {
+    $codes = @(Get-ControlledDrugReferenceCodes -Config $Config -IncludeComponentCode $false)
+    return New-SqlInCondition -Columns @("hd_iscode", "HD_STORE") -Codes $codes
+  }
+
+  $codes = @(Get-ControlledDrugReferenceCodes -Config $Config -IncludeComponentCode $true)
+  return New-SqlInCondition -Columns @("dm_iscode", "dm_drugcode") -Codes $codes
+}
+
 function Get-DataRowValue {
   param(
     [System.Data.DataRow]$Row,
@@ -394,6 +514,7 @@ function Get-DrugMasterRows {
   )
 
   $end = $Offset + $Limit
+  $pdfCondition = New-ControlledDrugReferenceCondition -Config $Config -Source "dgmast"
   $query = @"
 SELECT
   q.insuranceCode,
@@ -421,18 +542,16 @@ FROM (
     CONVERT(NVARCHAR(80), DM_DAREGNO) AS dareRegistrationNo,
     CONVERT(NVARCHAR(40), DM_GODANG) AS godangCode,
     CASE
-      WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(80), DM_DAREGNO))), '') IS NOT NULL THEN 'true'
-      WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(40), DM_GODANG))), '') IS NOT NULL THEN 'true'
-      WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(500), DM_WARRINGMEMO))), '') IS NOT NULL THEN 'true'
-      WHEN ISNULL(CONVERT(NVARCHAR(40), dm_extype), '') <> '' AND CONVERT(NVARCHAR(40), dm_extype) <> '0' THEN 'true'
+      WHEN $pdfCondition THEN 'true'
       ELSE 'false'
     END AS controlledCandidate,
-    LTRIM(RTRIM(
-      CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(80), DM_DAREGNO))), '') IS NOT NULL THEN 'DM_DAREGNO ' ELSE '' END +
-      CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(40), DM_GODANG))), '') IS NOT NULL THEN 'DM_GODANG ' ELSE '' END +
-      CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(500), DM_WARRINGMEMO))), '') IS NOT NULL THEN 'DM_WARRINGMEMO ' ELSE '' END +
-      CASE WHEN ISNULL(CONVERT(NVARCHAR(40), dm_extype), '') <> '' AND CONVERT(NVARCHAR(40), dm_extype) <> '0' THEN 'dm_extype ' ELSE '' END
-    )) AS controlledCandidateSource,
+    CASE WHEN $pdfCondition THEN LTRIM(RTRIM(
+        'PDF_REFERENCE ' +
+        CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(80), DM_DAREGNO))), '') IS NOT NULL THEN 'DM_DAREGNO ' ELSE '' END +
+        CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(40), DM_GODANG))), '') IS NOT NULL THEN 'DM_GODANG ' ELSE '' END +
+        CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(500), DM_WARRINGMEMO))), '') IS NOT NULL THEN 'DM_WARRINGMEMO ' ELSE '' END +
+        CASE WHEN ISNULL(CONVERT(NVARCHAR(40), dm_extype), '') <> '' AND CONVERT(NVARCHAR(40), dm_extype) <> '0' THEN 'dm_extype ' ELSE '' END
+      )) ELSE '' END AS controlledCandidateSource,
     ROW_NUMBER() OVER (ORDER BY dm_iscode) AS row_num
   FROM dbo.dgmast WITH (NOLOCK)
   WHERE dm_iscode IS NOT NULL
@@ -646,6 +765,7 @@ function Get-ControlledDrugRows {
   )
 
   $end = $Offset + $Limit
+  $referenceCondition = New-ControlledDrugReferenceCondition -Config $Config -Source "habitdrug"
   $query = @"
 SELECT
   q.insuranceCode,
@@ -679,6 +799,7 @@ FROM (
     ROW_NUMBER() OVER (ORDER BY hd_iscode, hd_group, hd_no, hd_kind) AS row_num
   FROM dbo.habitdrug WITH (NOLOCK)
   WHERE hd_iscode IS NOT NULL
+    AND $referenceCondition
 ) q
 WHERE q.row_num > $Offset
   AND q.row_num <= $end
@@ -686,6 +807,28 @@ ORDER BY q.row_num
 "@
 
   return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 20
+}
+
+function Get-ControlledDrugReferenceCount {
+  param([object]$Config)
+
+  $referenceCondition = New-ControlledDrugReferenceCondition -Config $Config -Source "habitdrug"
+  $query = @"
+SELECT COUNT(1) AS row_count
+FROM dbo.habitdrug WITH (NOLOCK)
+WHERE hd_iscode IS NOT NULL
+  AND $referenceCondition
+"@
+  $table = Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 20
+
+  foreach ($row in $table.Rows) {
+    $value = Get-DataRowValue $row "row_count"
+    if ($null -ne $value) {
+      return [int]$value
+    }
+  }
+
+  return 0
 }
 
 function Get-ControlledDrugMasterCandidateRows {
@@ -696,6 +839,7 @@ function Get-ControlledDrugMasterCandidateRows {
   )
 
   $end = $Offset + $Limit
+  $referenceCondition = New-ControlledDrugReferenceCondition -Config $Config -Source "dgmast"
   $query = @"
 SELECT
   q.insuranceCode,
@@ -744,6 +888,7 @@ FROM (
     CONVERT(NVARCHAR(40), DM_GODANG) AS godangCode,
     CONVERT(NVARCHAR(80), dm_drugcode) AS drugCode,
     LTRIM(RTRIM(
+      N'PDF_REFERENCE ' +
       CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(80), DM_DAREGNO))), '') IS NOT NULL THEN 'DM_DAREGNO ' ELSE '' END +
       CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(40), DM_GODANG))), '') IS NOT NULL THEN 'DM_GODANG ' ELSE '' END +
       CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(500), DM_WARRINGMEMO))), '') IS NOT NULL THEN 'DM_WARRINGMEMO ' ELSE '' END +
@@ -752,12 +897,7 @@ FROM (
     ROW_NUMBER() OVER (ORDER BY dm_iscode) AS row_num
   FROM dbo.dgmast WITH (NOLOCK)
   WHERE dm_iscode IS NOT NULL
-    AND (
-      NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(80), DM_DAREGNO))), '') IS NOT NULL
-      OR NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(40), DM_GODANG))), '') IS NOT NULL
-      OR NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(500), DM_WARRINGMEMO))), '') IS NOT NULL
-      OR (ISNULL(CONVERT(NVARCHAR(40), dm_extype), '') <> '' AND CONVERT(NVARCHAR(40), dm_extype) <> '0')
-    )
+    AND $referenceCondition
 ) q
 WHERE q.row_num > $Offset
   AND q.row_num <= $end
@@ -770,16 +910,12 @@ ORDER BY q.row_num
 function Get-ControlledDrugMasterCandidateCount {
   param([object]$Config)
 
+  $referenceCondition = New-ControlledDrugReferenceCondition -Config $Config -Source "dgmast"
   $query = @"
 SELECT COUNT(1) AS row_count
 FROM dbo.dgmast WITH (NOLOCK)
 WHERE dm_iscode IS NOT NULL
-  AND (
-    NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(80), DM_DAREGNO))), '') IS NOT NULL
-    OR NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(40), DM_GODANG))), '') IS NOT NULL
-    OR NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(500), DM_WARRINGMEMO))), '') IS NOT NULL
-    OR (ISNULL(CONVERT(NVARCHAR(40), dm_extype), '') <> '' AND CONVERT(NVARCHAR(40), dm_extype) <> '0')
-  )
+  AND $referenceCondition
 "@
   $table = Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 20
 
@@ -1179,7 +1315,7 @@ function Invoke-BootstrapSync {
   }
 
   if ($Config.bootstrapControlledDrug -eq $true -or $Config.bootstrapControlledDrugs -eq $true) {
-    Queue-AgentTableSync -Config $Config -State $state -StateKey "controlledDrugCompleted" -Kind "controlled-drug" -TargetPath "/agent/controlled-drugs" -DbName "eP_BASES" -TableName "dbo.habitdrug" -Where "hd_iscode IS NOT NULL" -FetchRows { param($c, $o, $l) Get-ControlledDrugRows -Config $c -Offset $o -Limit $l }
+    Queue-AgentTableSync -Config $Config -State $state -StateKey "controlledDrugCompleted" -Kind "controlled-drug" -TargetPath "/agent/controlled-drugs" -DbName "eP_BASES" -TableName "dbo.habitdrug" -Where "hd_iscode IS NOT NULL" -FetchRows { param($c, $o, $l) Get-ControlledDrugRows -Config $c -Offset $o -Limit $l } -CountRows { param($c) Get-ControlledDrugReferenceCount -Config $c }
     Queue-AgentTableSync -Config $Config -State $state -StateKey "controlledDrugMasterCompleted" -Kind "controlled-drug-master" -TargetPath "/agent/controlled-drugs" -DbName "eP_BASES" -TableName "dbo.dgmast" -Where "dm_iscode IS NOT NULL" -FetchRows { param($c, $o, $l) Get-ControlledDrugMasterCandidateRows -Config $c -Offset $o -Limit $l } -CountRows { param($c) Get-ControlledDrugMasterCandidateCount -Config $c }
   }
 
