@@ -94,6 +94,7 @@ function Write-Config {
     [bool]$BootstrapStock,
     [bool]$BootstrapBarcode,
     [bool]$BootstrapWholesaler,
+    [bool]$BootstrapPurchase,
     [bool]$BootstrapControlledDrug,
     [bool]$BootstrapDrugPrice,
     [bool]$BootstrapDrugUnit,
@@ -128,6 +129,7 @@ function Write-Config {
     bootstrapStock = $BootstrapStock
     bootstrapBarcode = $BootstrapBarcode
     bootstrapWholesaler = $BootstrapWholesaler
+    bootstrapPurchase = $BootstrapPurchase
     bootstrapControlledDrug = $BootstrapControlledDrug
     bootstrapDrugPrice = $BootstrapDrugPrice
     bootstrapDrugUnit = $BootstrapDrugUnit
@@ -226,50 +228,53 @@ $card.Controls.Add($intervalLabel)
 $intervalBox = New-TextBox "10" 340 374 60
 $card.Controls.Add($intervalBox)
 
-$bootstrapDrugCheck = New-CheckBox "설치 시 약품 마스터 1회 동기화" 22 414 250 $true ([System.Drawing.Color]::FromArgb(32, 35, 29))
-$card.Controls.Add($bootstrapDrugCheck)
-
-$bootstrapReferenceAllCheck = New-CheckBox "설치 시 참조 데이터 전체 동기화" 22 442 270 $false
+$bootstrapReferenceAllCheck = New-CheckBox "설치 시 초기 데이터 전체 동기화" 22 414 270 $false
 $card.Controls.Add($bootstrapReferenceAllCheck)
 
 $toggleReferenceDetailButton = New-Object System.Windows.Forms.Button
 $toggleReferenceDetailButton.Text = "펼치기"
-$toggleReferenceDetailButton.Location = New-Object System.Drawing.Point(430, 438)
+$toggleReferenceDetailButton.Location = New-Object System.Drawing.Point(430, 410)
 $toggleReferenceDetailButton.Size = New-Object System.Drawing.Size(84, 28)
 $toggleReferenceDetailButton.FlatStyle = "Flat"
 $toggleReferenceDetailButton.Font = New-Object System.Drawing.Font("Segoe UI", 8, [System.Drawing.FontStyle]::Bold)
 $card.Controls.Add($toggleReferenceDetailButton)
 
 $referenceDetailPanel = New-Object System.Windows.Forms.Panel
-$referenceDetailPanel.Location = New-Object System.Drawing.Point(36, 472)
-$referenceDetailPanel.Size = New-Object System.Drawing.Size(478, 70)
+$referenceDetailPanel.Location = New-Object System.Drawing.Point(36, 444)
+$referenceDetailPanel.Size = New-Object System.Drawing.Size(478, 78)
 $referenceDetailPanel.Visible = $false
 $card.Controls.Add($referenceDetailPanel)
 
-$bootstrapStockCheck = New-CheckBox "재고" 0 0 92 $false
-$bootstrapBarcodeCheck = New-CheckBox "바코드" 98 0 92 $false
-$bootstrapWholesalerCheck = New-CheckBox "도매처" 196 0 92 $false
-$bootstrapControlledDrugCheck = New-CheckBox "향정 후보" 294 0 100 $false
-$bootstrapDrugPriceCheck = New-CheckBox "가격" 0 34 92 $false
-$bootstrapDrugUnitCheck = New-CheckBox "단위/포장" 98 34 120 $false
+$bootstrapDrugCheck = New-CheckBox "약품 마스터" 0 0 112 $false ([System.Drawing.Color]::FromArgb(32, 35, 29))
+$bootstrapStockCheck = New-CheckBox "재고" 118 0 82 $false
+$bootstrapBarcodeCheck = New-CheckBox "바코드" 206 0 88 $false
+$bootstrapWholesalerCheck = New-CheckBox "도매처" 300 0 90 $false
+$bootstrapControlledDrugCheck = New-CheckBox "향정 후보" 0 34 100 $false
+$bootstrapDrugPriceCheck = New-CheckBox "가격" 106 34 72 $false
+$bootstrapDrugUnitCheck = New-CheckBox "단위/포장" 184 34 104 $false
+$bootstrapPurchaseCheck = New-CheckBox "매입내역" 294 34 100 $false
 
 @(
+  $bootstrapDrugCheck,
   $bootstrapStockCheck,
   $bootstrapBarcodeCheck,
   $bootstrapWholesalerCheck,
   $bootstrapControlledDrugCheck,
   $bootstrapDrugPriceCheck,
-  $bootstrapDrugUnitCheck
+  $bootstrapDrugUnitCheck,
+  $bootstrapPurchaseCheck
 ) | ForEach-Object { $referenceDetailPanel.Controls.Add($_) }
 
 $script:UpdatingReferenceChecks = $false
 $referenceChildren = @(
+  $bootstrapDrugCheck,
   $bootstrapStockCheck,
   $bootstrapBarcodeCheck,
   $bootstrapWholesalerCheck,
   $bootstrapControlledDrugCheck,
   $bootstrapDrugPriceCheck,
-  $bootstrapDrugUnitCheck
+  $bootstrapDrugUnitCheck,
+  $bootstrapPurchaseCheck
 )
 
 $bootstrapReferenceAllCheck.Add_CheckedChanged({
@@ -307,7 +312,7 @@ $toggleReferenceDetailButton.Add_Click({
 })
 
 
-$notice = New-Label "기본값은 QR 원문을 서버로 보내지 않습니다. 처방/재고/마스터 데이터는 약국 ID 기준으로 연결됩니다." 38 696 540 26
+$notice = New-Label "초기 데이터 동기화는 필요한 항목만 선택하세요. QR 원문은 기본적으로 서버로 보내지 않습니다." 38 696 540 26
 $notice.ForeColor = [System.Drawing.Color]::FromArgb(47, 122, 77)
 $form.Controls.Add($notice)
 
@@ -368,6 +373,7 @@ $installButton.Add_Click({
       BootstrapStock = $bootstrapStockCheck.Checked
       BootstrapBarcode = $bootstrapBarcodeCheck.Checked
       BootstrapWholesaler = $bootstrapWholesalerCheck.Checked
+      BootstrapPurchase = $bootstrapPurchaseCheck.Checked
       BootstrapControlledDrug = $bootstrapControlledDrugCheck.Checked
       BootstrapDrugPrice = $bootstrapDrugPriceCheck.Checked
       BootstrapDrugUnit = $bootstrapDrugUnitCheck.Checked

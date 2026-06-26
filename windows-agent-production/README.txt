@@ -85,10 +85,13 @@ Tray icon:
 
 Bootstrap sync:
 
-- The installer can enable one-time drug master sync from eP_BASES.dbo.dgmast.
-- The installer can enable all reference syncs at once, or expand the detail panel and choose stock, barcode, wholesaler, controlled-drug candidates, drug prices, and unit/barcode price data separately.
+- Initial data sync options are all unchecked by default.
+- The installer can enable all initial syncs at once, or expand the detail panel and choose each heavy sync separately.
+- Detail options: drug master, stock, barcode, wholesaler, controlled-drug candidates, drug prices, unit/barcode price data, and purchase history.
+- Drug master sync reads eP_BASES.dbo.dgmast only when the drug master detail option is selected.
+- Barcode sync reads eP_BASES.dbo.dgbarcode only when the barcode detail option is selected.
 - Controlled-drug candidate sync reads eP_BASES.dbo.habitdrug and candidate flags from eP_BASES.dbo.dgmast only when the controlled-drug detail option is selected.
-- Purchase sync can be enabled by setting bootstrapPurchase=true in C:\ProgramData\PharmFarmAgent\agent.config.json.
+- Purchase sync reads eP_PHARM.dbo.tradedrug only when the purchase history detail option is selected.
 - Bootstrap data is queued first, then sent through the same retry mechanism.
 - After the first run, the agent compares each row with C:\ProgramData\PharmFarmAgent\sync-state and queues only changed rows.
 - Reference data is rescanned on agent start and then every 24 hours while the agent stays running.
