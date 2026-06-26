@@ -11,6 +11,8 @@ $LogDir = Join-Path $InstallRoot "logs"
 $QueueDir = Join-Path $InstallRoot "queue"
 $SentDir = Join-Path $InstallRoot "sent"
 $DeadDir = Join-Path $InstallRoot "dead-letter"
+$BootstrapStateFile = Join-Path $InstallRoot "bootstrap.state.json"
+$SyncStateDir = Join-Path $InstallRoot "sync-state"
 
 function Ensure-Directory {
   param([string]$Path)
@@ -28,6 +30,24 @@ function Read-State {
     return Get-Content -LiteralPath $StateFile -Raw -Encoding UTF8 | ConvertFrom-Json
   } catch {
     return $null
+  }
+}
+
+function Write-JsonFile {
+  param(
+    [string]$Path,
+    [object]$Value,
+    [int]$Depth = 8
+  )
+
+  try {
+    $json = $Value | ConvertTo-Json -Depth $Depth
+    $tmp = "$Path.tmp"
+    Set-Content -LiteralPath $tmp -Value $json -Encoding UTF8
+    Move-Item -LiteralPath $tmp -Destination $Path -Force
+    return $true
+  } catch {
+    return $false
   }
 }
 
@@ -69,6 +89,95 @@ function Stop-AgentTask {
     Show-Balloon "PharmFarm" "에이전트 중지를 요청했습니다."
   } catch {
     Show-Balloon "PharmFarm" "에이전트를 중지하지 못했습니다."
+  }
+}
+
+function Reset-BootstrapFlags {
+  param([string[]]$Keys)
+
+  $state = $null
+  if (Test-Path -LiteralPath $BootstrapStateFile) {
+    try {
+      $state = Get-Content -LiteralPath $BootstrapStateFile -Raw -Encoding UTF8 | ConvertFrom-Json
+    } catch {
+      $state = $null
+    }
+  }
+
+  if ($null -eq $state) {
+    $state = [pscustomobject][ordered]@{}
+  }
+
+  foreach ($key in $Keys) {
+    if ($null -eq $state.PSObject.Properties[$key]) {
+      $state | Add-Member -NotePropertyName $key -NotePropertyValue $false
+    } else {
+      $state.$key = $false
+    }
+  }
+
+  if ($null -eq $state.PSObject.Properties["manualSyncRequestedAt"]) {
+    $state | Add-Member -NotePropertyName "manualSyncRequestedAt" -NotePropertyValue ([DateTimeOffset]::Now.ToString("o"))
+  } else {
+    $state.manualSyncRequestedAt = [DateTimeOffset]::Now.ToString("o")
+  }
+
+  [void](Write-JsonFile -Path $BootstrapStateFile -Value $state -Depth 8)
+}
+
+function Remove-SyncHash {
+  param([string]$Kind)
+
+  $path = Join-Path $SyncStateDir ("{0}.hashes.json" -f $Kind)
+  if (Test-Path -LiteralPath $path) {
+    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Restart-AgentTask {
+  try {
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 700
+    Start-ScheduledTask -TaskName $TaskName
+    return $true
+  } catch {
+    return $false
+  }
+}
+
+function Request-ReferenceResync {
+  Ensure-Directory $SyncStateDir
+  Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  Start-Sleep -Milliseconds 700
+
+  foreach ($kind in @("drug-master", "stock", "barcode", "wholesaler", "controlled-drug", "controlled-drug-master", "drug-price", "drug-unit")) {
+    Remove-SyncHash $kind
+  }
+
+  if (Test-Path -LiteralPath $BootstrapStateFile) {
+    Remove-Item -LiteralPath $BootstrapStateFile -Force -ErrorAction SilentlyContinue
+  }
+
+  if (Restart-AgentTask) {
+    Show-Balloon "PharmFarm" "참조 데이터 전체 재동기화를 시작했습니다."
+  } else {
+    Show-Balloon "PharmFarm" "재동기화 시작에 실패했습니다."
+  }
+}
+
+function Request-ControlledDrugResync {
+  Ensure-Directory $SyncStateDir
+  Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+  Start-Sleep -Milliseconds 700
+
+  Remove-SyncHash "controlled-drug"
+  Remove-SyncHash "controlled-drug-master"
+  Reset-BootstrapFlags @("controlledDrugCompleted", "controlledDrugMasterCompleted")
+
+  if (Restart-AgentTask) {
+    Show-Balloon "PharmFarm" "향정 후보 재동기화를 시작했습니다."
+  } else {
+    Show-Balloon "PharmFarm" "향정 후보 재동기화 시작에 실패했습니다."
   }
 }
 
@@ -155,6 +264,28 @@ $openQueueItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $openQueueItem.Text = "전송 대기 큐 열기"
 $openQueueItem.Add_Click({ Open-Folder $QueueDir })
 $menu.Items.Add($openQueueItem) | Out-Null
+$menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) | Out-Null
+
+$resyncControlledItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$resyncControlledItem.Text = "향정 후보 다시 동기화"
+$resyncControlledItem.Add_Click({
+  Request-ControlledDrugResync
+  Start-Sleep -Milliseconds 500
+  Update-TrayStatus
+})
+$menu.Items.Add($resyncControlledItem) | Out-Null
+
+$resyncReferenceItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$resyncReferenceItem.Text = "참조 데이터 전체 다시 동기화"
+$resyncReferenceItem.Add_Click({
+  $answer = [System.Windows.Forms.MessageBox]::Show("약품 마스터, 재고, 바코드, 가격, 단위, 향정 후보를 다시 검사합니다.`r`n데이터가 많으면 시간이 걸릴 수 있습니다.", "PharmFarm Agent", "OKCancel", "Information")
+  if ($answer -eq [System.Windows.Forms.DialogResult]::OK) {
+    Request-ReferenceResync
+    Start-Sleep -Milliseconds 500
+    Update-TrayStatus
+  }
+})
+$menu.Items.Add($resyncReferenceItem) | Out-Null
 $menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) | Out-Null
 
 $startItem = New-Object System.Windows.Forms.ToolStripMenuItem

@@ -103,7 +103,7 @@ function Write-Config {
     bootstrapStock = $BootstrapStockProbe
     bootstrapBarcode = $BootstrapStockProbe
     bootstrapWholesaler = $BootstrapStockProbe
-    bootstrapControlledDrug = $BootstrapStockProbe
+    bootstrapControlledDrug = ($BootstrapStockProbe -or $BootstrapDrugMaster)
     bootstrapDrugPrice = $BootstrapStockProbe
     bootstrapDrugUnit = $BootstrapStockProbe
     bootstrapStockProbe = $false

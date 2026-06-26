@@ -203,6 +203,7 @@ function Get-RowKey {
     "wholesaler" { return "$($Row.externalCode)" }
     "purchase" { return "$($Row.tradeCode)|$($Row.lineNo)" }
     "controlled-drug" { return "$($Row.insuranceCode)|$($Row.habitGroup)|$($Row.habitNo)|$($Row.habitKind)" }
+    "controlled-drug-master" { return "$($Row.insuranceCode)|$($Row.habitGroup)|$($Row.habitNo)|$($Row.habitKind)" }
     "drug-price" { return "$($Row.insuranceCode)|$($Row.dueDate)" }
     "drug-unit" { return "$($Row.insuranceCode)|$($Row.unitNo)|$($Row.barcode)" }
     default {
@@ -400,7 +401,13 @@ SELECT
   q.stockNo,
   q.drugCode,
   q.stockViewUnit,
-  q.stockViewQty
+  q.stockViewQty,
+  q.exceptionType,
+  q.warningMemo,
+  q.dareRegistrationNo,
+  q.godangCode,
+  q.controlledCandidate,
+  q.controlledCandidateSource
 FROM (
   SELECT
     CONVERT(NVARCHAR(80), dm_iscode) AS insuranceCode,
@@ -409,6 +416,23 @@ FROM (
     CONVERT(NVARCHAR(80), dm_drugcode) AS drugCode,
     CONVERT(NVARCHAR(120), dm_StockViewUnit) AS stockViewUnit,
     CONVERT(NVARCHAR(80), dm_StockViewQty) AS stockViewQty,
+    CONVERT(NVARCHAR(40), dm_extype) AS exceptionType,
+    CONVERT(NVARCHAR(500), DM_WARRINGMEMO) AS warningMemo,
+    CONVERT(NVARCHAR(80), DM_DAREGNO) AS dareRegistrationNo,
+    CONVERT(NVARCHAR(40), DM_GODANG) AS godangCode,
+    CASE
+      WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(80), DM_DAREGNO))), '') IS NOT NULL THEN 'true'
+      WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(40), DM_GODANG))), '') IS NOT NULL THEN 'true'
+      WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(500), DM_WARRINGMEMO))), '') IS NOT NULL THEN 'true'
+      WHEN ISNULL(CONVERT(NVARCHAR(40), dm_extype), '') <> '' AND CONVERT(NVARCHAR(40), dm_extype) <> '0' THEN 'true'
+      ELSE 'false'
+    END AS controlledCandidate,
+    LTRIM(RTRIM(
+      CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(80), DM_DAREGNO))), '') IS NOT NULL THEN 'DM_DAREGNO ' ELSE '' END +
+      CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(40), DM_GODANG))), '') IS NOT NULL THEN 'DM_GODANG ' ELSE '' END +
+      CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(500), DM_WARRINGMEMO))), '') IS NOT NULL THEN 'DM_WARRINGMEMO ' ELSE '' END +
+      CASE WHEN ISNULL(CONVERT(NVARCHAR(40), dm_extype), '') <> '' AND CONVERT(NVARCHAR(40), dm_extype) <> '0' THEN 'dm_extype ' ELSE '' END
+    )) AS controlledCandidateSource,
     ROW_NUMBER() OVER (ORDER BY dm_iscode) AS row_num
   FROM dbo.dgmast WITH (NOLOCK)
   WHERE dm_iscode IS NOT NULL
@@ -662,6 +686,111 @@ ORDER BY q.row_num
 "@
 
   return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 20
+}
+
+function Get-ControlledDrugMasterCandidateRows {
+  param(
+    [object]$Config,
+    [int]$Offset,
+    [int]$Limit
+  )
+
+  $end = $Offset + $Limit
+  $query = @"
+SELECT
+  q.insuranceCode,
+  q.habitGroup,
+  q.habitNo,
+  q.shortName,
+  q.remark,
+  q.appliedDate,
+  q.locate,
+  q.button,
+  q.subIndex,
+  q.habitKind,
+  q.groupPrice,
+  q.unitNo,
+  q.storeCode,
+  q.exceptionType,
+  q.warningMemo,
+  q.dareRegistrationNo,
+  q.godangCode,
+  q.drugCode,
+  q.controlledCandidateSource
+FROM (
+  SELECT
+    CONVERT(NVARCHAR(80), dm_iscode) AS insuranceCode,
+    N'DGMAST' AS habitGroup,
+    N'CANDIDATE' AS habitNo,
+    CONVERT(NVARCHAR(300), dm_drugname) AS shortName,
+    CONVERT(NVARCHAR(900),
+      N'DM_DAREGNO=' + ISNULL(CONVERT(NVARCHAR(80), DM_DAREGNO), N'') +
+      N'; DM_GODANG=' + ISNULL(CONVERT(NVARCHAR(40), DM_GODANG), N'') +
+      N'; DM_WARRINGMEMO=' + ISNULL(CONVERT(NVARCHAR(500), DM_WARRINGMEMO), N'') +
+      N'; dm_extype=' + ISNULL(CONVERT(NVARCHAR(40), dm_extype), N'') +
+      N'; dm_drugcode=' + ISNULL(CONVERT(NVARCHAR(80), dm_drugcode), N'')
+    ) AS remark,
+    CONVERT(NVARCHAR(40), dm_applydate) AS appliedDate,
+    N'eP_BASES.dbo.dgmast' AS locate,
+    CONVERT(NVARCHAR(120), DM_WARRINGMEMO) AS button,
+    CONVERT(NVARCHAR(40), dm_extype) AS subIndex,
+    N'DGMAST_CANDIDATE' AS habitKind,
+    NULL AS groupPrice,
+    CONVERT(NVARCHAR(40), dm_stockno) AS unitNo,
+    CONVERT(NVARCHAR(40), dm_drugcode) AS storeCode,
+    CONVERT(NVARCHAR(40), dm_extype) AS exceptionType,
+    CONVERT(NVARCHAR(500), DM_WARRINGMEMO) AS warningMemo,
+    CONVERT(NVARCHAR(80), DM_DAREGNO) AS dareRegistrationNo,
+    CONVERT(NVARCHAR(40), DM_GODANG) AS godangCode,
+    CONVERT(NVARCHAR(80), dm_drugcode) AS drugCode,
+    LTRIM(RTRIM(
+      CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(80), DM_DAREGNO))), '') IS NOT NULL THEN 'DM_DAREGNO ' ELSE '' END +
+      CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(40), DM_GODANG))), '') IS NOT NULL THEN 'DM_GODANG ' ELSE '' END +
+      CASE WHEN NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(500), DM_WARRINGMEMO))), '') IS NOT NULL THEN 'DM_WARRINGMEMO ' ELSE '' END +
+      CASE WHEN ISNULL(CONVERT(NVARCHAR(40), dm_extype), '') <> '' AND CONVERT(NVARCHAR(40), dm_extype) <> '0' THEN 'dm_extype ' ELSE '' END
+    )) AS controlledCandidateSource,
+    ROW_NUMBER() OVER (ORDER BY dm_iscode) AS row_num
+  FROM dbo.dgmast WITH (NOLOCK)
+  WHERE dm_iscode IS NOT NULL
+    AND (
+      NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(80), DM_DAREGNO))), '') IS NOT NULL
+      OR NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(40), DM_GODANG))), '') IS NOT NULL
+      OR NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(500), DM_WARRINGMEMO))), '') IS NOT NULL
+      OR (ISNULL(CONVERT(NVARCHAR(40), dm_extype), '') <> '' AND CONVERT(NVARCHAR(40), dm_extype) <> '0')
+    )
+) q
+WHERE q.row_num > $Offset
+  AND q.row_num <= $end
+ORDER BY q.row_num
+"@
+
+  return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 20
+}
+
+function Get-ControlledDrugMasterCandidateCount {
+  param([object]$Config)
+
+  $query = @"
+SELECT COUNT(1) AS row_count
+FROM dbo.dgmast WITH (NOLOCK)
+WHERE dm_iscode IS NOT NULL
+  AND (
+    NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(80), DM_DAREGNO))), '') IS NOT NULL
+    OR NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(40), DM_GODANG))), '') IS NOT NULL
+    OR NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(500), DM_WARRINGMEMO))), '') IS NOT NULL
+    OR (ISNULL(CONVERT(NVARCHAR(40), dm_extype), '') <> '' AND CONVERT(NVARCHAR(40), dm_extype) <> '0')
+  )
+"@
+  $table = Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 20
+
+  foreach ($row in $table.Rows) {
+    $value = Get-DataRowValue $row "row_count"
+    if ($null -ne $value) {
+      return [int]$value
+    }
+  }
+
+  return 0
 }
 
 function Get-DrugPriceRows {
@@ -1016,13 +1145,14 @@ function Invoke-BootstrapSync {
       wholesalerCompleted = $false
       purchaseCompleted = $false
       controlledDrugCompleted = $false
+      controlledDrugMasterCompleted = $false
       drugPriceCompleted = $false
       drugUnitCompleted = $false
       updatedAt = Get-AgentTimestamp
     }
   }
 
-  foreach ($stateKey in @("drugMasterCompleted", "stockProbeCompleted", "stockCompleted", "barcodeCompleted", "wholesalerCompleted", "purchaseCompleted", "controlledDrugCompleted", "drugPriceCompleted", "drugUnitCompleted")) {
+  foreach ($stateKey in @("drugMasterCompleted", "stockProbeCompleted", "stockCompleted", "barcodeCompleted", "wholesalerCompleted", "purchaseCompleted", "controlledDrugCompleted", "controlledDrugMasterCompleted", "drugPriceCompleted", "drugUnitCompleted")) {
     if ($null -eq $state.PSObject.Properties[$stateKey]) {
       $state | Add-Member -NotePropertyName $stateKey -NotePropertyValue $false
     }
@@ -1050,6 +1180,7 @@ function Invoke-BootstrapSync {
 
   if ($Config.bootstrapControlledDrug -eq $true -or $Config.bootstrapControlledDrugs -eq $true) {
     Queue-AgentTableSync -Config $Config -State $state -StateKey "controlledDrugCompleted" -Kind "controlled-drug" -TargetPath "/agent/controlled-drugs" -DbName "eP_BASES" -TableName "dbo.habitdrug" -Where "hd_iscode IS NOT NULL" -FetchRows { param($c, $o, $l) Get-ControlledDrugRows -Config $c -Offset $o -Limit $l }
+    Queue-AgentTableSync -Config $Config -State $state -StateKey "controlledDrugMasterCompleted" -Kind "controlled-drug-master" -TargetPath "/agent/controlled-drugs" -DbName "eP_BASES" -TableName "dbo.dgmast" -Where "dm_iscode IS NOT NULL" -FetchRows { param($c, $o, $l) Get-ControlledDrugMasterCandidateRows -Config $c -Offset $o -Limit $l } -CountRows { param($c) Get-ControlledDrugMasterCandidateCount -Config $c }
   }
 
   if ($Config.bootstrapDrugPrice -eq $true -or $Config.bootstrapDrugPrices -eq $true) {

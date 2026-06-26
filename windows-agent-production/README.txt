@@ -79,18 +79,20 @@ Tray icon:
 
 - Shows PharmFarm running status in the Windows notification area.
 - Right-click to refresh status, open logs, open queue, start/stop the agent, or close the tray icon.
+- Right-click "향정 후보 다시 동기화" to rescan only controlled-drug candidate sources.
+- Right-click "참조 데이터 전체 다시 동기화" to rescan drug master, stock, barcode, wholesalers, prices, units, and controlled-drug candidates.
 - Closing the tray icon does not remove the background scheduled task.
 
 Bootstrap sync:
 
 - The installer can enable one-time drug master sync from eP_BASES.dbo.dgmast.
 - The installer can enable one-time stock/barcode/wholesaler sync from eP_PHARM.dbo.STOCK, eP_BASES.dbo.dgbarcode, and eP_BASES.dbo.dealcorp.
-- The same option also syncs controlled-drug candidates from eP_BASES.dbo.habitdrug, latest drug prices from eP_BASES.dbo.dgtrans, and unit/barcode price data from eP_BASES.dbo.dgunit.
+- The same option also syncs controlled-drug candidates from eP_BASES.dbo.habitdrug and candidate flags from eP_BASES.dbo.dgmast, latest drug prices from eP_BASES.dbo.dgtrans, and unit/barcode price data from eP_BASES.dbo.dgunit.
 - Purchase sync can be enabled by setting bootstrapPurchase=true in C:\ProgramData\PharmFarmAgent\agent.config.json.
 - Bootstrap data is queued first, then sent through the same retry mechanism.
 - After the first run, the agent compares each row with C:\ProgramData\PharmFarmAgent\sync-state and queues only changed rows.
 - Reference data is rescanned on agent start and then every 24 hours while the agent stays running.
-- To force a full resend for one data type, delete the matching *.hashes.json file in sync-state and restart the agent.
+- To force a resend without reinstalling, use the tray icon resync menu.
 
 Server tables added for reference sync:
 
