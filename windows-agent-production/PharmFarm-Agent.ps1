@@ -393,6 +393,98 @@ function Get-ControlledDrugReferenceCodes {
   return $codes.ToArray()
 }
 
+function Convert-ControlledDrugReferenceSyncRow {
+  param([object]$Row)
+
+  $drugCode = Convert-AgentText $Row.drugCode
+  if ([string]::IsNullOrWhiteSpace($drugCode)) {
+    return $null
+  }
+
+  $page = Convert-AgentText $Row.page
+  $pageRow = Convert-AgentText $Row.pageRow
+  $drugName = Convert-AgentText $Row.drugName
+  $company = Convert-AgentText $Row.company
+  $formPay = Convert-AgentText $Row.formPay
+  $classEffect = Convert-AgentText $Row.classEffect
+  $kind = Convert-AgentText $Row.kind
+  $substituteEtc = Convert-AgentText $Row.substituteEtc
+  $componentCode = Convert-AgentText $Row.componentCode
+  $sourcePdf = Convert-AgentText $Row.sourcePdf
+  $sourcePrintedAt = Convert-AgentText $Row.sourcePrintedAt
+  $habitNo = if (![string]::IsNullOrWhiteSpace($page) -or ![string]::IsNullOrWhiteSpace($pageRow)) {
+    "P$page-R$pageRow"
+  } else {
+    $drugCode
+  }
+
+  $remarkParts = New-Object System.Collections.Generic.List[string]
+  foreach ($part in @(
+      "company=$company",
+      "formPay=$formPay",
+      "classEffect=$classEffect",
+      "kind=$kind",
+      "substituteEtc=$substituteEtc",
+      "componentCode=$componentCode"
+    )) {
+    if (!$part.EndsWith("=")) {
+      [void]$remarkParts.Add($part)
+    }
+  }
+
+  return [ordered]@{
+    insuranceCode = $drugCode
+    habitGroup = "PDF"
+    habitNo = $habitNo
+    shortName = $drugName
+    remark = ($remarkParts.ToArray() -join "; ")
+    appliedDate = $sourcePrintedAt
+    locate = $sourcePdf
+    button = $formPay
+    subIndex = $kind
+    habitKind = "PDF_REFERENCE"
+    groupPrice = $null
+    unitNo = $page
+    storeCode = $componentCode
+    sourcePage = $page
+    sourcePageRow = $pageRow
+    company = $company
+    classEffect = $classEffect
+    componentCode = $componentCode
+  }
+}
+
+function Get-ControlledDrugReferenceSyncCount {
+  param([object]$Config)
+
+  return @(Get-ControlledDrugReferenceRows $Config).Count
+}
+
+function Get-ControlledDrugReferenceSyncRows {
+  param(
+    [object]$Config,
+    [int]$Offset,
+    [int]$Limit
+  )
+
+  $referenceRows = @(Get-ControlledDrugReferenceRows $Config)
+  if ($referenceRows.Count -eq 0 -or $Offset -ge $referenceRows.Count) {
+    return @()
+  }
+
+  $end = [Math]::Min($Offset + $Limit, $referenceRows.Count)
+  $items = New-Object System.Collections.Generic.List[object]
+
+  for ($index = $Offset; $index -lt $end; $index += 1) {
+    $item = Convert-ControlledDrugReferenceSyncRow $referenceRows[$index]
+    if ($null -ne $item) {
+      [void]$items.Add($item)
+    }
+  }
+
+  return $items.ToArray()
+}
+
 function New-SqlInCondition {
   param(
     [string[]]$Columns,
@@ -1267,6 +1359,59 @@ function Queue-AgentTableSync {
   }
 }
 
+function Queue-AgentRowsSync {
+  param(
+    [object]$Config,
+    [object]$State,
+    [string]$StateKey,
+    [string]$Kind,
+    [string]$TargetPath,
+    [scriptblock]$FetchRows,
+    [scriptblock]$CountRows
+  )
+
+  $deltaSyncEnabled = $Config.deltaSyncOnStart -ne $false
+
+  if ($State.$StateKey -eq $true -and !$deltaSyncEnabled) {
+    return
+  }
+
+  try {
+    $limit = if ($Config.bootstrapChunkSize) { [int]$Config.bootstrapChunkSize } else { 500 }
+    if ($limit -lt 100) { $limit = 100 }
+    if ($limit -gt 1000) { $limit = 1000 }
+    $totalRows = [int](& $CountRows $Config)
+    $totalParts = [Math]::Max(1, [Math]::Ceiling($totalRows / $limit))
+    $hashes = Read-SyncHashes $Kind
+    $changedTotal = 0
+    Write-AgentLog "bootstrap $Kind static start rows=$totalRows chunk=$limit parts=$totalParts delta=$deltaSyncEnabled known=$($hashes.Count)"
+
+    for ($offset = 0; $offset -lt $totalRows; $offset += $limit) {
+      $part = [int]([Math]::Floor($offset / $limit) + 1)
+      $rows = @(& $FetchRows $Config $offset $limit)
+      $changedRows = @(Select-ChangedRows -Kind $Kind -Rows $rows -Hashes $hashes)
+
+      if ($changedRows.Count -gt 0) {
+        $envelope = New-AgentEnvelope -Config $Config -Kind $Kind -TargetPath $TargetPath -Items $changedRows -Part $part -TotalParts $totalParts
+        [void](Save-QueueItem $envelope)
+        $changedTotal += $changedRows.Count
+        Write-AgentLog "bootstrap $Kind static queued part=$part/$totalParts rows=$($rows.Count) changed=$($changedRows.Count)"
+      } else {
+        Write-AgentLog "bootstrap $Kind static skipped part=$part/$totalParts rows=$($rows.Count) changed=0"
+      }
+    }
+
+    Write-SyncHashes -Kind $Kind -Hashes $hashes
+
+    $State.$StateKey = $true
+    $State.updatedAt = Get-AgentTimestamp
+    Write-JsonFile -Path $BootstrapStateFile -Value $State -Depth 8
+    Write-AgentLog "bootstrap $Kind static complete rows=$totalRows changed=$changedTotal"
+  } catch {
+    Write-AgentLog "bootstrap $Kind static error $($_.Exception.Message)" "ERROR"
+  }
+}
+
 function Invoke-BootstrapSync {
   param([object]$Config)
 
@@ -1280,6 +1425,7 @@ function Invoke-BootstrapSync {
       barcodeCompleted = $false
       wholesalerCompleted = $false
       purchaseCompleted = $false
+      controlledDrugReferenceCompleted = $false
       controlledDrugCompleted = $false
       controlledDrugMasterCompleted = $false
       drugPriceCompleted = $false
@@ -1288,7 +1434,7 @@ function Invoke-BootstrapSync {
     }
   }
 
-  foreach ($stateKey in @("drugMasterCompleted", "stockProbeCompleted", "stockCompleted", "barcodeCompleted", "wholesalerCompleted", "purchaseCompleted", "controlledDrugCompleted", "controlledDrugMasterCompleted", "drugPriceCompleted", "drugUnitCompleted")) {
+  foreach ($stateKey in @("drugMasterCompleted", "stockProbeCompleted", "stockCompleted", "barcodeCompleted", "wholesalerCompleted", "purchaseCompleted", "controlledDrugReferenceCompleted", "controlledDrugCompleted", "controlledDrugMasterCompleted", "drugPriceCompleted", "drugUnitCompleted")) {
     if ($null -eq $state.PSObject.Properties[$stateKey]) {
       $state | Add-Member -NotePropertyName $stateKey -NotePropertyValue $false
     }
@@ -1315,6 +1461,7 @@ function Invoke-BootstrapSync {
   }
 
   if ($Config.bootstrapControlledDrug -eq $true -or $Config.bootstrapControlledDrugs -eq $true) {
+    Queue-AgentRowsSync -Config $Config -State $state -StateKey "controlledDrugReferenceCompleted" -Kind "controlled-drug" -TargetPath "/agent/controlled-drugs" -FetchRows { param($c, $o, $l) Get-ControlledDrugReferenceSyncRows -Config $c -Offset $o -Limit $l } -CountRows { param($c) Get-ControlledDrugReferenceSyncCount -Config $c }
     Queue-AgentTableSync -Config $Config -State $state -StateKey "controlledDrugCompleted" -Kind "controlled-drug" -TargetPath "/agent/controlled-drugs" -DbName "eP_BASES" -TableName "dbo.habitdrug" -Where "hd_iscode IS NOT NULL" -FetchRows { param($c, $o, $l) Get-ControlledDrugRows -Config $c -Offset $o -Limit $l } -CountRows { param($c) Get-ControlledDrugReferenceCount -Config $c }
     Queue-AgentTableSync -Config $Config -State $state -StateKey "controlledDrugMasterCompleted" -Kind "controlled-drug-master" -TargetPath "/agent/controlled-drugs" -DbName "eP_BASES" -TableName "dbo.dgmast" -Where "dm_iscode IS NOT NULL" -FetchRows { param($c, $o, $l) Get-ControlledDrugMasterCandidateRows -Config $c -Offset $o -Limit $l } -CountRows { param($c) Get-ControlledDrugMasterCandidateCount -Config $c }
   }

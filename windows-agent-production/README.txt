@@ -91,7 +91,8 @@ Bootstrap sync:
 - Drug master sync reads eP_BASES.dbo.dgmast only when the drug master detail option is selected.
 - Barcode sync reads eP_BASES.dbo.dgbarcode only when the barcode detail option is selected.
 - Controlled-drug candidate sync uses controlled-drug-reference.csv extracted from 약품기본정보.pdf.
-- The PDF reference is matched against eP_BASES.dbo.habitdrug hd_iscode/HD_STORE and eP_BASES.dbo.dgmast dm_iscode/dm_drugcode.
+- The PDF reference rows are sent directly to /agent/controlled-drugs with habitGroup=PDF and habitKind=PDF_REFERENCE, so pharmfarm_agent_controlled_drug contains the PDF baseline even when local ePharm reference tables do not match.
+- The PDF reference is also matched against eP_BASES.dbo.habitdrug hd_iscode/HD_STORE and eP_BASES.dbo.dgmast dm_iscode/dm_drugcode for local DB evidence.
 - DM_DAREGNO, DM_GODANG, DM_WARRINGMEMO, and dm_extype are kept as evidence fields, not as the primary inclusion rule.
 - Purchase sync reads eP_PHARM.dbo.tradedrug only when the purchase history detail option is selected.
 - Bootstrap data is queued first, then sent through the same retry mechanism.
