@@ -86,8 +86,8 @@ Tray icon:
 Bootstrap sync:
 
 - The installer can enable one-time drug master sync from eP_BASES.dbo.dgmast.
-- The installer can enable one-time stock/barcode/wholesaler sync from eP_PHARM.dbo.STOCK, eP_BASES.dbo.dgbarcode, and eP_BASES.dbo.dealcorp.
-- The same option also syncs controlled-drug candidates from eP_BASES.dbo.habitdrug and candidate flags from eP_BASES.dbo.dgmast, latest drug prices from eP_BASES.dbo.dgtrans, and unit/barcode price data from eP_BASES.dbo.dgunit.
+- The installer can enable all reference syncs at once, or expand the detail panel and choose stock, barcode, wholesaler, controlled-drug candidates, drug prices, and unit/barcode price data separately.
+- Controlled-drug candidate sync reads eP_BASES.dbo.habitdrug and candidate flags from eP_BASES.dbo.dgmast only when the controlled-drug detail option is selected.
 - Purchase sync can be enabled by setting bootstrapPurchase=true in C:\ProgramData\PharmFarmAgent\agent.config.json.
 - Bootstrap data is queued first, then sent through the same retry mechanism.
 - After the first run, the agent compares each row with C:\ProgramData\PharmFarmAgent\sync-state and queues only changed rows.
@@ -130,3 +130,12 @@ Codex sharing helper:
 - Send SEND_TO_CODEX.txt first. It summarizes table names, row counts, candidate columns, and sample file paths.
 - Send manifest.csv/columns.csv only if more detail is needed.
 - Avoid sending sample CSV files unless specifically requested.
+
+Controlled-drug trace:
+
+- debug-trace-controlled-drug.bat exports local CSV files for a specific insurance code or drug name.
+- Example: debug-trace-controlled-drug.bat -InsuranceCode 123456789
+- Example: debug-trace-controlled-drug.bat -DrugName "drug name"
+- Output folder: C:\ProgramData\PharmFarmAgent\debug-export\controlled-trace-YYYYMMDD-HHMMSS
+- Files include habitdrug_match.csv, dgmast_match.csv, dgtrans_price_match.csv, and summary.txt.
+- Use this when a controlled-drug candidate looks wrong and the source DB columns need to be verified.

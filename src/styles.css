@@ -2608,6 +2608,7 @@ body:has(.cms-login) {
   width: 100vw;
   min-width: 0;
   min-height: var(--app-height);
+  min-height: 100dvh;
   background: #fff;
   color: var(--ink);
 }
@@ -2617,6 +2618,7 @@ body:has(.cms-login) {
   width: 248px;
   flex: 0 0 248px;
   flex-direction: column;
+  min-height: 0;
   border-right: 1px solid var(--line);
   background: #fafbfb;
   padding: 22px 16px;
@@ -2639,6 +2641,18 @@ body:has(.cms-login) {
 .cms-brand {
   gap: 11px;
   padding: 0 8px 22px;
+}
+
+.cms-brand img {
+  width: 42px;
+  height: 42px;
+  flex: 0 0 42px;
+  border: 1px solid #e6eefc;
+  border-radius: 12px;
+  background: #fff;
+  object-fit: contain;
+  padding: 3px;
+  box-shadow: 0 6px 16px rgba(0, 100, 255, 0.12);
 }
 
 .cms-brand strong,
@@ -2684,29 +2698,13 @@ body:has(.cms-login) {
 }
 
 .cms-nav-icon {
-  width: 18px;
-  height: 18px;
-  flex: 0 0 18px;
-  border: 2px solid currentColor;
-  border-radius: 5px;
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  background: currentColor;
+  -webkit-mask: var(--icon-url) center / contain no-repeat;
+  mask: var(--icon-url) center / contain no-repeat;
   opacity: 0.9;
-}
-
-.cms-nav-icon.master,
-.cms-nav-icon.import {
-  border-radius: 50%;
-}
-
-.cms-nav-icon.inventory {
-  border-radius: 3px;
-}
-
-.cms-nav-icon.wholesaler {
-  border-radius: 999px;
-}
-
-.cms-nav-icon.prescriptions {
-  border-radius: 2px;
 }
 
 .cms-account {
@@ -2737,6 +2735,7 @@ body:has(.cms-login) {
 .cms-main {
   display: flex;
   min-width: 0;
+  min-height: 0;
   flex: 1;
   flex-direction: column;
 }
@@ -2932,7 +2931,7 @@ body:has(.cms-login) {
 .cms-login-shell {
   display: flex;
   width: min(1120px, 100%);
-  min-height: 720px;
+  min-height: min(720px, calc(var(--app-height) - 80px));
   overflow: hidden;
   border: 1px solid #e6e9eb;
   border-radius: 16px;
@@ -3176,10 +3175,15 @@ body:has(.cms-login) {
 
   .cms-login-shell {
     min-height: 0;
+    flex-direction: column;
   }
 
   .cms-login-visual {
-    display: none;
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    min-height: 240px;
+    padding: 30px;
   }
 
   .cms-login-card {
@@ -3395,7 +3399,8 @@ body:has(.cms-login) {
 
 .cms-table-card {
   min-width: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: visible;
 }
 
 .cms-toolbar {
@@ -4171,6 +4176,232 @@ body:has(.cms-login) {
   color: var(--muted);
   font-size: 13px;
   font-weight: 700;
+}
+
+@media (max-width: 1180px) {
+  .cms-split,
+  .cms-grid.two,
+  .purchase-top {
+    grid-template-columns: 1fr;
+  }
+
+  .cms-edit-panel,
+  .cms-deduction-detail,
+  .prescription-table-card {
+    align-self: stretch;
+  }
+
+  .cms-kpis {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 980px) {
+  .cms-shell {
+    flex-direction: column;
+  }
+
+  .cms-sidebar {
+    display: grid;
+    width: 100%;
+    flex: 0 0 auto;
+    grid-template-columns: minmax(150px, auto) minmax(0, 1fr) minmax(
+        150px,
+        auto
+      );
+    align-items: center;
+    gap: 12px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    padding: 12px 16px;
+  }
+
+  .cms-brand {
+    padding: 0;
+  }
+
+  .cms-nav {
+    min-width: 0;
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .cms-nav button {
+    flex: 0 0 auto;
+    min-height: 38px;
+    padding: 0 10px;
+    white-space: nowrap;
+  }
+
+  .cms-account {
+    min-width: 0;
+    justify-content: flex-end;
+    margin-top: 0;
+    border-top: 0;
+    padding: 0;
+  }
+
+  .cms-header {
+    height: auto;
+    min-height: 66px;
+    flex: 0 0 auto;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 18px;
+  }
+
+  .cms-header-actions {
+    flex-wrap: wrap;
+  }
+
+  .cms-content {
+    padding: 18px;
+  }
+
+  .cms-grid.two {
+    gap: 14px;
+  }
+
+  .cms-toolbar {
+    flex-wrap: wrap;
+    align-items: stretch;
+  }
+
+  .cms-search {
+    min-width: min(100%, 220px);
+  }
+
+  .cms-prescription-command,
+  .cms-command-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 680px) {
+  .cms-loading,
+  .cms-login {
+    padding: 16px;
+  }
+
+  .cms-login-shell {
+    width: 100%;
+    border-radius: 14px;
+  }
+
+  .cms-login-visual {
+    min-height: 210px;
+    padding: 24px;
+  }
+
+  .cms-login-message strong {
+    font-size: 24px;
+  }
+
+  .cms-login-message > span {
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .cms-login-card {
+    padding: 30px 22px;
+  }
+
+  .cms-sidebar {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .cms-account {
+    justify-content: flex-start;
+    border-top: 1px solid var(--line);
+    padding-top: 10px;
+  }
+
+  .cms-header > div {
+    width: 100%;
+  }
+
+  .cms-header-actions,
+  .cms-header button {
+    width: 100%;
+  }
+
+  .cms-header-actions button {
+    flex: 1 1 130px;
+  }
+
+  .cms-content {
+    padding: 14px;
+  }
+
+  .cms-kpis,
+  .cms-kpis.compact,
+  .cms-import-cards,
+  .cms-field-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cms-panel header,
+  .cms-mini-list div,
+  .cms-list-row,
+  .cms-after {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .cms-toolbar {
+    padding: 14px;
+  }
+
+  .cms-search,
+  .cms-upload-btn,
+  .cms-check {
+    width: 100%;
+  }
+
+  .cms-upload-btn,
+  .cms-primary,
+  .cms-actions button {
+    min-height: 44px;
+  }
+
+  .cms-actions {
+    flex-wrap: wrap;
+  }
+
+  .cms-actions button,
+  .cms-primary {
+    flex: 1 1 150px;
+  }
+
+  .cms-table.master {
+    min-width: 760px;
+  }
+
+  .cms-table.inventory {
+    min-width: 680px;
+  }
+
+  .cms-table.wholesaler {
+    min-width: 520px;
+  }
+
+  .cms-deduction-table {
+    min-width: 720px;
+  }
+
+  .cms-stepper {
+    gap: 14px;
+  }
+
+  .cms-stepper strong {
+    font-size: 28px;
+  }
+
+  .cms-sync-card {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (min-width: 1180px) {

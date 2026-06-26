@@ -62,6 +62,26 @@ function New-TextBox {
   return $box
 }
 
+function New-CheckBox {
+  param(
+    [string]$Text,
+    [int]$X,
+    [int]$Y,
+    [int]$Width = 250,
+    [bool]$Checked = $false,
+    [System.Drawing.Color]$ForeColor = [System.Drawing.Color]::FromArgb(104, 112, 97)
+  )
+
+  $check = New-Object System.Windows.Forms.CheckBox
+  $check.Text = $Text
+  $check.Location = New-Object System.Drawing.Point($X, $Y)
+  $check.Size = New-Object System.Drawing.Size($Width, 24)
+  $check.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+  $check.ForeColor = $ForeColor
+  $check.Checked = $Checked
+  return $check
+}
+
 function Write-Config {
   param(
     [string]$ApiBase,
@@ -71,7 +91,12 @@ function Write-Config {
     [string]$AgentSecret,
     [bool]$IncludeRawQrText,
     [bool]$BootstrapDrugMaster,
-    [bool]$BootstrapStockProbe,
+    [bool]$BootstrapStock,
+    [bool]$BootstrapBarcode,
+    [bool]$BootstrapWholesaler,
+    [bool]$BootstrapControlledDrug,
+    [bool]$BootstrapDrugPrice,
+    [bool]$BootstrapDrugUnit,
     [int]$IntervalSeconds
   )
 
@@ -100,12 +125,12 @@ function Write-Config {
     intervalSeconds = $IntervalSeconds
     includeRawQrText = $IncludeRawQrText
     bootstrapDrugMaster = $BootstrapDrugMaster
-    bootstrapStock = $BootstrapStockProbe
-    bootstrapBarcode = $BootstrapStockProbe
-    bootstrapWholesaler = $BootstrapStockProbe
-    bootstrapControlledDrug = ($BootstrapStockProbe -or $BootstrapDrugMaster)
-    bootstrapDrugPrice = $BootstrapStockProbe
-    bootstrapDrugUnit = $BootstrapStockProbe
+    bootstrapStock = $BootstrapStock
+    bootstrapBarcode = $BootstrapBarcode
+    bootstrapWholesaler = $BootstrapWholesaler
+    bootstrapControlledDrug = $BootstrapControlledDrug
+    bootstrapDrugPrice = $BootstrapDrugPrice
+    bootstrapDrugUnit = $BootstrapDrugUnit
     bootstrapStockProbe = $false
     bootstrapChunkSize = 500
     deltaSyncOnStart = $true
@@ -142,7 +167,7 @@ function Register-AgentTask {
 
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "PharmFarm Agent Setup"
-$form.Size = New-Object System.Drawing.Size(620, 760)
+$form.Size = New-Object System.Drawing.Size(620, 840)
 $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
@@ -162,7 +187,7 @@ $form.Controls.Add($subtitle)
 
 $card = New-Object System.Windows.Forms.Panel
 $card.Location = New-Object System.Drawing.Point(34, 118)
-$card.Size = New-Object System.Drawing.Size(540, 480)
+$card.Size = New-Object System.Drawing.Size(540, 560)
 $card.BackColor = [System.Drawing.Color]::White
 $card.BorderStyle = "FixedSingle"
 $form.Controls.Add($card)
@@ -192,13 +217,7 @@ $secretBox = New-TextBox "" 22 338 492
 $secretBox.PasswordChar = "*"
 $card.Controls.Add($secretBox)
 
-$rawCheck = New-Object System.Windows.Forms.CheckBox
-$rawCheck.Text = "디버깅용 QR 원문 포함"
-$rawCheck.Location = New-Object System.Drawing.Point(22, 378)
-$rawCheck.Size = New-Object System.Drawing.Size(190, 24)
-$rawCheck.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$rawCheck.ForeColor = [System.Drawing.Color]::FromArgb(104, 112, 97)
-$rawCheck.Checked = $false
+$rawCheck = New-CheckBox "디버깅용 QR 원문 포함" 22 378 190 $false
 $card.Controls.Add($rawCheck)
 
 $intervalLabel = New-Label "조회 주기(초)" 242 314 92 22 $true
@@ -207,32 +226,94 @@ $card.Controls.Add($intervalLabel)
 $intervalBox = New-TextBox "10" 340 374 60
 $card.Controls.Add($intervalBox)
 
-$bootstrapDrugCheck = New-Object System.Windows.Forms.CheckBox
-$bootstrapDrugCheck.Text = "설치 시 약품 마스터 1회 동기화"
-$bootstrapDrugCheck.Location = New-Object System.Drawing.Point(22, 414)
-$bootstrapDrugCheck.Size = New-Object System.Drawing.Size(250, 24)
-$bootstrapDrugCheck.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$bootstrapDrugCheck.ForeColor = [System.Drawing.Color]::FromArgb(32, 35, 29)
-$bootstrapDrugCheck.Checked = $true
+$bootstrapDrugCheck = New-CheckBox "설치 시 약품 마스터 1회 동기화" 22 414 250 $true ([System.Drawing.Color]::FromArgb(32, 35, 29))
 $card.Controls.Add($bootstrapDrugCheck)
 
-$bootstrapStockCheck = New-Object System.Windows.Forms.CheckBox
-$bootstrapStockCheck.Text = "재고/바코드/도매처/가격/향정 정보 동기화"
-$bootstrapStockCheck.Location = New-Object System.Drawing.Point(22, 442)
-$bootstrapStockCheck.Size = New-Object System.Drawing.Size(310, 24)
-$bootstrapStockCheck.Font = New-Object System.Drawing.Font("Segoe UI", 9)
-$bootstrapStockCheck.ForeColor = [System.Drawing.Color]::FromArgb(104, 112, 97)
-$bootstrapStockCheck.Checked = $false
-$card.Controls.Add($bootstrapStockCheck)
+$bootstrapReferenceAllCheck = New-CheckBox "설치 시 참조 데이터 전체 동기화" 22 442 270 $false
+$card.Controls.Add($bootstrapReferenceAllCheck)
+
+$toggleReferenceDetailButton = New-Object System.Windows.Forms.Button
+$toggleReferenceDetailButton.Text = "펼치기"
+$toggleReferenceDetailButton.Location = New-Object System.Drawing.Point(430, 438)
+$toggleReferenceDetailButton.Size = New-Object System.Drawing.Size(84, 28)
+$toggleReferenceDetailButton.FlatStyle = "Flat"
+$toggleReferenceDetailButton.Font = New-Object System.Drawing.Font("Segoe UI", 8, [System.Drawing.FontStyle]::Bold)
+$card.Controls.Add($toggleReferenceDetailButton)
+
+$referenceDetailPanel = New-Object System.Windows.Forms.Panel
+$referenceDetailPanel.Location = New-Object System.Drawing.Point(36, 472)
+$referenceDetailPanel.Size = New-Object System.Drawing.Size(478, 70)
+$referenceDetailPanel.Visible = $false
+$card.Controls.Add($referenceDetailPanel)
+
+$bootstrapStockCheck = New-CheckBox "재고" 0 0 92 $false
+$bootstrapBarcodeCheck = New-CheckBox "바코드" 98 0 92 $false
+$bootstrapWholesalerCheck = New-CheckBox "도매처" 196 0 92 $false
+$bootstrapControlledDrugCheck = New-CheckBox "향정 후보" 294 0 100 $false
+$bootstrapDrugPriceCheck = New-CheckBox "가격" 0 34 92 $false
+$bootstrapDrugUnitCheck = New-CheckBox "단위/포장" 98 34 120 $false
+
+@(
+  $bootstrapStockCheck,
+  $bootstrapBarcodeCheck,
+  $bootstrapWholesalerCheck,
+  $bootstrapControlledDrugCheck,
+  $bootstrapDrugPriceCheck,
+  $bootstrapDrugUnitCheck
+) | ForEach-Object { $referenceDetailPanel.Controls.Add($_) }
+
+$script:UpdatingReferenceChecks = $false
+$referenceChildren = @(
+  $bootstrapStockCheck,
+  $bootstrapBarcodeCheck,
+  $bootstrapWholesalerCheck,
+  $bootstrapControlledDrugCheck,
+  $bootstrapDrugPriceCheck,
+  $bootstrapDrugUnitCheck
+)
+
+$bootstrapReferenceAllCheck.Add_CheckedChanged({
+  if ($script:UpdatingReferenceChecks) {
+    return
+  }
+  $script:UpdatingReferenceChecks = $true
+  foreach ($child in $referenceChildren) {
+    $child.Checked = $bootstrapReferenceAllCheck.Checked
+  }
+  $script:UpdatingReferenceChecks = $false
+})
+
+foreach ($child in $referenceChildren) {
+  $child.Add_CheckedChanged({
+    if ($script:UpdatingReferenceChecks) {
+      return
+    }
+    $script:UpdatingReferenceChecks = $true
+    $allChecked = $true
+    foreach ($item in $referenceChildren) {
+      if (-not $item.Checked) {
+        $allChecked = $false
+        break
+      }
+    }
+    $bootstrapReferenceAllCheck.Checked = $allChecked
+    $script:UpdatingReferenceChecks = $false
+  })
+}
+
+$toggleReferenceDetailButton.Add_Click({
+  $referenceDetailPanel.Visible = -not $referenceDetailPanel.Visible
+  $toggleReferenceDetailButton.Text = if ($referenceDetailPanel.Visible) { "접기" } else { "펼치기" }
+})
 
 
-$notice = New-Label "기본값은 QR 원문을 서버로 보내지 않습니다. 처방/재고/마스터 데이터는 약국 ID 기준으로 연결됩니다." 38 616 540 26
+$notice = New-Label "기본값은 QR 원문을 서버로 보내지 않습니다. 처방/재고/마스터 데이터는 약국 ID 기준으로 연결됩니다." 38 696 540 26
 $notice.ForeColor = [System.Drawing.Color]::FromArgb(47, 122, 77)
 $form.Controls.Add($notice)
 
 $installButton = New-Object System.Windows.Forms.Button
 $installButton.Text = "설치 및 시작"
-$installButton.Location = New-Object System.Drawing.Point(350, 666)
+$installButton.Location = New-Object System.Drawing.Point(350, 746)
 $installButton.Size = New-Object System.Drawing.Size(106, 36)
 $installButton.BackColor = [System.Drawing.Color]::FromArgb(47, 122, 77)
 $installButton.ForeColor = [System.Drawing.Color]::White
@@ -242,7 +323,7 @@ $form.Controls.Add($installButton)
 
 $closeButton = New-Object System.Windows.Forms.Button
 $closeButton.Text = "닫기"
-$closeButton.Location = New-Object System.Drawing.Point(468, 666)
+$closeButton.Location = New-Object System.Drawing.Point(468, 746)
 $closeButton.Size = New-Object System.Drawing.Size(106, 36)
 $closeButton.FlatStyle = "Flat"
 $closeButton.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
@@ -276,7 +357,24 @@ $installButton.Add_Click({
       return
     }
 
-    Write-Config -ApiBase $apiBase -PharmacyId $pharmacyId -SqlServer $sqlServer -DeviceName $deviceName -AgentSecret $secretBox.Text -IncludeRawQrText $rawCheck.Checked -BootstrapDrugMaster $bootstrapDrugCheck.Checked -BootstrapStockProbe $bootstrapStockCheck.Checked -IntervalSeconds $intervalSeconds
+    $configParams = @{
+      ApiBase = $apiBase
+      PharmacyId = $pharmacyId
+      SqlServer = $sqlServer
+      DeviceName = $deviceName
+      AgentSecret = $secretBox.Text
+      IncludeRawQrText = $rawCheck.Checked
+      BootstrapDrugMaster = $bootstrapDrugCheck.Checked
+      BootstrapStock = $bootstrapStockCheck.Checked
+      BootstrapBarcode = $bootstrapBarcodeCheck.Checked
+      BootstrapWholesaler = $bootstrapWholesalerCheck.Checked
+      BootstrapControlledDrug = $bootstrapControlledDrugCheck.Checked
+      BootstrapDrugPrice = $bootstrapDrugPriceCheck.Checked
+      BootstrapDrugUnit = $bootstrapDrugUnitCheck.Checked
+      IntervalSeconds = $intervalSeconds
+    }
+
+    Write-Config @configParams
     $registered = Register-AgentTask
 
     if ($registered) {

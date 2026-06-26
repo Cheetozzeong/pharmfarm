@@ -18,6 +18,13 @@ import {
   Zap,
   ZapOff,
 } from "lucide-react";
+import barGraphIcon from "../icons/20px/bargraph.svg";
+import briefcaseIcon from "../icons/20px/briefcase.svg";
+import fileTextIcon from "../icons/20px/filetext.svg";
+import homeIcon from "../icons/20px/home.svg";
+import pieGraphIcon from "../icons/20px/pieGraph.svg";
+import viewGridIcon from "../icons/20px/view_grid-filled.svg";
+import viewListIcon from "../icons/20px/view_list-filled.svg";
 import pharmfarmLogo from "../logo_1.png";
 
 const APP_BUILD_TIME = __APP_BUILD_TIME__;
@@ -6040,6 +6047,7 @@ type CmsMaster = {
   productTotalQuantity: number;
   price: number;
   status: MatchStatus;
+  active: boolean;
 };
 
 type CmsImportJob = {
@@ -6123,6 +6131,7 @@ const demoCmsMasters: CmsMaster[] = [
     productTotalQuantity: 30,
     price: 86,
     status: "NORMAL",
+    active: true,
   },
   {
     id: "M-002",
@@ -6133,6 +6142,7 @@ const demoCmsMasters: CmsMaster[] = [
     productTotalQuantity: 100,
     price: 53,
     status: "NAME_MATCH",
+    active: true,
   },
   {
     id: "M-003",
@@ -6143,6 +6153,7 @@ const demoCmsMasters: CmsMaster[] = [
     productTotalQuantity: 30,
     price: 0,
     status: "VIRTUAL",
+    active: true,
   },
   {
     id: "M-004",
@@ -6153,6 +6164,7 @@ const demoCmsMasters: CmsMaster[] = [
     productTotalQuantity: 0,
     price: 0,
     status: "MISSING",
+    active: false,
   },
   {
     id: "M-005",
@@ -6163,6 +6175,7 @@ const demoCmsMasters: CmsMaster[] = [
     productTotalQuantity: 50,
     price: 120,
     status: "NORMAL",
+    active: true,
   },
 ];
 
@@ -6408,14 +6421,16 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
           <WifiOff size={24} />
           <strong>오프라인 큐</strong>
           <span>
-            API 장애나 네트워크 단절 시 큐에 보관하고 성공할 때까지 재시도합니다.
+            API 장애나 네트워크 단절 시 큐에 보관하고 성공할 때까지
+            재시도합니다.
           </span>
         </div>
         <div>
           <RefreshCw size={24} />
           <strong>자동 실행</strong>
           <span>
-            Windows 예약 작업과 트레이 아이콘을 등록해 로그인 시 자동 실행합니다.
+            Windows 예약 작업과 트레이 아이콘을 등록해 로그인 시 자동
+            실행합니다.
           </span>
         </div>
       </section>
@@ -6432,7 +6447,8 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
             사용합니다.
           </li>
           <li>
-            CMS에서 확인한 <b>약국 ID</b>를 입력해 서버 계정과 기기를 연결합니다.
+            CMS에서 확인한 <b>약국 ID</b>를 입력해 서버 계정과 기기를
+            연결합니다.
           </li>
           <li>
             <b>디버깅용 QR 원문 포함</b>은 체크하지 않습니다.
@@ -6554,6 +6570,7 @@ function CmsApp({
     filteredDeductionRecords.find(
       (record) => record.id === selectedDeductionId,
     ) ?? filteredDeductionRecords[0];
+  const hasCmsSession = hasStoredAuthTokens();
 
   useEffect(() => {
     if (masters.length === 0) {
@@ -6601,28 +6618,52 @@ function CmsApp({
   }, [apiState, isCmsLoginRoute, navigate, path]);
 
   useEffect(() => {
-    if (apiState !== "connected" || !isCmsLoginRoute) return;
+    if (!isCmsLoginRoute || !hasCmsSession || apiState === "unauthorized") {
+      return;
+    }
 
     navigate(postLoginPath === "/cms/login" ? "/cms" : postLoginPath);
-  }, [apiState, isCmsLoginRoute, navigate, postLoginPath]);
+  }, [apiState, hasCmsSession, isCmsLoginRoute, navigate, postLoginPath]);
 
-  const cmsFallback = useCallback((error: unknown) => {
-    setCmsReady(true);
-    if (error instanceof Error && error.message === "UNAUTHORIZED") {
-      clearAuthTokens();
-      setAuthAccount(null);
-      setApiState("unauthorized");
-      setApiMessage("CMS 로그인이 필요합니다.");
-      return;
-    }
-    if (error instanceof Error && error.message === "FORBIDDEN") {
-      setApiState("forbidden");
-      setApiMessage("현재 계정에 CMS 실행 권한이 없습니다.");
-      return;
-    }
-    setApiState("demo");
-    setApiMessage("CMS API 연결 실패 · 실제 데이터를 불러오지 못했습니다.");
+  const applyCmsDemoData = useCallback(() => {
+    setMasters((current) => (current.length > 0 ? current : demoCmsMasters));
+    setStocks((current) => (current.length > 0 ? current : initialStocks));
+    setImportJobs((current) => (current.length > 0 ? current : demoImportJobs));
+    setCookieState((current) =>
+      current.registered ? current : demoCookieState,
+    );
+    setPurchaseHistories((current) =>
+      current.length > 0 ? current : demoCmsPurchaseHistories,
+    );
+    setSyncJobs((current) =>
+      current.length > 0 ? current : demoPurchaseSyncJobs,
+    );
+    setDeductionRecords((current) =>
+      current.length > 0 ? current : demoDeductionRecords,
+    );
   }, []);
+
+  const cmsFallback = useCallback(
+    (error: unknown) => {
+      setCmsReady(true);
+      if (error instanceof Error && error.message === "UNAUTHORIZED") {
+        clearAuthTokens();
+        setAuthAccount(null);
+        setApiState("unauthorized");
+        setApiMessage("CMS 로그인이 필요합니다.");
+        return;
+      }
+      if (error instanceof Error && error.message === "FORBIDDEN") {
+        setApiState("forbidden");
+        setApiMessage("현재 계정에 CMS 실행 권한이 없습니다.");
+        return;
+      }
+      applyCmsDemoData();
+      setApiState("demo");
+      setApiMessage("CMS API 연결 실패 · 실제 데이터를 불러오지 못했습니다.");
+    },
+    [applyCmsDemoData],
+  );
 
   const refreshCms = useCallback(async () => {
     if (!hasStoredAuthTokens()) {
@@ -6636,7 +6677,7 @@ function CmsApp({
     setApiState("checking");
     try {
       const masterParams = new URLSearchParams();
-      if (masterQuery.trim()) masterParams.set("q", masterQuery.trim());
+      if (masterQuery.trim()) masterParams.set("keyword", masterQuery.trim());
       if (includeInactive) masterParams.set("includeInactive", "true");
       const masterPath = `/drug-masters${
         masterParams.toString() ? `?${masterParams}` : ""
@@ -6829,9 +6870,10 @@ function CmsApp({
         body: JSON.stringify({
           standardCode: master.standardCode,
           insuranceCode: master.insuranceCode,
-          name: master.name,
-          spec: master.spec,
+          koreanProductName: master.name,
+          drugSpec: master.spec,
           productTotalQuantity: master.productTotalQuantity,
+          active: master.active,
         }),
       });
       setApiState("connected");
@@ -6963,7 +7005,7 @@ function CmsApp({
         method: "POST",
         body: JSON.stringify({
           changeQuantity: signedQuantity,
-          memo: adjustMemo,
+          reason: adjustMemo,
         }),
       });
       setApiState("connected");
@@ -7130,7 +7172,7 @@ function CmsApp({
     }
   }
 
-  if (apiState === "unauthorized" || isCmsLoginRoute) {
+  if (apiState === "unauthorized" || (isCmsLoginRoute && !hasCmsSession)) {
     return (
       <CmsLoginPage
         apiMessage={apiMessage}
@@ -7320,7 +7362,11 @@ function normalizeCmsMaster(raw: unknown, index: number): CmsMaster {
       item.insuranceCode ?? item.productCode ?? item.insurance_code ?? "",
     ),
     name: String(
-      item.name ?? item.drugName ?? item.koreanName ?? "미확인 약품",
+      item.name ??
+        item.drugName ??
+        item.koreanName ??
+        item.koreanProductName ??
+        "미확인 약품",
     ),
     spec: String(item.spec ?? item.drugSpec ?? item.standard ?? "-"),
     productTotalQuantity: Number(
@@ -7331,6 +7377,7 @@ function normalizeCmsMaster(raw: unknown, index: number): CmsMaster {
     ),
     price: Number(item.price ?? item.upperPrice ?? item.maxPrice ?? 0),
     status: normalizeMatchStatus(item.matchStatus ?? item.status),
+    active: normalizeBoolean(item.active ?? true),
   };
 }
 
@@ -7369,7 +7416,11 @@ function normalizeCmsImportJob(
   const item = asRecord(raw);
   const status = String(item.status ?? "PENDING") as CmsImportJob["status"];
   const processedRows = Number(
-    item.processedRows ?? item.currentRows ?? item.doneRows ?? 0,
+    item.processedRows ??
+      item.processedCount ??
+      item.currentRows ??
+      item.doneRows ??
+      0,
   );
   const totalRows = Number(item.totalRows ?? item.totalCount ?? 0);
   const progress = Number(
@@ -7386,20 +7437,28 @@ function normalizeCmsImportJob(
       ? "2번"
       : "1번",
     fileName: String(
-      item.fileName ?? item.originalFileName ?? fallback?.fileName ?? "-",
+      item.fileName ??
+        item.originalFileName ??
+        item.originalFilename ??
+        fallback?.fileName ??
+        "-",
     ),
     status,
     progress,
     processedRows,
     totalRows,
-    newCount: Number(item.newCount ?? item.createdCount ?? 0),
+    newCount: Number(
+      item.newCount ?? item.insertedCount ?? item.createdCount ?? 0,
+    ),
     updatedCount: Number(item.updatedCount ?? item.modifiedCount ?? 0),
     inactiveCount: Number(item.inactiveCount ?? item.deactivatedCount ?? 0),
     duplicateCount: Number(
       item.duplicateCount ?? item.duplicateExcludedCount ?? 0,
     ),
     failedCount: Number(item.failedCount ?? item.errorCount ?? 0),
-    message: String(item.message ?? item.failureReason ?? status),
+    message: String(
+      item.message ?? item.failureReason ?? item.failedDetail ?? status,
+    ),
   };
 }
 
@@ -7526,34 +7585,38 @@ function CmsSidebar({
   navigate: (path: string) => void;
   page: CmsPage;
 }) {
-  const items: Array<[CmsPage, string, string]> = [
-    ["dashboard", "대시보드", "/cms"],
-    ["master", "기준 데이터", "/cms/master"],
-    ["import", "Import", "/cms/import"],
-    ["inventory", "재고", "/cms/inventory"],
-    ["wholesaler", "도매처", "/cms/wholesaler"],
-    ["prescriptions", "처방전", "/cms/prescriptions"],
-    ["purchase", "구매 내역", "/cms/purchase"],
+  const items: Array<[CmsPage, string, string, string]> = [
+    ["dashboard", "대시보드", "/cms", homeIcon],
+    ["master", "기준 데이터", "/cms/master", viewGridIcon],
+    ["import", "Import", "/cms/import", viewListIcon],
+    ["inventory", "재고", "/cms/inventory", barGraphIcon],
+    ["wholesaler", "도매처", "/cms/wholesaler", briefcaseIcon],
+    ["prescriptions", "처방전", "/cms/prescriptions", fileTextIcon],
+    ["purchase", "구매 내역", "/cms/purchase", pieGraphIcon],
   ];
   const accountDisplay = getCmsAccountDisplay(account);
 
   return (
     <aside className="cms-sidebar">
       <div className="cms-brand">
+        <img src={pharmfarmLogo} alt="" aria-hidden="true" />
         <div>
           <strong>PharmFarm</strong>
           <em>CMS</em>
         </div>
       </div>
       <nav className="cms-nav">
-        {items.map(([key, label, href]) => (
+        {items.map(([key, label, href, icon]) => (
           <button
             key={key}
             className={page === key ? "is-active" : ""}
             type="button"
             onClick={() => navigate(href)}
           >
-            <span className={`cms-nav-icon ${key}`} />
+            <span
+              className="cms-nav-icon"
+              style={{ "--icon-url": `url(${icon})` } as CSSProperties}
+            />
             {label}
           </button>
         ))}
