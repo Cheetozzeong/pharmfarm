@@ -133,9 +133,13 @@ Codex sharing helper:
 
 Controlled-drug trace:
 
-- debug-trace-controlled-drug.bat exports local CSV files for a specific insurance code or drug name.
-- Example: debug-trace-controlled-drug.bat -InsuranceCode 123456789
-- Example: debug-trace-controlled-drug.bat -DrugName "drug name"
+- controlled-drug-reference.csv is extracted from 약품기본정보.pdf printed on 2026-06-26.
+- It contains 961 visible program drug codes from the PDF.
+- debug-trace-controlled-drug.bat exports local CSV files by comparing the PDF reference list with the EPharm DB.
+- dgmast matching checks PDF drugCode and componentCode against dm_iscode and dm_drugcode.
+- Default: debug-trace-controlled-drug.bat
+- Narrow trace examples: debug-trace-controlled-drug.bat -InsuranceCode 123456789
+- Narrow trace examples: debug-trace-controlled-drug.bat -DrugName "drug name"
 - Output folder: C:\ProgramData\PharmFarmAgent\debug-export\controlled-trace-YYYYMMDD-HHMMSS
-- Files include habitdrug_match.csv, dgmast_match.csv, dgtrans_price_match.csv, and summary.txt.
+- Files include pdf_reference.csv, reference_match_summary.csv, habitdrug_match.csv, dgmast_match.csv, dgtrans_price_match.csv, and summary.txt.
 - Use this when a controlled-drug candidate looks wrong and the source DB columns need to be verified.
