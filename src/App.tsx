@@ -10850,9 +10850,11 @@ function CmsInventoryShortagePage({
   return (
     <section className="cms-content cms-list-page cms-shortage-page">
       <div className="cms-shortage-header">
-        {/* <button type="button" onClick={onBack}>
-          {detailMode ? "초과 처방 목록" : "재고로 돌아가기"}
-        </button> */}
+        {detailMode && (
+          <button type="button" onClick={onBack}>
+            초과 처방 목록
+          </button>
+        )}
         <div>
           <strong>초과 처방 약품</strong>
           <span>재고를 0까지 차감한 뒤 남은 부족 수량을 관리합니다.</span>
@@ -10907,17 +10909,22 @@ function CmsInventoryShortagePage({
                   <span>차감</span>
                   <span>부족</span>
                   <span>상태</span>
+                  <span>상세</span>
                 </div>
                 {recordPagination.items.map((record) => (
-                  <button
+                  <div
                     className={`cms-shortage-row ${
                       selectedRecord?.id === record.id ? "is-selected" : ""
                     }`}
                     key={record.id}
-                    type="button"
-                    onClick={() => {
-                      onSelect(record);
-                      onOpenDetail(record);
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onSelect(record)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onSelect(record);
+                      }
                     }}
                   >
                     <span>{record.createdAt}</span>
@@ -10933,7 +10940,18 @@ function CmsInventoryShortagePage({
                     <span className="cms-badge missing">
                       {shortageStatusText(record.shortageStatus)}
                     </span>
-                  </button>
+                    <button
+                      className="cms-shortage-open-detail"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onSelect(record);
+                        onOpenDetail(record);
+                      }}
+                    >
+                      상세 보기
+                    </button>
+                  </div>
                 ))}
                 {visibleRecords.length === 0 && (
                   <p className="cms-empty table-empty">{emptyMessage}</p>

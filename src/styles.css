@@ -5563,20 +5563,28 @@ body:has(.cms-shell) {
 }
 
 .cms-shortage-table {
-  min-width: 860px;
+  min-width: 960px;
 }
 
 .cms-shortage-row {
   display: grid;
   width: 100%;
   min-height: 58px;
-  grid-template-columns: 132px minmax(220px, 1fr) 132px 70px 72px 92px;
+  grid-template-columns: 132px minmax(220px, 1fr) 132px 70px 72px 92px 86px;
   align-items: center;
   gap: 12px;
   border-bottom: 1px solid #f4f5f6;
   background: #fff;
   padding: 0 18px;
   text-align: left;
+}
+
+.cms-shortage-row:not(.cms-th) {
+  cursor: pointer;
+}
+
+.cms-shortage-row:not(.cms-th):hover {
+  background: #fbfcfd;
 }
 
 .cms-shortage-row:last-child {
@@ -5630,6 +5638,22 @@ body:has(.cms-shell) {
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cms-shortage-open-detail {
+  min-height: 34px;
+  border: 1px solid #dbe4ef;
+  border-radius: 7px;
+  background: #fff;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 900;
+  white-space: nowrap;
+}
+
+.cms-shortage-open-detail:hover {
+  border-color: var(--blue);
+  background: #f4f9ff;
 }
 
 .cms-shortage-detail-card {
