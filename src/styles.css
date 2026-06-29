@@ -6538,6 +6538,10 @@ body:has(.cms-shell) {
     display: flex;
   }
 
+  .cms-shell.is-sidebar-collapsed .cms-nav-caret {
+    display: block;
+  }
+
   .cms-shell.is-sidebar-collapsed .cms-account div {
     display: block;
   }
@@ -6603,6 +6607,7 @@ body:has(.cms-shell) {
   .cms-subnav {
     flex-direction: row;
     border-left: 1px solid var(--line);
+    margin-left: 0;
     padding-left: 6px;
   }
 
@@ -7145,6 +7150,10 @@ body:has(.cms-shell) {
     display: flex;
   }
 
+  .cms-shell.is-sidebar-collapsed .cms-nav-caret {
+    display: block;
+  }
+
   .cms-shell.is-sidebar-collapsed .cms-account div {
     display: block;
   }
@@ -7204,6 +7213,7 @@ body:has(.cms-shell) {
   .cms-subnav {
     flex-direction: row;
     border-left: 1px solid var(--line);
+    margin-left: 0;
     padding-left: 6px;
   }
 
