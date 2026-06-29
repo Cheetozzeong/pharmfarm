@@ -2758,31 +2758,58 @@ body:has(.cms-shell) {
   color: #0050cc;
 }
 
-.cms-nav button.is-parent-active {
-  background: #f1f7ff;
-  color: #0050cc;
-}
-
 .cms-nav-group {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
+}
+
+.cms-nav button.cms-nav-parent {
+  color: #4d5963;
+}
+
+.cms-nav button.cms-nav-parent.is-section-active {
+  background: transparent;
+  color: #26323b;
+}
+
+.cms-nav button.cms-nav-parent:hover {
+  background: #f7f9fb;
+}
+
+.cms-nav-caret {
+  flex: 0 0 auto;
+  margin-left: auto;
+  color: #9aa3aa;
+  transition: transform 0.18s ease;
+}
+
+.cms-nav-group.is-open .cms-nav-caret {
+  transform: rotate(180deg);
 }
 
 .cms-subnav {
   display: flex;
   flex-direction: column;
-  gap: 3px;
-  padding-left: 32px;
+  gap: 4px;
+  margin-left: 21px;
+  border-left: 1px solid #e6ebef;
+  padding-left: 11px;
 }
 
 .cms-subnav button {
-  min-height: 34px;
-  border-radius: 9px;
+  min-height: 32px;
+  border-radius: 8px;
   padding: 0 10px;
   color: #69747d;
   font-size: 13px;
   font-weight: 800;
+}
+
+.cms-subnav button.is-active {
+  background: var(--blue-soft);
+  box-shadow: inset 3px 0 0 var(--blue);
+  color: #0050cc;
 }
 
 .cms-nav-icon {
@@ -2795,7 +2822,7 @@ body:has(.cms-shell) {
 }
 
 .cms-nav button.is-active .cms-nav-icon,
-.cms-nav button.is-parent-active .cms-nav-icon {
+.cms-nav button.cms-nav-parent.is-section-active .cms-nav-icon {
   opacity: 0.9;
 }
 
@@ -2857,7 +2884,8 @@ body:has(.cms-shell) {
 .cms-shell.is-sidebar-collapsed .cms-brand div,
 .cms-shell.is-sidebar-collapsed .cms-account div,
 .cms-shell.is-sidebar-collapsed .cms-nav-label,
-.cms-shell.is-sidebar-collapsed .cms-subnav {
+.cms-shell.is-sidebar-collapsed .cms-subnav,
+.cms-shell.is-sidebar-collapsed .cms-nav-caret {
   display: none;
 }
 

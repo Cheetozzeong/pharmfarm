@@ -8877,6 +8877,17 @@ function CmsSidebar({
   const accountDisplay = getCmsAccountDisplay(account);
   const isInventorySection =
     page === "inventory" || page === "inventory-shortages";
+  const [inventoryExpanded, setInventoryExpanded] =
+    useState(isInventorySection);
+
+  useEffect(() => {
+    if (isInventorySection) setInventoryExpanded(true);
+  }, [isInventorySection]);
+
+  const inventorySubItems: Array<[CmsPage, string, string]> = [
+    ["inventory", "재고 목록", "/cms/inventory"],
+    ["inventory-shortages", "초과 처방", "/cms/inventory/shortages"],
+  ];
 
   return (
     <aside className="cms-sidebar">
@@ -8903,32 +8914,42 @@ function CmsSidebar({
       <nav className="cms-nav">
         {items.map(([key, label, href, icon]) =>
           key === "inventory" ? (
-            <div className="cms-nav-group" key={key}>
+            <div
+              className={`cms-nav-group ${inventoryExpanded ? "is-open" : ""}`}
+              key={key}
+            >
               <button
-                className={
-                  page === "inventory"
-                    ? "is-active"
-                    : isInventorySection
-                      ? "is-parent-active"
-                      : ""
-                }
+                aria-expanded={inventoryExpanded}
+                className={`cms-nav-parent ${
+                  isInventorySection ? "is-section-active" : ""
+                }`}
                 type="button"
                 title={label}
-                onClick={() => navigate(href)}
+                onClick={() => setInventoryExpanded((current) => !current)}
               >
                 <img className="cms-nav-icon" src={icon} alt="" aria-hidden />
                 <span className="cms-nav-label">{label}</span>
+                <ChevronDown
+                  className="cms-nav-caret"
+                  size={15}
+                  strokeWidth={2.6}
+                />
               </button>
-              <div className="cms-subnav">
-                <button
-                  className={page === "inventory-shortages" ? "is-active" : ""}
-                  type="button"
-                  title="초과 처방"
-                  onClick={() => navigate("/cms/inventory/shortages")}
-                >
-                  <span className="cms-nav-label">초과 처방</span>
-                </button>
-              </div>
+              {inventoryExpanded && (
+                <div className="cms-subnav" aria-label="재고 하위 메뉴">
+                  {inventorySubItems.map(([subKey, subLabel, subHref]) => (
+                    <button
+                      className={page === subKey ? "is-active" : ""}
+                      key={subKey}
+                      type="button"
+                      title={subLabel}
+                      onClick={() => navigate(subHref)}
+                    >
+                      <span className="cms-nav-label">{subLabel}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
           ) : (
             <button
