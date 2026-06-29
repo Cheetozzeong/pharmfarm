@@ -153,6 +153,38 @@ function Get-AgentTimestamp {
   return [DateTimeOffset]::Now.ToString("o")
 }
 
+function Convert-AgentLocalDateTimeOffset {
+  param($Value)
+
+  if ($null -eq $Value -or [string]::IsNullOrWhiteSpace($Value.ToString())) {
+    return ""
+  }
+
+  $text = $Value.ToString().Trim()
+  $dateTime = [DateTime]::MinValue
+  $styles = [System.Globalization.DateTimeStyles]::AllowWhiteSpaces
+  $cultures = @(
+    [System.Globalization.CultureInfo]::GetCultureInfo("ko-KR"),
+    [System.Globalization.CultureInfo]::InvariantCulture,
+    [System.Globalization.CultureInfo]::CurrentCulture
+  )
+
+  foreach ($culture in $cultures) {
+    if ([DateTime]::TryParse($text, $culture, $styles, [ref]$dateTime)) {
+      if ($dateTime.Kind -eq [DateTimeKind]::Utc) {
+        return ([DateTimeOffset]$dateTime).ToString("o")
+      }
+
+      $localDateTime = [DateTime]::SpecifyKind($dateTime, [DateTimeKind]::Unspecified)
+      $offset = [TimeZoneInfo]::Local.GetUtcOffset($localDateTime)
+      $dateTimeOffset = New-Object System.DateTimeOffset -ArgumentList $localDateTime, $offset
+      return $dateTimeOffset.ToString("o")
+    }
+  }
+
+  return $text
+}
+
 function Get-SyncStatePath {
   param([string]$Kind)
   return Join-Path $SyncStateDir ("{0}.hashes.json" -f $Kind)
@@ -1295,7 +1327,7 @@ function New-AgentEnvelope {
       pharmacyId = Convert-NullableInt $Config.pharmacyId
       deviceId = $Config.deviceId
       deviceName = $Config.deviceName
-      agentVersion = "1.1.0-ps"
+      agentVersion = "1.1.1-ps"
       batchId = "$Kind-$($eventId.Substring(0, 16))-$Part-$TotalParts"
       capturedAt = $now
       items = $Items
@@ -1579,7 +1611,8 @@ function New-Payload {
   }
 
   $items = New-Object System.Collections.Generic.List[object]
-  $psDate = if ($QrRow.ps_Date) { $QrRow.ps_Date.ToString() } else { "" }
+  $psDateRaw = if ($QrRow.ps_Date) { $QrRow.ps_Date.ToString() } else { "" }
+  $psDate = Convert-AgentLocalDateTimeOffset $QrRow.ps_Date
 
   foreach ($drug in $DrugRows) {
     $lineNo = Convert-NullableInt $drug.pd_no
@@ -1594,7 +1627,10 @@ function New-Payload {
       prescriptionCode = $prescriptionCode
       pd_code = $prescriptionCode
       ps_code = $prescriptionCode
+      dosedAt = $psDate
+      ps_dosed_at = $psDate
       ps_dosdate = $psDate
+      ps_dosdate_raw = $psDateRaw
       lineNo = $lineNo
       pd_no = $lineNo
       insuranceCode = $insuranceCode
@@ -1631,7 +1667,7 @@ function New-Payload {
       pharmacyId = Convert-NullableInt $Config.pharmacyId
       deviceId = $Config.deviceId
       deviceName = $Config.deviceName
-      agentVersion = "1.1.0-ps"
+      agentVersion = "1.1.1-ps"
       batchId = "prescription-$($eventId.Substring(0, 16))"
       capturedAt = $now
       items = $items.ToArray()
@@ -1917,7 +1953,7 @@ try {
   }
 
   if (!$config.pharmacyId) {
-    Write-AgentLog "missing pharmacyId in config. Re-run installer and enter CMS pharmacy ID." "ERROR"
+    Write-AgentLog "missing pharmacyId in config. Re-run installer and enter 관리자 페이지 pharmacy ID." "ERROR"
     Write-State -Config $config -Status "ERROR" -Message "missing pharmacyId"
     exit 1
   }

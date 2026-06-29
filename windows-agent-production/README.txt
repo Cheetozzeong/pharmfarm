@@ -59,7 +59,7 @@ Recommended operation:
 
 1. Double-click install-pharmfarm-agent.bat.
 2. Keep the default API unless the server changes.
-3. Enter the CMS pharmacy ID. This must match pharmfarm_pharmacy.id on the server.
+3. Enter the 관리자 페이지 pharmacy ID. This must match pharmfarm_pharmacy.id on the server.
 4. Keep SQL Server as .\EPHARM_DB unless the pharmacy PC differs.
 5. Set a device alias that is easy to recognize in the web admin.
 6. Leave "Include raw QR text" unchecked for production.

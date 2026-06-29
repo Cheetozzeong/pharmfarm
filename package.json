@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "local": "VITE_PHARMFARM_API_BASE=http://127.0.0.1:8084/api/v1/pharmfarm vite --host 127.0.0.1 --mode localdev",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "mobile": "pnpm --dir mobile start",
