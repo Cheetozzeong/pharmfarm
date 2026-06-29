@@ -6499,6 +6499,16 @@ type CmsStockControlledFilter =
   | "NON_CONTROLLED"
   | "VIRTUAL";
 type CmsStockSearchStatus = "idle" | "short" | "loading" | "done" | "error";
+type CmsStockSnapshotSyncSummary = {
+  type: string;
+  pharmacyId: string;
+  synced: number;
+  snapshotRows: number;
+  snapshotDrugCount: number;
+  positiveDrugCount: number;
+  zeroDrugCount: number;
+  negativeDrugCount: number;
+};
 type CmsDeductionResolution =
   | "VIRTUAL_DRUG"
   | "EXISTING_STOCK"
@@ -7020,6 +7030,10 @@ function canViewAmountCms(account?: AuthAccount | null) {
   return (
     role === "ADMIN" || role === "PHARMACY_OWNER" || accountType === "PRIMARY"
   );
+}
+
+function canSyncStockSnapshotCms(account?: AuthAccount | null) {
+  return canAccessRootCms(account) || account?.role?.toUpperCase() === "ADMIN";
 }
 
 function cmsGreetingRoleLabel(account?: AuthAccount | null) {
@@ -7744,6 +7758,26 @@ function CmsApp({
     [cmsFallback],
   );
 
+  async function syncStocksFromSnapshot() {
+    try {
+      const response = await apiFetch<unknown>("/stocks/sync-snapshot", {
+        method: "POST",
+      });
+      const summary = normalizeStockSnapshotSyncSummary(response);
+      const refreshKeyword =
+        normalizeSearchText(stockQuery).length === 1 ? "" : stockQuery;
+      await searchCmsStocks(refreshKeyword, stockControlledFilter);
+      setApiState("connected");
+      setApiMessage(
+        `에이전트 재고 재동기화 완료 · ${currency(summary.synced)}종 반영`,
+      );
+      return summary;
+    } catch (error) {
+      cmsFallback(error);
+      throw error;
+    }
+  }
+
   async function createCmsStock(draft: CmsStockCreateDraft) {
     try {
       const response = await apiFetch<unknown>("/stocks", {
@@ -8216,6 +8250,7 @@ function CmsApp({
               searchStatus={cmsStockSearchStatus}
               selectedStock={selectedStock}
               stocks={stocks}
+              canSyncSnapshot={canSyncStockSnapshotCms(authAccount)}
               onAdjust={adjustStock}
               onAdjustDirection={setAdjustDirection}
               onAdjustMemo={setAdjustMemo}
@@ -8229,6 +8264,7 @@ function CmsApp({
               onQuery={setStockQuery}
               onSearch={searchCmsStocks}
               onSelect={setSelectedStockId}
+              onSyncSnapshot={syncStocksFromSnapshot}
               onUpdatePrice={updateCmsStockPrice}
             />
           )}
@@ -8360,6 +8396,28 @@ function deductionPayload(raw: unknown): unknown[] {
 
   if (isDeductionLikePayload(item)) return [item];
   return [];
+}
+
+function normalizeStockSnapshotSyncSummary(
+  raw: unknown,
+): CmsStockSnapshotSyncSummary {
+  const item = unwrapObjectPayload(raw);
+  return {
+    type: optionalText(item.type) || "STOCKS_SNAPSHOT_SYNC",
+    pharmacyId: optionalText(item.pharmacyId ?? item.pharmacy_id) ?? "",
+    synced: finiteNumber(item.synced),
+    snapshotRows: finiteNumber(item.snapshotRows ?? item.snapshot_rows),
+    snapshotDrugCount: finiteNumber(
+      item.snapshotDrugCount ?? item.snapshot_drug_count,
+    ),
+    positiveDrugCount: finiteNumber(
+      item.positiveDrugCount ?? item.positive_drug_count,
+    ),
+    zeroDrugCount: finiteNumber(item.zeroDrugCount ?? item.zero_drug_count),
+    negativeDrugCount: finiteNumber(
+      item.negativeDrugCount ?? item.negative_drug_count,
+    ),
+  };
 }
 
 function isDeductionLikePayload(raw: unknown) {
@@ -10004,6 +10062,7 @@ function CmsInventoryPage({
   searchStatus,
   selectedStock,
   stocks,
+  canSyncSnapshot,
   onAdjust,
   onAdjustDirection,
   onAdjustMemo,
@@ -10015,6 +10074,7 @@ function CmsInventoryPage({
   onQuery,
   onSearch,
   onSelect,
+  onSyncSnapshot,
   onUpdatePrice,
 }: {
   adjustDirection: "INCREASE" | "DECREASE";
@@ -10026,6 +10086,7 @@ function CmsInventoryPage({
   searchStatus: CmsStockSearchStatus;
   selectedStock?: StockItem;
   stocks: StockItem[];
+  canSyncSnapshot: boolean;
   onAdjust: () => void;
   onAdjustDirection: (value: "INCREASE" | "DECREASE") => void;
   onAdjustMemo: (value: string) => void;
@@ -10040,6 +10101,7 @@ function CmsInventoryPage({
     controlledFilter: CmsStockControlledFilter,
   ) => void;
   onSelect: (id: string) => void;
+  onSyncSnapshot: () => Promise<CmsStockSnapshotSyncSummary>;
   onUpdatePrice: (stock: StockItem, price: number) => Promise<boolean>;
 }) {
   const [sheetMode, setSheetMode] = useState<
@@ -10050,6 +10112,11 @@ function CmsInventoryPage({
     emptyCmsStockCreateDraft,
   );
   const [priceDraft, setPriceDraft] = useState(0);
+  const [syncModalOpen, setSyncModalOpen] = useState(false);
+  const [syncRunning, setSyncRunning] = useState(false);
+  const [syncResult, setSyncResult] =
+    useState<CmsStockSnapshotSyncSummary | null>(null);
+  const [syncError, setSyncError] = useState("");
   const normalizedQuery = normalizeSearchText(query);
   const stockPagination = usePagination(
     stocks,
@@ -10108,6 +10175,23 @@ function CmsInventoryPage({
     if (!sheetStock) return;
     const saved = await onUpdatePrice(sheetStock, priceDraft);
     if (saved) setSheetMode(null);
+  }
+
+  async function confirmSnapshotSync() {
+    setSyncRunning(true);
+    setSyncError("");
+    try {
+      const result = await onSyncSnapshot();
+      setSyncResult(result);
+    } catch (error) {
+      setSyncError(
+        error instanceof Error
+          ? userFacingConnectionMessage(error.message)
+          : "재고 재동기화에 실패했습니다.",
+      );
+    } finally {
+      setSyncRunning(false);
+    }
   }
 
   return (
@@ -10175,13 +10259,29 @@ function CmsInventoryPage({
               ))}
             </div>
           </div>
-          <button
-            className="cms-primary cms-toolbar-action cms-inventory-create-button"
-            type="button"
-            onClick={openCreateSheet}
-          >
-            약품 생성
-          </button>
+          <div className="cms-toolbar-actions">
+            {canSyncSnapshot && (
+              <button
+                className="cms-secondary cms-toolbar-action cms-inventory-sync-button"
+                type="button"
+                onClick={() => {
+                  setSyncResult(null);
+                  setSyncError("");
+                  setSyncModalOpen(true);
+                }}
+              >
+                <RefreshCw size={14} strokeWidth={2.5} />
+                재고 재동기화
+              </button>
+            )}
+            <button
+              className="cms-primary cms-toolbar-action cms-inventory-create-button"
+              type="button"
+              onClick={openCreateSheet}
+            >
+              약품 생성
+            </button>
+          </div>
         </div>
         <div className="cms-table-scroll">
           <div className="cms-table inventory">
@@ -10247,6 +10347,74 @@ function CmsInventoryPage({
         </div>
         <CmsPagination {...stockPagination} />
       </div>
+      {syncModalOpen && (
+        <CmsModal
+          title="에이전트 재고 재동기화"
+          subtitle="현재 로그인한 약국의 스냅샷 전체 기준"
+          variant="confirm"
+          onClose={() => {
+            if (!syncRunning) setSyncModalOpen(false);
+          }}
+        >
+          <div className="cms-sync-confirm">
+            <div className="cms-resolution-confirm-card is-stock">
+              <span>동기화 방식</span>
+              <strong>같은 보험코드는 기존 재고를 업데이트합니다.</strong>
+              <em>
+                스냅샷을 보험코드별로 합산해 수량을 다시 맞추며, 0개와
+                음수 재고도 반영됩니다.
+              </em>
+            </div>
+            {syncResult ? (
+              <div className="cms-sync-result-grid">
+                <CmsReadonlyItem
+                  label="스냅샷 row"
+                  value={`${currency(syncResult.snapshotRows)}건`}
+                />
+                <CmsReadonlyItem
+                  label="반영 약품"
+                  value={`${currency(syncResult.synced)}종`}
+                />
+                <CmsReadonlyItem
+                  label="0개 재고"
+                  value={`${currency(syncResult.zeroDrugCount)}종`}
+                />
+                <CmsReadonlyItem
+                  label="음수 재고"
+                  tone="red"
+                  value={`${currency(syncResult.negativeDrugCount)}종`}
+                />
+              </div>
+            ) : (
+              <p>
+                이미 생성된 재고는 중복으로 만들지 않고 현재 스냅샷 수량으로
+                갱신합니다. 스냅샷에 없는 기존 재고는 삭제하지 않습니다.
+              </p>
+            )}
+            {syncError && <p className="cms-sync-error">{syncError}</p>}
+            <div className="cms-confirm-actions">
+              <button
+                className="cms-confirm-button"
+                disabled={syncRunning}
+                type="button"
+                onClick={() => setSyncModalOpen(false)}
+              >
+                {syncResult ? "닫기" : "취소"}
+              </button>
+              {!syncResult && (
+                <button
+                  className="cms-confirm-button is-primary"
+                  disabled={syncRunning}
+                  type="button"
+                  onClick={confirmSnapshotSync}
+                >
+                  {syncRunning ? "동기화 중" : "재동기화 실행"}
+                </button>
+              )}
+            </div>
+          </div>
+        </CmsModal>
+      )}
       {sheetMode && (
         <div
           className="cms-sheet-backdrop"

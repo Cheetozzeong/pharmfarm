@@ -4150,6 +4150,32 @@ body:has(.cms-shell) {
   white-space: nowrap;
 }
 
+.cms-toolbar-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.cms-toolbar .cms-inventory-sync-button {
+  display: inline-flex;
+  width: auto;
+  min-width: auto;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 0 12px;
+  border-radius: 9px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.cms-inventory-sync-button svg {
+  flex: 0 0 auto;
+}
+
 .cms-pills {
   display: flex;
   flex-wrap: nowrap;
@@ -5339,6 +5365,30 @@ body:has(.cms-shell) {
   border-color: rgba(0, 100, 255, 0.26);
   background: var(--blue);
   color: #fff;
+}
+
+.cms-sync-confirm {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.cms-sync-confirm p {
+  margin: 0;
+  color: #4f5964;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.55;
+}
+
+.cms-sync-result-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.cms-sync-error {
+  color: var(--red) !important;
 }
 
 .cms-readonly-grid {
@@ -6978,6 +7028,16 @@ body:has(.cms-shell) {
 
   .cms-toolbar-action {
     width: 200px;
+  }
+
+  .cms-toolbar-actions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .cms-toolbar .cms-inventory-sync-button,
+  .cms-toolbar .cms-inventory-create-button {
+    flex: 1 1 150px;
   }
 
   .cms-search,
