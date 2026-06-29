@@ -7758,11 +7758,17 @@ function CmsApp({
     [cmsFallback],
   );
 
-  async function syncStocksFromSnapshot() {
+  async function syncStocksFromSnapshot(targetPharmacyId?: string) {
     try {
-      const response = await apiFetch<unknown>("/stocks/sync-snapshot", {
+      const params = new URLSearchParams();
+      const trimmedPharmacyId = targetPharmacyId?.trim();
+      if (trimmedPharmacyId) params.set("pharmacyId", trimmedPharmacyId);
+      const response = await apiFetch<unknown>(
+        `/stocks/sync-snapshot${params.toString() ? `?${params}` : ""}`,
+        {
         method: "POST",
-      });
+        },
+      );
       const summary = normalizeStockSnapshotSyncSummary(response);
       const refreshKeyword =
         normalizeSearchText(stockQuery).length === 1 ? "" : stockQuery;
@@ -8251,6 +8257,7 @@ function CmsApp({
               selectedStock={selectedStock}
               stocks={stocks}
               canSyncSnapshot={canSyncStockSnapshotCms(authAccount)}
+              syncSnapshotDefaultPharmacyId={authAccount?.pharmacyId ?? ""}
               onAdjust={adjustStock}
               onAdjustDirection={setAdjustDirection}
               onAdjustMemo={setAdjustMemo}
@@ -10063,6 +10070,7 @@ function CmsInventoryPage({
   selectedStock,
   stocks,
   canSyncSnapshot,
+  syncSnapshotDefaultPharmacyId,
   onAdjust,
   onAdjustDirection,
   onAdjustMemo,
@@ -10087,6 +10095,7 @@ function CmsInventoryPage({
   selectedStock?: StockItem;
   stocks: StockItem[];
   canSyncSnapshot: boolean;
+  syncSnapshotDefaultPharmacyId: string;
   onAdjust: () => void;
   onAdjustDirection: (value: "INCREASE" | "DECREASE") => void;
   onAdjustMemo: (value: string) => void;
@@ -10101,7 +10110,9 @@ function CmsInventoryPage({
     controlledFilter: CmsStockControlledFilter,
   ) => void;
   onSelect: (id: string) => void;
-  onSyncSnapshot: () => Promise<CmsStockSnapshotSyncSummary>;
+  onSyncSnapshot: (
+    targetPharmacyId: string,
+  ) => Promise<CmsStockSnapshotSyncSummary>;
   onUpdatePrice: (stock: StockItem, price: number) => Promise<boolean>;
 }) {
   const [sheetMode, setSheetMode] = useState<
@@ -10117,6 +10128,9 @@ function CmsInventoryPage({
   const [syncResult, setSyncResult] =
     useState<CmsStockSnapshotSyncSummary | null>(null);
   const [syncError, setSyncError] = useState("");
+  const [syncPharmacyId, setSyncPharmacyId] = useState(
+    syncSnapshotDefaultPharmacyId,
+  );
   const normalizedQuery = normalizeSearchText(query);
   const stockPagination = usePagination(
     stocks,
@@ -10154,6 +10168,10 @@ function CmsInventoryPage({
     return () => window.clearTimeout(timer);
   }, [controlledFilter, onSearch, query]);
 
+  useEffect(() => {
+    setSyncPharmacyId(syncSnapshotDefaultPharmacyId);
+  }, [syncSnapshotDefaultPharmacyId]);
+
   async function submitCreateStock(event: FormEvent) {
     event.preventDefault();
     if (!canCreateStock) return;
@@ -10178,10 +10196,14 @@ function CmsInventoryPage({
   }
 
   async function confirmSnapshotSync() {
+    if (!syncPharmacyId.trim()) {
+      setSyncError("대상 약국 ID를 입력해 주세요.");
+      return;
+    }
     setSyncRunning(true);
     setSyncError("");
     try {
-      const result = await onSyncSnapshot();
+      const result = await onSyncSnapshot(syncPharmacyId);
       setSyncResult(result);
     } catch (error) {
       setSyncError(
@@ -10267,6 +10289,7 @@ function CmsInventoryPage({
                 onClick={() => {
                   setSyncResult(null);
                   setSyncError("");
+                  setSyncPharmacyId(syncSnapshotDefaultPharmacyId);
                   setSyncModalOpen(true);
                 }}
               >
@@ -10357,6 +10380,18 @@ function CmsInventoryPage({
           }}
         >
           <div className="cms-sync-confirm">
+            <label className="cms-input">
+              <span>대상 약국 ID</span>
+              <input
+                inputMode="numeric"
+                placeholder="예: 4"
+                value={syncPharmacyId}
+                disabled={syncRunning || Boolean(syncResult)}
+                onChange={(event) =>
+                  setSyncPharmacyId(event.target.value.replace(/[^\d]/g, ""))
+                }
+              />
+            </label>
             <div className="cms-resolution-confirm-card is-stock">
               <span>동기화 방식</span>
               <strong>같은 보험코드는 기존 재고를 업데이트합니다.</strong>
@@ -10367,6 +10402,10 @@ function CmsInventoryPage({
             </div>
             {syncResult ? (
               <div className="cms-sync-result-grid">
+                <CmsReadonlyItem
+                  label="대상 약국"
+                  value={`${syncResult.pharmacyId || syncPharmacyId}번`}
+                />
                 <CmsReadonlyItem
                   label="스냅샷 row"
                   value={`${currency(syncResult.snapshotRows)}건`}
@@ -10404,7 +10443,7 @@ function CmsInventoryPage({
               {!syncResult && (
                 <button
                   className="cms-confirm-button is-primary"
-                  disabled={syncRunning}
+                  disabled={syncRunning || !syncPharmacyId.trim()}
                   type="button"
                   onClick={confirmSnapshotSync}
                 >
