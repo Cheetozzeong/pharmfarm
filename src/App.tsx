@@ -8916,10 +8916,7 @@ function CmsSidebar({
                 title={label}
                 onClick={() => navigate(href)}
               >
-                <span
-                  className="cms-nav-icon"
-                  style={{ "--icon-url": `url(${icon})` } as CSSProperties}
-                />
+                <img className="cms-nav-icon" src={icon} alt="" aria-hidden />
                 <span className="cms-nav-label">{label}</span>
               </button>
               <div className="cms-subnav">
@@ -8941,10 +8938,7 @@ function CmsSidebar({
               title={label}
               onClick={() => navigate(href)}
             >
-              <span
-                className="cms-nav-icon"
-                style={{ "--icon-url": `url(${icon})` } as CSSProperties}
-              />
+              <img className="cms-nav-icon" src={icon} alt="" aria-hidden />
               <span className="cms-nav-label">{label}</span>
             </button>
           ),
