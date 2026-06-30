@@ -3576,6 +3576,12 @@ body:has(.cms-shell) {
   padding: 10px;
 }
 
+.cms-kpis.compact4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 16px;
+  padding: 10px;
+}
+
 .dashboard-kpis {
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 148px), 1fr));
   margin-bottom: 0;

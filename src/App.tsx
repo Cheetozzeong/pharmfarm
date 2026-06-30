@@ -10189,7 +10189,7 @@ function CmsDashboard({
           onAction={() => navigate("/cms/inventory")}
         >
           <div
-            className={`cms-kpis compact dashboard-kpis ${
+            className={`cms-kpis compact4 dashboard-kpis ${
               canViewAmounts ? "" : "is-amount-hidden"
             }`}
           >
@@ -11765,9 +11765,7 @@ function CmsInventoryShortagePage({
                       >
                         <div className="cms-prescription-line-index">
                           <span>처방 품목</span>
-                          <strong>
-                            {String(drug.lineNo || index + 1).padStart(2, "0")}
-                          </strong>
+                          <strong>{String(index + 1).padStart(2, "0")}</strong>
                         </div>
                         <div className="cms-prescription-line-main">
                           <strong>{drug.drugName}</strong>
