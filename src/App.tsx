@@ -11541,7 +11541,7 @@ function CmsInventoryShortagePage({
 
   return (
     <section className="cms-content cms-list-page cms-shortage-page">
-      <div className="cms-shortage-header">
+      {/* <div className="cms-shortage-header">
         {detailMode && (
           <button type="button" onClick={onBack}>
             초과 처방 목록
@@ -11551,9 +11551,9 @@ function CmsInventoryShortagePage({
           <strong>초과 처방 약품</strong>
           <span>재고를 0까지 차감한 뒤 남은 부족 수량을 관리합니다.</span>
         </div>
-      </div>
+      </div> */}
 
-      <div className="cms-kpis compact">
+      <div className="cms-kpis compact4">
         <CmsKpi
           label="주문 필요"
           value={`${orderNeededRecords.length}`}
@@ -11989,7 +11989,7 @@ function CmsReturnReviewPage({
 
   return (
     <section className="cms-content cms-list-page cms-shortage-page">
-      <div className="cms-shortage-header">
+      {/* <div className="cms-shortage-header">
         {detailMode && (
           <button type="button" onClick={onBack}>
             반품 확인 목록
@@ -12002,9 +12002,9 @@ function CmsReturnReviewPage({
             선택 후 처리합니다.
           </span>
         </div>
-      </div>
+      </div> */}
 
-      <div className="cms-kpis compact">
+      <div className="cms-kpis compact3">
         <CmsKpi
           label="확인 필요"
           value={`${openRecords.length}`}
@@ -12957,7 +12957,7 @@ function CmsPrescriptionPage({
         </button>
       </div> */}
 
-      <div className="cms-kpis compact prescription-kpis">
+      <div className="cms-kpis compact4 prescription-kpis">
         <CmsKpi label="차감 기록" value={`${records.length}`} unit="건" />
         <CmsKpi
           label="자동 차감"
