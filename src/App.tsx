@@ -7455,6 +7455,9 @@ function CmsApp({
   const canAccessMasterData = canAccessMasterDataCms(authAccount);
   const visiblePage =
     canAccessMasterData || !isRestrictedCmsPage(page) ? page : "dashboard";
+  const previousVisiblePageRef = useRef(visiblePage);
+  const previousShortageRouteIdRef = useRef(shortageRouteId);
+  const previousReturnReviewRouteIdRef = useRef(returnReviewRouteId);
 
   const selectedMaster =
     masters.find((master) => master.id === selectedMasterId) ?? masters[0];
@@ -7484,12 +7487,10 @@ function CmsApp({
   );
   const activeShortageId = shortageRouteId || selectedShortageId;
   const selectedShortage =
-    shortageRecords.find((record) => record.id === activeShortageId) ??
-    (shortageRouteId ? undefined : shortageRecords[0]);
+    shortageRecords.find((record) => record.id === activeShortageId);
   const activeReturnReviewId = returnReviewRouteId || selectedReturnReviewId;
   const selectedReturnReview =
-    returnReviews.find((record) => record.id === activeReturnReviewId) ??
-    (returnReviewRouteId ? undefined : returnReviews[0]);
+    returnReviews.find((record) => record.id === activeReturnReviewId);
   const hasCmsSession = hasStoredAuthTokens();
   const effectiveSidebarCollapsed = sidebarCollapsed && !compactCmsNav;
 
@@ -7547,7 +7548,7 @@ function CmsApp({
       return;
     }
     if (!shortageRecords.some((record) => record.id === selectedShortageId)) {
-      setSelectedShortageId(shortageRecords[0].id);
+      setSelectedShortageId("");
     }
   }, [selectedShortageId, shortageRecords, shortageRouteId]);
 
@@ -7563,9 +7564,36 @@ function CmsApp({
       return;
     }
     if (!returnReviews.some((record) => record.id === selectedReturnReviewId)) {
-      setSelectedReturnReviewId(returnReviews[0].id);
+      setSelectedReturnReviewId("");
     }
   }, [returnReviewRouteId, returnReviews, selectedReturnReviewId]);
+
+  useEffect(() => {
+    const previousVisiblePage = previousVisiblePageRef.current;
+    const previousShortageRouteId = previousShortageRouteIdRef.current;
+    const previousReturnReviewRouteId = previousReturnReviewRouteIdRef.current;
+
+    previousVisiblePageRef.current = visiblePage;
+    previousShortageRouteIdRef.current = shortageRouteId;
+    previousReturnReviewRouteIdRef.current = returnReviewRouteId;
+
+    if (
+      visiblePage === "inventory-shortages" &&
+      !shortageRouteId &&
+      (previousVisiblePage !== "inventory-shortages" || previousShortageRouteId)
+    ) {
+      setSelectedShortageId("");
+      setSelectedShortageDetail(null);
+    }
+
+    if (
+      visiblePage === "return-reviews" &&
+      !returnReviewRouteId &&
+      (previousVisiblePage !== "return-reviews" || previousReturnReviewRouteId)
+    ) {
+      setSelectedReturnReviewId("");
+    }
+  }, [returnReviewRouteId, shortageRouteId, visiblePage]);
 
   useEffect(() => {
     setEditingWholesalerName(selectedWholesaler?.name ?? "");
@@ -8797,11 +8825,9 @@ function CmsApp({
               records={shortageRecords}
               selectedRecord={selectedShortage}
               onBack={() =>
-                navigate(
-                  shortageRouteId
-                    ? "/cms/inventory/shortages"
-                    : "/cms/inventory",
-                )
+                shortageRouteId
+                  ? navigate("/cms/inventory/shortages")
+                  : setSelectedShortageId("")
               }
               onOpenDetail={(record) =>
                 navigate(
@@ -8819,11 +8845,9 @@ function CmsApp({
               selectedRecord={selectedReturnReview}
               stocks={stocks}
               onBack={() =>
-                navigate(
-                  returnReviewRouteId
-                    ? "/cms/inventory/returns"
-                    : "/cms/inventory",
-                )
+                returnReviewRouteId
+                  ? navigate("/cms/inventory/returns")
+                  : setSelectedReturnReviewId("")
               }
               onOpenDetail={(record) =>
                 navigate(
@@ -9567,14 +9591,39 @@ function CmsSidebar({
   const [inventoryExpanded, setInventoryExpanded] =
     useState(isInventorySection);
   const [inventoryFlyoutOpen, setInventoryFlyoutOpen] = useState(false);
+  const inventoryFlyoutCloseTimerRef = useRef<number | null>(null);
+
+  function clearInventoryFlyoutCloseTimer() {
+    if (inventoryFlyoutCloseTimerRef.current === null) return;
+    window.clearTimeout(inventoryFlyoutCloseTimerRef.current);
+    inventoryFlyoutCloseTimerRef.current = null;
+  }
+
+  function openInventoryFlyout() {
+    if (!collapsed) return;
+    clearInventoryFlyoutCloseTimer();
+    setInventoryFlyoutOpen(true);
+  }
+
+  function closeInventoryFlyoutSoon() {
+    if (!collapsed) return;
+    clearInventoryFlyoutCloseTimer();
+    inventoryFlyoutCloseTimerRef.current = window.setTimeout(() => {
+      setInventoryFlyoutOpen(false);
+      inventoryFlyoutCloseTimerRef.current = null;
+    }, 220);
+  }
 
   useEffect(() => {
     if (isInventorySection) setInventoryExpanded(true);
   }, [isInventorySection]);
 
   useEffect(() => {
+    clearInventoryFlyoutCloseTimer();
     setInventoryFlyoutOpen(false);
   }, [collapsed, page]);
+
+  useEffect(() => () => clearInventoryFlyoutCloseTimer(), []);
 
   const inventorySubItems: Array<[CmsPage, string, string]> = [
     ["inventory", "재고 목록", "/cms/inventory"],
@@ -9585,6 +9634,7 @@ function CmsSidebar({
 
   function handleInventoryParentClick() {
     if (collapsed) {
+      clearInventoryFlyoutCloseTimer();
       setInventoryFlyoutOpen((current) => !current);
       return;
     }
@@ -9628,10 +9678,11 @@ function CmsSidebar({
                   !(nextTarget instanceof Node) ||
                   !event.currentTarget.contains(nextTarget)
                 ) {
-                  setInventoryFlyoutOpen(false);
+                  closeInventoryFlyoutSoon();
                 }
               }}
-              onMouseLeave={() => setInventoryFlyoutOpen(false)}
+              onMouseEnter={openInventoryFlyout}
+              onMouseLeave={closeInventoryFlyoutSoon}
             >
               <button
                 aria-expanded={
@@ -9654,7 +9705,11 @@ function CmsSidebar({
                 />
               </button>
               {showInventorySubnav && (
-                <div className="cms-subnav" aria-label="재고 하위 메뉴">
+                <div
+                  className="cms-subnav"
+                  aria-label="재고 하위 메뉴"
+                  onMouseEnter={openInventoryFlyout}
+                >
                   {inventorySubItems.map(([subKey, subLabel, subHref]) => (
                     <button
                       className={page === subKey ? "is-active" : ""}
@@ -9662,6 +9717,7 @@ function CmsSidebar({
                       type="button"
                       title={subLabel}
                       onClick={() => {
+                        clearInventoryFlyoutCloseTimer();
                         setInventoryFlyoutOpen(false);
                         navigate(subHref);
                       }}
@@ -11660,21 +11716,22 @@ function CmsInventoryShortagePage({
         ? "주문 완료된 초과 처방 내역이 없습니다."
         : "주문 필요한 초과 처방 내역이 없습니다.";
 
-  useEffect(() => {
-    if (detailMode || visibleRecords.length === 0) return;
-    if (visibleRecords.some((record) => record.id === selectedRecord?.id)) {
-      return;
-    }
-    onSelect(visibleRecords[0]);
-  }, [detailMode, onSelect, selectedRecord?.id, visibleRecords]);
-
   function selectListFilter(nextFilter: CmsShortageListFilter) {
     setListFilter(nextFilter);
-    if (detailMode) onBack();
+    onBack();
   }
 
   return (
     <section className="cms-content cms-list-page cms-shortage-page">
+      {detailMode && (
+        <button
+          className="cms-detail-back-button"
+          type="button"
+          onClick={onBack}
+        >
+          목록으로 돌아가기
+        </button>
+      )}
       {/* <div className="cms-shortage-header">
         {detailMode && (
           <button type="button" onClick={onBack}>
@@ -11687,41 +11744,45 @@ function CmsInventoryShortagePage({
         </div>
       </div> */}
 
-      <div className="cms-kpis compact4">
-        <CmsKpi
-          label="주문 필요"
-          value={`${orderNeededRecords.length}`}
-          unit="건"
-          tone="red"
-        />
-        <CmsKpi
-          label="주문 완료"
-          value={`${orderedRecords.length}`}
-          unit="건"
-          tone="blue"
-        />
-        <CmsKpi label="보류" value={`${holdRecords.length}`} unit="건" />
-        <CmsKpi
-          label="부족 수량"
-          value={currency(totalShortageQuantity)}
-          unit="개"
-          tone="red"
-        />
-      </div>
+      {!detailMode && (
+        <>
+          <div className="cms-kpis compact4">
+            <CmsKpi
+              label="주문 필요"
+              value={`${orderNeededRecords.length}`}
+              unit="건"
+              tone="red"
+            />
+            <CmsKpi
+              label="주문 완료"
+              value={`${orderedRecords.length}`}
+              unit="건"
+              tone="blue"
+            />
+            <CmsKpi label="보류" value={`${holdRecords.length}`} unit="건" />
+            <CmsKpi
+              label="부족 수량"
+              value={currency(totalShortageQuantity)}
+              unit="개"
+              tone="red"
+            />
+          </div>
 
-      <div className="cms-shortage-filter" role="tablist">
-        {shortageFilterItems.map((item) => (
-          <button
-            className={listFilter === item.value ? "is-active" : ""}
-            key={item.value}
-            type="button"
-            onClick={() => selectListFilter(item.value)}
-          >
-            <span>{item.label}</span>
-            <b>{item.count}건</b>
-          </button>
-        ))}
-      </div>
+          <div className="cms-shortage-filter" role="tablist">
+            {shortageFilterItems.map((item) => (
+              <button
+                className={listFilter === item.value ? "is-active" : ""}
+                key={item.value}
+                type="button"
+                onClick={() => selectListFilter(item.value)}
+              >
+                <span>{item.label}</span>
+                <b>{item.count}건</b>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       <div className={`cms-shortage-layout ${detailMode ? "is-detail" : ""}`}>
         {!detailMode && (
@@ -11788,12 +11849,31 @@ function CmsInventoryShortagePage({
           </div>
         )}
 
-        <aside className="cms-shortage-detail-card">
+        {(detailMode || activeRecord) && (
+          <>
+            {!detailMode && (
+              <button
+                aria-label="상세 닫기"
+                className="cms-side-sheet-backdrop"
+                type="button"
+                onClick={onBack}
+              />
+            )}
+            <aside className="cms-shortage-detail-card">
           {!activeRecord ? (
             <p className="cms-empty">선택된 초과 처방 항목이 없습니다.</p>
           ) : (
             <>
               <div className="cms-shortage-detail-head">
+                {!detailMode && (
+                  <button
+                    className="cms-sheet-close-inline"
+                    type="button"
+                    onClick={onBack}
+                  >
+                    닫기
+                  </button>
+                )}
                 <span className="cms-badge missing">
                   {shortageStatusText(activeRecord.shortageStatus)}
                 </span>
@@ -11920,7 +12000,9 @@ function CmsInventoryShortagePage({
               </div>
             </>
           )}
-        </aside>
+            </aside>
+          </>
+        )}
       </div>
     </section>
   );
@@ -12048,14 +12130,6 @@ function CmsReturnReviewPage({
         : "확인 필요한 반품 항목이 없습니다.";
 
   useEffect(() => {
-    if (detailMode || visibleRecords.length === 0) return;
-    if (visibleRecords.some((record) => record.id === selectedRecord?.id)) {
-      return;
-    }
-    onSelect(visibleRecords[0]);
-  }, [detailMode, onSelect, selectedRecord?.id, visibleRecords]);
-
-  useEffect(() => {
     if (!activeRecord) return;
     const normalizedDrugName = normalizeSearchText(activeRecord.drugName ?? "");
     const matchedStock =
@@ -12091,7 +12165,7 @@ function CmsReturnReviewPage({
 
   function selectListFilter(nextFilter: CmsReturnReviewFilter) {
     setListFilter(nextFilter);
-    if (detailMode) onBack();
+    onBack();
   }
 
   function openOtherStockSearch() {
@@ -12123,6 +12197,15 @@ function CmsReturnReviewPage({
 
   return (
     <section className="cms-content cms-list-page cms-shortage-page">
+      {detailMode && (
+        <button
+          className="cms-detail-back-button"
+          type="button"
+          onClick={onBack}
+        >
+          목록으로 돌아가기
+        </button>
+      )}
       {/* <div className="cms-shortage-header">
         {detailMode && (
           <button type="button" onClick={onBack}>
@@ -12138,35 +12221,39 @@ function CmsReturnReviewPage({
         </div>
       </div> */}
 
-      <div className="cms-kpis compact3">
-        <CmsKpi
-          label="확인 필요"
-          value={`${openRecords.length}`}
-          unit="건"
-          tone="red"
-        />
-        <CmsKpi label="보류" value={`${holdRecords.length}`} unit="건" />
-        <CmsKpi
-          label="처리 완료"
-          value={`${resolvedRecords.length}`}
-          unit="건"
-          tone="blue"
-        />
-      </div>
+      {!detailMode && (
+        <>
+          <div className="cms-kpis compact3">
+            <CmsKpi
+              label="확인 필요"
+              value={`${openRecords.length}`}
+              unit="건"
+              tone="red"
+            />
+            <CmsKpi label="보류" value={`${holdRecords.length}`} unit="건" />
+            <CmsKpi
+              label="처리 완료"
+              value={`${resolvedRecords.length}`}
+              unit="건"
+              tone="blue"
+            />
+          </div>
 
-      <div className="cms-shortage-filter" role="tablist">
-        {filterItems.map((item) => (
-          <button
-            className={listFilter === item.value ? "is-active" : ""}
-            key={item.value}
-            type="button"
-            onClick={() => selectListFilter(item.value)}
-          >
-            <span>{item.label}</span>
-            <b>{item.count}건</b>
-          </button>
-        ))}
-      </div>
+          <div className="cms-shortage-filter" role="tablist">
+            {filterItems.map((item) => (
+              <button
+                className={listFilter === item.value ? "is-active" : ""}
+                key={item.value}
+                type="button"
+                onClick={() => selectListFilter(item.value)}
+              >
+                <span>{item.label}</span>
+                <b>{item.count}건</b>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
 
       <div className={`cms-shortage-layout ${detailMode ? "is-detail" : ""}`}>
         {!detailMode && (
@@ -12232,12 +12319,31 @@ function CmsReturnReviewPage({
           </div>
         )}
 
-        <aside className="cms-shortage-detail-card">
+        {(detailMode || activeRecord) && (
+          <>
+            {!detailMode && (
+              <button
+                aria-label="상세 닫기"
+                className="cms-side-sheet-backdrop"
+                type="button"
+                onClick={onBack}
+              />
+            )}
+            <aside className="cms-shortage-detail-card">
           {!activeRecord ? (
             <p className="cms-empty">선택된 반품 확인 항목이 없습니다.</p>
           ) : (
             <>
               <div className="cms-shortage-detail-head">
+                {!detailMode && (
+                  <button
+                    className="cms-sheet-close-inline"
+                    type="button"
+                    onClick={onBack}
+                  >
+                    닫기
+                  </button>
+                )}
                 <span className="cms-badge missing">
                   {returnReviewStatusText(activeRecord.status)}
                 </span>
@@ -12432,7 +12538,9 @@ function CmsReturnReviewPage({
               )}
             </>
           )}
-        </aside>
+            </aside>
+          </>
+        )}
       </div>
 
       {stockSearchOpen && activeRecord && (
