@@ -148,7 +148,7 @@ function emptyCmsStockCreateDraft(): CmsStockCreateDraft {
     price: 0,
     quantity: 0,
     productTotalQuantity: 1,
-    memo: "CMS 직접 생성",
+    memo: "관리자 직접 생성",
   };
 }
 
@@ -2317,6 +2317,27 @@ function returnReviewStatusText(status?: CmsReturnReviewStatus) {
   }
 }
 
+function returnReviewWholesalerCandidates(summary: string) {
+  const unique = new Map<string, string>();
+
+  summary
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const candidate = line
+        .split("·")[0]
+        .replace(/^[-•\s]+/, "")
+        .trim();
+      if (!candidate || candidate === "-" || candidate === "없음") return;
+      const key = normalizeSearchText(candidate);
+      if (!key || unique.has(key)) return;
+      unique.set(key, candidate);
+    });
+
+  return Array.from(unique.values());
+}
+
 function resolutionText(resolutionType: CmsDeductionResolution) {
   switch (resolutionType) {
     case "EXISTING_STOCK":
@@ -3792,7 +3813,7 @@ function MobileApp() {
     async (
       lookup: Extract<ReturnLookup, { matchType: "ESTIMATED" | "NONE" }>,
     ) => {
-      setReturnReviewMessage("CMS 반품 확인 목록에 등록 중입니다.");
+      setReturnReviewMessage("관리자 반품 확인 목록에 등록 중입니다.");
       const sellerCandidates =
         lookup.matchType === "ESTIMATED" ? lookup.sellerCandidates : [];
       const sellerCandidateSummary = sellerCandidates
@@ -3831,13 +3852,15 @@ function MobileApp() {
         const item = unwrapObjectPayload(response);
         const id = optionalText(item.id ?? item.reviewId);
         const message = id
-          ? `CMS 반품 확인 #${id}에 등록했습니다.`
-          : "CMS 반품 확인 목록에 등록했습니다.";
+          ? `관리자 반품 확인 #${id}에 등록했습니다.`
+          : "관리자 반품 확인 목록에 등록했습니다.";
         setReturnReviewMessage(message);
-        setScanNotice(`${message} CMS에서 재고를 선택해 처리해 주세요.`);
+        setScanNotice(
+          `${message} 관리자 페이지에서 재고를 선택해 처리해 주세요.`,
+        );
       } catch (error) {
         const message =
-          "CMS 반품 확인 등록에 실패했습니다. 다시 스캔해 주세요.";
+          "관리자 반품 확인 등록에 실패했습니다. 다시 스캔해 주세요.";
         setReturnReviewMessage(message);
         setScanNotice(message);
       }
@@ -3882,7 +3905,7 @@ function MobileApp() {
             const noHistoryLookup = noReceiptHistoryLookup(lookup);
             setReturnLookup(noHistoryLookup);
             setLastScanName(`${lookup.drugName} · 판매처 후보 없음`);
-            setScanNotice("CMS 반품 확인 목록에 등록하고 있습니다.");
+            setScanNotice("관리자 반품 확인 목록에 등록하고 있습니다.");
             void createReturnReview(noHistoryLookup);
             setScreen("returnNone");
             return;
@@ -3893,14 +3916,14 @@ function MobileApp() {
           setLastScanName(
             `${lookup.drugName} · 판매처 후보 ${lookup.sellerCandidates.length}건`,
           );
-          setScanNotice("CMS 반품 확인 목록에 등록하고 있습니다.");
+          setScanNotice("관리자 반품 확인 목록에 등록하고 있습니다.");
           void createReturnReview(lookup);
           setScreen("returnEstimated");
           return;
         }
         setReturnLookup(lookup);
         setLastScanName("입고 이력 없음");
-        setScanNotice("CMS 반품 확인 목록에 등록하고 있습니다.");
+        setScanNotice("관리자 반품 확인 목록에 등록하고 있습니다.");
         void createReturnReview(lookup);
         setScreen("returnNone");
       } catch (error) {
@@ -6016,7 +6039,7 @@ function ReturnEstimatedScreen({
     <ReturnSheet height="estimated">
       <span className="state-badge estimated">
         <span />
-        CMS 확인 필요
+        관리자 확인 필요
       </span>
       <h1>{lookup.drugName}</h1>
       {/* <p className="code-line">
@@ -6024,7 +6047,7 @@ function ReturnEstimatedScreen({
       </p> */}
       <p className="estimated-copy">
         {reviewMessage ||
-          "입고 이력으로 확정되지 않아 CMS 반품 확인에서 재고를 선택해 처리해야 합니다."}
+          "입고 이력으로 확정되지 않아 관리자 반품 확인에서 재고를 선택해 처리해야 합니다."}
       </p>
       <div className="candidate-list return-candidate-list">
         {lookup.sellerCandidates.map((candidate) => {
@@ -6093,8 +6116,8 @@ function ReturnNoneScreen({
         <p>
           {reviewMessage ||
             (drugName
-              ? `${drugName}은 CMS 반품 확인에서 재고를 선택해 처리해야 합니다.`
-              : "CMS 반품 확인에서 재고를 선택해 처리해야 합니다.")}
+              ? `${drugName}은 관리자 반품 확인에서 재고를 선택해 처리해야 합니다.`
+              : "관리자 반품 확인에서 재고를 선택해 처리해야 합니다.")}
         </p>
       </div>
       <div className="stack">
@@ -6323,7 +6346,9 @@ function StocksScreen({
         {!loading && stocks.length === 0 && (
           <div className="empty-state compact">
             <strong>재고가 없습니다</strong>
-            <span>입고를 확정하거나 CMS에서 재고를 확인해 주세요.</span>
+            <span>
+              입고를 확정하거나 관리자 페이지에서 재고를 확인해 주세요.
+            </span>
           </div>
         )}
         {stocks.length > 0 && (
@@ -7142,7 +7167,7 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
         <h1>약국 PC에 설치하는 처방 수집 에이전트</h1>
         <p>
           이팜 로컬 SQL Server에서 처방 조제약, 현재 재고, 약품 마스터, 바코드,
-          도매처 데이터를 읽어 PharmFarm 서버로 전송합니다. 설치 시 CMS 약국
+          도매처 데이터를 읽어 PharmFarm 서버로 전송합니다. 설치 시 관리자 약국
           ID를 입력해 계정과 기기를 연결하고, 네트워크가 끊기면 로컬 큐에 보관한
           뒤 자동 재시도합니다.
         </p>
@@ -7160,7 +7185,7 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
             className="agent-secondary-button"
             onClick={() => navigate("/cms")}
           >
-            CMS로 이동
+            관리자로 이동
           </button>
         </div>
       </section>
@@ -7204,7 +7229,7 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
             사용합니다.
           </li>
           <li>
-            CMS에서 확인한 <b>약국 ID</b>를 입력해 서버 계정과 기기를
+            관리자 페이지에서 확인한 <b>약국 ID</b>를 입력해 서버 계정과 기기를
             연결합니다.
           </li>
           <li>
@@ -7321,7 +7346,9 @@ function CmsApp({
     hasStoredAuthTokens() ? "checking" : "unauthorized",
   );
   const [apiMessage, setApiMessage] = useState(() =>
-    hasStoredAuthTokens() ? "CMS 데이터 확인 중" : "CMS 로그인이 필요합니다.",
+    hasStoredAuthTokens()
+      ? "관리자 데이터 확인 중"
+      : "관리자 로그인이 필요합니다.",
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(storageKeys.cmsSidebarCollapsed) === "true",
@@ -7588,12 +7615,12 @@ function CmsApp({
         clearAuthTokens();
         setAuthAccount(null);
         setApiState("unauthorized");
-        setApiMessage("CMS 로그인이 필요합니다.");
+        setApiMessage("관리자 로그인이 필요합니다.");
         return;
       }
       if (error instanceof Error && error.message === "FORBIDDEN") {
         setApiState("forbidden");
-        setApiMessage("현재 계정에 CMS 실행 권한이 없습니다.");
+        setApiMessage("현재 계정에 관리자 실행 권한이 없습니다.");
         return;
       }
       applyCmsDemoData();
@@ -7607,7 +7634,7 @@ function CmsApp({
     if (!hasStoredAuthTokens()) {
       setAuthAccount(null);
       setApiState("unauthorized");
-      setApiMessage("CMS 로그인이 필요합니다.");
+      setApiMessage("관리자 로그인이 필요합니다.");
       setCmsReady(true);
       return false;
     }
@@ -7823,20 +7850,22 @@ function CmsApp({
     event.preventDefault();
     try {
       setApiState("checking");
-      setApiMessage("CMS 로그인 중");
+      setApiMessage("관리자 로그인 중");
       await login(loginId, password);
       setAuthAccount(getStoredAuthAccount());
       const connected = await refreshCms();
       if (connected) {
         setApiState("connected");
-        setApiMessage("CMS 로그인 완료");
+        setApiMessage("관리자 로그인 완료");
         navigate(postLoginPath === "/cms/login" ? "/cms" : postLoginPath);
       }
       setPassword("");
     } catch (error) {
       setApiState("unauthorized");
       setApiMessage(
-        error instanceof Error ? error.message : "CMS 로그인에 실패했습니다.",
+        error instanceof Error
+          ? error.message
+          : "관리자 로그인에 실패했습니다.",
       );
     }
   }
@@ -7845,7 +7874,7 @@ function CmsApp({
     clearAuthTokens();
     setAuthAccount(null);
     setApiState("unauthorized");
-    setApiMessage("CMS 로그인이 필요합니다.");
+    setApiMessage("관리자 로그인이 필요합니다.");
   }
 
   function updateSignupDraft(patch: Partial<CmsSignupDraft>) {
@@ -8203,7 +8232,7 @@ function CmsApp({
         method: "PATCH",
         body: JSON.stringify({
           price: Math.max(0, finiteNumber(price)),
-          memo: "CMS 임의 재고 가격 수정",
+          memo: "관리자 임의 재고 가격 수정",
         }),
       });
       const updatedStock = normalizeStock(
@@ -8339,7 +8368,7 @@ function CmsApp({
         method: "POST",
         body: JSON.stringify({
           insuranceCode: mergeInsuranceCode.trim(),
-          memo: "CMS 임의 재고 보험코드 보정",
+          memo: "관리자 임의 재고 보험코드 보정",
         }),
       });
       setApiState("connected");
@@ -8450,7 +8479,7 @@ function CmsApp({
               resolutionType === "EXISTING_STOCK"
                 ? selectedStock?.id
                 : undefined,
-            memo: "CMS 수동 처리",
+            memo: "관리자 수동 처리",
           }),
         },
       );
@@ -8492,7 +8521,7 @@ function CmsApp({
           method: "POST",
           body: JSON.stringify({
             shortageStatus,
-            memo: `CMS 부족분 상태 변경: ${shortageStatusText(shortageStatus)}`,
+            memo: `관리자 부족분 상태 변경: ${shortageStatusText(shortageStatus)}`,
           }),
         },
       );
@@ -8539,7 +8568,7 @@ function CmsApp({
           method: "POST",
           body: JSON.stringify({
             status,
-            memo: `CMS 반품 확인 상태 변경: ${returnReviewStatusText(status)}`,
+            memo: `관리자 반품 확인 상태 변경: ${returnReviewStatusText(status)}`,
           }),
         },
       );
@@ -8575,7 +8604,7 @@ function CmsApp({
           body: JSON.stringify({
             stockId,
             returnQuantity,
-            memo: memo || "CMS 반품 확인 처리",
+            memo: memo || "관리자 반품 확인 처리",
           }),
         },
       );
@@ -9706,8 +9735,8 @@ function CmsLoadingPage({ apiMessage }: { apiMessage: string }) {
         <div className="cms-loading-brand">
           <img src={pharmfarmLogo} alt="" />
           <div>
-            <strong>PharmFarm CMS</strong>
-            <span>{apiMessage || "CMS 데이터를 불러오는 중입니다."}</span>
+            <strong>PharmFarm 관리자</strong>
+            <span>{apiMessage || "관리자 데이터를 불러오는 중입니다."}</span>
           </div>
         </div>
         <div className="cms-loading-spinner" aria-hidden="true" />
@@ -9743,7 +9772,7 @@ function CmsSignupPage({
         <div className="cms-signup-section">
           <header>
             <strong>약국 정보</strong>
-            <span>신규 약국과 기본 CMS 계정을 함께 생성합니다.</span>
+            <span>신규 약국과 기본 관리자 계정을 함께 생성합니다.</span>
           </header>
           <div className="cms-field-grid">
             <label className="cms-input">
@@ -9902,7 +9931,7 @@ function CmsLoginPage({
         <div className="cms-login-visual">
           <div className="cms-login-mark">
             <img src={pharmfarmLogo} alt="" />
-            <span>PharmFarm CMS</span>
+            <span>PharmFarm 관리자</span>
           </div>
           <div className="cms-login-message">
             <strong>
@@ -9927,7 +9956,7 @@ function CmsLoginPage({
           </div>
           <div className="cms-login-title">
             <strong>운영자 로그인</strong>
-            <span>약국 CMS 계정으로 로그인하세요</span>
+            <span>약국 관리자 계정으로 로그인하세요</span>
             <em>
               {apiStateLabel(apiState)} · {apiMessage || "로그인이 필요합니다."}
             </em>
@@ -11795,7 +11824,12 @@ function CmsReturnReviewPage({
   const [listFilter, setListFilter] = useState<CmsReturnReviewFilter>("OPEN");
   const [resolveStockId, setResolveStockId] = useState("");
   const [resolveQuantity, setResolveQuantity] = useState(1);
-  const [resolveMemo, setResolveMemo] = useState("CMS 반품 확인 처리");
+  const [resolveMemo, setResolveMemo] = useState("관리자 반품 확인 처리");
+  const [stockSearchOpen, setStockSearchOpen] = useState(false);
+  const [otherStockQuery, setOtherStockQuery] = useState("");
+  const [confirmAction, setConfirmAction] = useState<"HOLD" | "RESOLVE" | "">(
+    "",
+  );
   const openRecords = records.filter((record) => record.status === "OPEN");
   const holdRecords = records.filter((record) => record.status === "HOLD");
   const resolvedRecords = records.filter(
@@ -11813,15 +11847,59 @@ function CmsReturnReviewPage({
     `${listFilter}-${visibleRecords.length}`,
   );
   const activeRecord = selectedRecord;
-  const selectedStock =
-    stocks.find((stock) => stock.id === resolveStockId) ?? stocks[0];
+  const expectedWholesalers = returnReviewWholesalerCandidates(
+    activeRecord?.sellerCandidateSummary ?? "",
+  );
+  const selectedStock = stocks.find((stock) => stock.id === resolveStockId);
   const maxQuantity = Math.max(0, selectedStock?.quantity ?? 0);
+  const stockAfterReturn = selectedStock
+    ? Math.max(0, maxQuantity - resolveQuantity)
+    : 0;
   const canResolve =
     Boolean(activeRecord) &&
     activeRecord?.status !== "RESOLVED" &&
     Boolean(selectedStock) &&
     resolveQuantity > 0 &&
     resolveQuantity <= maxQuantity;
+  const canHold =
+    Boolean(activeRecord) &&
+    activeRecord?.status !== "RESOLVED" &&
+    activeRecord?.status !== "HOLD";
+  const activeDrugKeyword = normalizeSearchText(activeRecord?.drugName ?? "");
+  const recommendedStocks = stocks
+    .filter((stock) => stock.quantity > 0)
+    .map((stock) => {
+      const exactCode =
+        Boolean(activeRecord?.insuranceCode) &&
+        stock.insuranceCode === activeRecord?.insuranceCode;
+      const nameMatched =
+        activeDrugKeyword.length >= 2 &&
+        normalizeSearchText(`${stock.name} ${stock.insuranceCode}`).includes(
+          activeDrugKeyword,
+        );
+      return { exactCode, nameMatched, stock };
+    })
+    .filter((item) => item.exactCode || item.nameMatched)
+    .sort((left, right) => Number(right.exactCode) - Number(left.exactCode))
+    .map((item) => item.stock)
+    .slice(0, 6);
+  const recommendedStockIds = new Set(
+    recommendedStocks.map((stock) => stock.id),
+  );
+  const otherStockKeyword = normalizeSearchText(otherStockQuery);
+  const otherStockCandidates =
+    stockSearchOpen && otherStockKeyword.length >= 2
+      ? stocks
+          .filter(
+            (stock) =>
+              stock.quantity > 0 &&
+              !recommendedStockIds.has(stock.id) &&
+              normalizeSearchText(
+                `${stock.name} ${stock.insuranceCode}`,
+              ).includes(otherStockKeyword),
+          )
+          .slice(0, 10)
+      : [];
   const filterItems: Array<{
     count: number;
     label: string;
@@ -11848,17 +11926,33 @@ function CmsReturnReviewPage({
 
   useEffect(() => {
     if (!activeRecord) return;
+    const normalizedDrugName = normalizeSearchText(activeRecord.drugName ?? "");
     const matchedStock =
       (activeRecord.insuranceCode
         ? stocks.find(
-            (stock) => stock.insuranceCode === activeRecord.insuranceCode,
+            (stock) =>
+              stock.quantity > 0 &&
+              stock.insuranceCode === activeRecord.insuranceCode,
           )
-        : undefined) ?? stocks[0];
+        : undefined) ??
+      (normalizedDrugName.length >= 2
+        ? stocks.find(
+            (stock) =>
+              stock.quantity > 0 &&
+              normalizeSearchText(
+                `${stock.name} ${stock.insuranceCode}`,
+              ).includes(normalizedDrugName),
+          )
+        : undefined);
     setResolveStockId(matchedStock?.id ?? "");
     setResolveQuantity(Math.max(1, activeRecord.requestedQuantity || 1));
-    setResolveMemo("CMS 반품 확인 처리");
+    setResolveMemo("관리자 반품 확인 처리");
+    setConfirmAction("");
+    setStockSearchOpen(false);
+    setOtherStockQuery("");
   }, [
     activeRecord?.id,
+    activeRecord?.drugName,
     activeRecord?.insuranceCode,
     activeRecord?.requestedQuantity,
     stocks,
@@ -11867,6 +11961,33 @@ function CmsReturnReviewPage({
   function selectListFilter(nextFilter: CmsReturnReviewFilter) {
     setListFilter(nextFilter);
     if (detailMode) onBack();
+  }
+
+  function openOtherStockSearch() {
+    const defaultQuery =
+      activeRecord?.drugName || activeRecord?.insuranceCode || "";
+    setOtherStockQuery(defaultQuery);
+    setStockSearchOpen(true);
+  }
+
+  function selectReturnStock(stock: StockItem) {
+    setResolveStockId(stock.id);
+    setResolveQuantity((current) =>
+      Math.min(Math.max(1, current), Math.max(1, stock.quantity)),
+    );
+  }
+
+  function confirmReturnAction() {
+    if (!activeRecord) return;
+    if (confirmAction === "HOLD") {
+      onStatus(activeRecord, "HOLD");
+      setConfirmAction("");
+      return;
+    }
+    if (confirmAction === "RESOLVE" && selectedStock && canResolve) {
+      onResolve(activeRecord, selectedStock.id, resolveQuantity, resolveMemo);
+      setConfirmAction("");
+    }
   }
 
   return (
@@ -11880,8 +12001,8 @@ function CmsReturnReviewPage({
         <div>
           <strong>반품 확인</strong>
           <span>
-            앱에서 입고 이력으로 확정되지 않은 반품을 CMS에서 재고 선택 후
-            처리합니다.
+            앱에서 입고 이력으로 확정되지 않은 반품을 관리자 페이지에서 재고
+            선택 후 처리합니다.
           </span>
         </div>
       </div>
@@ -12013,7 +12134,7 @@ function CmsReturnReviewPage({
                     </b>
                   </span>
                 </div>
-                <div className="cms-prescription-quantity-strip">
+                {/* <div className="cms-prescription-quantity-strip">
                   <div>
                     <span>앱 판단</span>
                     <strong>
@@ -12034,18 +12155,22 @@ function CmsReturnReviewPage({
                         : "-"}
                     </strong>
                   </div>
-                </div>
+                </div> */}
               </div>
 
-              {activeRecord.sellerCandidateSummary && (
-                <div className="cms-prescription-full-paper">
+              {expectedWholesalers.length > 0 && (
+                <div className="cms-prescription-full-paper cms-expected-wholesalers">
                   <div className="cms-prescription-summary">
-                    <strong>앱에서 확인한 구매 후보</strong>
-                    <span>{activeRecord.sellerCandidateCount}건</span>
+                    <strong>예상 도매처</strong>
+                    <span>{expectedWholesalers.length}곳</span>
                   </div>
-                  <p className="cms-empty">
-                    {activeRecord.sellerCandidateSummary}
-                  </p>
+                  <div className="cms-wholesaler-card-strip">
+                    {expectedWholesalers.map((wholesaler) => (
+                      <span className="cms-wholesaler-card" key={wholesaler}>
+                        {wholesaler}
+                      </span>
+                    ))}
+                  </div>
                 </div>
               )}
 
@@ -12070,31 +12195,61 @@ function CmsReturnReviewPage({
               ) : (
                 <>
                   <div className="cms-detail-section">
-                    <strong>재고 차감 처리</strong>
-                    <label className="cms-field">
-                      <span>차감할 재고</span>
-                      <select
-                        value={resolveStockId}
-                        onChange={(event) => {
-                          const nextStock = stocks.find(
-                            (stock) => stock.id === event.target.value,
+                    <strong>재고 감소 처리</strong>
+                    <div className="cms-stock-candidate-picker cms-return-stock-picker">
+                      <div className="cms-candidate-hint">
+                        <strong>추천 재고</strong>
+                        <span>보험코드와 약품명 기준으로 먼저 좁혔습니다.</span>
+                      </div>
+                      <div className="cms-stock-candidate-list">
+                        {recommendedStocks.map((stock) => {
+                          const exactCode =
+                            Boolean(activeRecord.insuranceCode) &&
+                            stock.insuranceCode === activeRecord.insuranceCode;
+                          return (
+                            <button
+                              className={`cms-stock-candidate ${
+                                resolveStockId === stock.id ? "is-selected" : ""
+                              }`}
+                              key={stock.id}
+                              type="button"
+                              onClick={() => {
+                                selectReturnStock(stock);
+                              }}
+                            >
+                              <span>
+                                {exactCode ? "보험코드 일치" : "이름 후보"}
+                              </span>
+                              <strong>{stock.name}</strong>
+                              <em>{stock.insuranceCode}</em>
+                              <b>{stock.quantity}개</b>
+                            </button>
                           );
-                          setResolveStockId(event.target.value);
-                          setResolveQuantity((current) =>
-                            Math.min(
-                              Math.max(1, current),
-                              Math.max(1, nextStock?.quantity ?? 1),
-                            ),
-                          );
-                        }}
-                      >
-                        {stocks.map((stock) => (
-                          <option key={stock.id} value={stock.id}>
-                            {stock.name} · {stock.quantity}개
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                        })}
+                        {recommendedStocks.length === 0 && (
+                          <p className="cms-empty">추천 재고가 없습니다.</p>
+                        )}
+                        <button
+                          className="cms-stock-candidate is-other"
+                          type="button"
+                          onClick={openOtherStockSearch}
+                        >
+                          <span>그 외</span>
+                          <strong>다른 재고에서 찾기</strong>
+                          <em>약품명 또는 보험코드로 검색</em>
+                          <b>검색</b>
+                        </button>
+                      </div>
+
+                      {selectedStock && (
+                        <div className="cms-candidate-hint">
+                          <strong>선택 재고</strong>
+                          <span>
+                            {selectedStock.name} · {selectedStock.quantity}개
+                          </span>
+                        </div>
+                      )}
+                    </div>
                     <label className="cms-field">
                       <span>반품 수량</span>
                       <input
@@ -12115,47 +12270,32 @@ function CmsReturnReviewPage({
                         }
                       />
                     </label>
-                    <label className="cms-field">
-                      <span>메모</span>
-                      <input
-                        value={resolveMemo}
-                        onChange={(event) => setResolveMemo(event.target.value)}
-                      />
-                    </label>
                   </div>
-                  <div className="cms-shortage-actions">
-                    <button
-                      className={
-                        activeRecord.status === "OPEN" ? "is-active" : ""
-                      }
-                      type="button"
-                      onClick={() => onStatus(activeRecord, "OPEN")}
-                    >
-                      확인 필요
-                    </button>
-                    <button
-                      className={
-                        activeRecord.status === "HOLD" ? "is-active" : ""
-                      }
-                      type="button"
-                      onClick={() => onStatus(activeRecord, "HOLD")}
-                    >
-                      보류
-                    </button>
-                    <button
-                      disabled={!canResolve}
-                      type="button"
-                      onClick={() =>
-                        onResolve(
-                          activeRecord,
-                          resolveStockId,
-                          resolveQuantity,
-                          resolveMemo,
-                        )
-                      }
-                    >
-                      선택 재고 차감
-                    </button>
+                  <div className="cms-return-action-panel">
+                    <div className="cms-return-status-note">
+                      <span>현재 상태</span>
+                      <strong>
+                        {returnReviewStatusText(activeRecord.status)}
+                      </strong>
+                    </div>
+                    <div className="cms-return-action-buttons">
+                      <button
+                        className="cms-return-action-button is-hold"
+                        disabled={!canHold}
+                        type="button"
+                        onClick={() => setConfirmAction("HOLD")}
+                      >
+                        보류 처리
+                      </button>
+                      <button
+                        className="cms-return-action-button is-primary"
+                        disabled={!canResolve}
+                        type="button"
+                        onClick={() => setConfirmAction("RESOLVE")}
+                      >
+                        선택 재고 감소 처리
+                      </button>
+                    </div>
                   </div>
                 </>
               )}
@@ -12163,6 +12303,122 @@ function CmsReturnReviewPage({
           )}
         </aside>
       </div>
+
+      {stockSearchOpen && activeRecord && (
+        <CmsModal
+          title="다른 재고 찾기"
+          subtitle={activeRecord.drugName}
+          onClose={() => setStockSearchOpen(false)}
+        >
+          <div className="cms-return-stock-search-modal">
+            <label className="cms-input">
+              <span>약품명 또는 보험코드</span>
+              <input
+                autoFocus
+                value={otherStockQuery}
+                onChange={(event) => setOtherStockQuery(event.target.value)}
+                placeholder="2글자 이상 입력"
+              />
+            </label>
+            <div className="cms-candidate-hint">
+              <strong>검색 후보</strong>
+              <span>선택하면 상세 화면의 선택 재고에만 반영됩니다.</span>
+            </div>
+            <div className="cms-stock-candidate-list">
+              {otherStockCandidates.map((stock) => (
+                <button
+                  className={`cms-stock-candidate ${
+                    resolveStockId === stock.id ? "is-selected" : ""
+                  }`}
+                  key={stock.id}
+                  type="button"
+                  onClick={() => {
+                    selectReturnStock(stock);
+                    setStockSearchOpen(false);
+                  }}
+                >
+                  <span>검색 후보</span>
+                  <strong>{stock.name}</strong>
+                  <em>{stock.insuranceCode || "-"}</em>
+                  <b>{stock.quantity}개</b>
+                </button>
+              ))}
+              {otherStockKeyword.length < 2 ? (
+                <p className="cms-empty">검색어를 2글자 이상 입력해 주세요.</p>
+              ) : otherStockCandidates.length === 0 ? (
+                <p className="cms-empty">검색된 재고 후보가 없습니다.</p>
+              ) : null}
+            </div>
+          </div>
+        </CmsModal>
+      )}
+
+      {confirmAction && activeRecord && (
+        <CmsModal
+          title={
+            confirmAction === "HOLD" ? "보류 처리 확인" : "재고 감소 처리 확인"
+          }
+          subtitle={activeRecord.drugName}
+          variant="confirm"
+          onClose={() => setConfirmAction("")}
+        >
+          <div className="cms-resolution-confirm">
+            <div
+              className={`cms-resolution-confirm-card ${
+                confirmAction === "HOLD" ? "is-warning" : "is-stock"
+              }`}
+            >
+              {confirmAction === "HOLD" ? (
+                <>
+                  <span>이 반품 확인 항목을 보류로 이동합니다.</span>
+                  <strong>{activeRecord.drugName}</strong>
+                  <em>보류 항목은 보류 탭에서 다시 확인할 수 있습니다.</em>
+                </>
+              ) : selectedStock ? (
+                <>
+                  <span>아래 재고에서 반품 수량을 감소 처리합니다.</span>
+                  <strong>{selectedStock.name}</strong>
+                  <em>
+                    현재 {currency(maxQuantity)}개 → 처리 후{" "}
+                    {currency(stockAfterReturn)}개
+                  </em>
+                  <em>감소 수량: {currency(resolveQuantity)}개</em>
+                </>
+              ) : (
+                <>
+                  <span>선택된 재고가 없습니다.</span>
+                  <strong>재고 선택 필요</strong>
+                  <em>먼저 감소 처리할 재고를 선택해 주세요.</em>
+                </>
+              )}
+            </div>
+            <p>
+              {confirmAction === "HOLD"
+                ? "확인 시 재고 수량은 변경되지 않고 상태만 보류로 변경됩니다."
+                : "확인 시 선택한 재고 수량이 감소되고 이 항목은 처리 완료 상태가 됩니다."}
+            </p>
+            <div className="cms-confirm-actions">
+              <button
+                className="cms-confirm-button"
+                type="button"
+                onClick={() => setConfirmAction("")}
+              >
+                취소
+              </button>
+              <button
+                className={`cms-confirm-button ${
+                  confirmAction === "HOLD" ? "is-danger" : "is-primary"
+                }`}
+                disabled={confirmAction === "HOLD" ? !canHold : !canResolve}
+                type="button"
+                onClick={confirmReturnAction}
+              >
+                {confirmAction === "HOLD" ? "보류 처리" : "감소 처리"}
+              </button>
+            </div>
+          </div>
+        </CmsModal>
+      )}
     </section>
   );
 }
