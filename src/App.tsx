@@ -2396,6 +2396,27 @@ function currency(value: number) {
   return new Intl.NumberFormat("ko-KR").format(finiteNumber(value));
 }
 
+function compactKoreanCurrency(value: number) {
+  const amount = finiteNumber(value);
+  const absAmount = Math.abs(amount);
+  const units = [
+    { label: "억", value: 100_000_000 },
+    { label: "만", value: 10_000 },
+  ];
+  const unit = units.find((item) => absAmount >= item.value);
+
+  if (!unit) return currency(amount);
+
+  const scaled = amount / unit.value;
+  const absScaled = Math.abs(scaled);
+  const maximumFractionDigits = absScaled >= 100 ? 0 : absScaled >= 10 ? 1 : 2;
+  const formatted = new Intl.NumberFormat("ko-KR", {
+    maximumFractionDigits,
+  }).format(scaled);
+
+  return `${formatted}${unit.label}`;
+}
+
 function clampReturnQuantity(value: number, max: number) {
   if (max <= 0) return 0;
   const normalized = Number.isFinite(value) ? Math.trunc(value) : 0;
@@ -10212,7 +10233,8 @@ function CmsDashboard({
             {canViewAmounts && (
               <CmsKpi
                 label="예상 재고 금액"
-                value={currency(data.stockSummary.estimatedAmount)}
+                detail={`전체 ${currency(data.stockSummary.estimatedAmount)}원`}
+                value={compactKoreanCurrency(data.stockSummary.estimatedAmount)}
                 unit="원"
                 tone="blue"
               />
@@ -10775,6 +10797,7 @@ function CmsInventoryPage({
   const [syncPharmacyId, setSyncPharmacyId] = useState(
     syncSnapshotDefaultPharmacyId,
   );
+  const [debugLargeAmount, setDebugLargeAmount] = useState(false);
   const normalizedQuery = normalizeSearchText(query);
   const stockPagination = usePagination(
     stocks,
@@ -10785,6 +10808,7 @@ function CmsInventoryPage({
     (sum, item) => sum + item.quantity * item.price,
     0,
   );
+  const displayedStockValue = debugLargeAmount ? 987_654_321_098 : stockValue;
   const controlledCount = stocks.filter(
     (stock) => stock.controlledDrug.controlled,
   ).length;
@@ -10874,7 +10898,8 @@ function CmsInventoryPage({
           />
           <CmsKpi
             label="예상 재고 금액"
-            value={currency(stockValue)}
+            detail={`전체 ${currency(displayedStockValue)}원`}
+            value={compactKoreanCurrency(displayedStockValue)}
             unit="원"
           />
           <CmsKpi label="향정 품목" value={`${controlledCount}`} unit="종" />
@@ -10926,6 +10951,15 @@ function CmsInventoryPage({
             </div>
           </div>
           <div className="cms-toolbar-actions">
+            {/* {(debugToolsEnabled || canSyncSnapshot) && (
+              <button
+                className="cms-secondary cms-toolbar-action"
+                type="button"
+                onClick={() => setDebugLargeAmount((current) => !current)}
+              >
+                {debugLargeAmount ? "실제 금액" : "큰 금액 테스트"}
+              </button>
+            )} */}
             {canSyncSnapshot && (
               <button
                 className="cms-secondary cms-toolbar-action cms-inventory-sync-button"
@@ -13675,23 +13709,27 @@ function CmsPurchasePage({
 }
 
 function CmsKpi({
+  detail,
   label,
   tone,
   unit,
   value,
 }: {
+  detail?: string;
   label: string;
   tone?: "blue" | "red";
   unit?: string;
   value: string;
 }) {
+  const fullValue = detail ?? `${value}${unit ?? ""}`;
   return (
-    <div className="cms-kpi">
+    <div className={`cms-kpi ${detail ? "has-detail" : ""}`} title={fullValue}>
       <span>{label}</span>
       <strong className={tone ?? ""}>
         {value}
         {unit && <em>{unit}</em>}
       </strong>
+      {detail && <small>{detail}</small>}
     </div>
   );
 }
