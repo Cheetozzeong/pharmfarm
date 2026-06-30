@@ -7,6 +7,9 @@ import {
 } from "@zxing/browser";
 import { BarcodeFormat, DecodeHintType } from "@zxing/library";
 import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
   ChevronDown,
   Focus,
   HardDriveDownload,
@@ -172,6 +175,15 @@ type SellerCandidate = {
   quantity: number;
 };
 
+type ReturnReceiptCandidate = {
+  id: string;
+  wholesalerName: string;
+  receivedAt: string;
+  productTotalQuantity: number;
+  returnedQuantity: number;
+  returnableQuantity: number;
+};
+
 type ReturnLookup =
   | {
       matchType: "CONFIRMED";
@@ -180,11 +192,13 @@ type ReturnLookup =
       lot: string;
       exp: string;
       drugName: string;
+      insuranceCode: string;
       wholesalerName: string;
       productTotalQuantity: number;
       returnedQuantity: number;
       returnableQuantity: number;
       stockQuantity: number;
+      receiptCandidates: ReturnReceiptCandidate[];
     }
   | {
       matchType: "ESTIMATED";
@@ -193,6 +207,7 @@ type ReturnLookup =
       lot: string;
       exp: string;
       drugName: string;
+      insuranceCode: string;
       message?: string;
       sellerCandidates: SellerCandidate[];
       returnableQuantity: number;
@@ -205,6 +220,7 @@ type ReturnLookup =
       lot: string;
       exp: string;
       drugName: string;
+      insuranceCode: string;
       message: string;
     };
 
@@ -285,6 +301,7 @@ const storageKeys = {
   scannerEngine: "pharmfarm.scannerEngine",
   scanCodeMode: "pharmfarm.scanCodeMode",
 };
+const cmsCompactNavQuery = "(max-width: 980px), (max-height: 560px)";
 
 const alreadyProcessedAudioSrc =
   "/audio/%EC%9D%B4%EB%AF%B8_%EC%B2%98%EB%A6%AC%EB%90%9C_%EC%95%BD%ED%92%88%EC%9E%85%EB%8B%88%EB%8B%A4.mp3";
@@ -297,6 +314,29 @@ const missingExpiryReceiptNotice = "약통에 있는 유효기간을 확인해�
 const missingExpiryAudioSrc = `/audio/${encodeURIComponent(
   "유효기간 정보가 없습니다.포장용기를 확인해주세요.mp3",
 )}`;
+
+function getMediaQueryMatches(query: string) {
+  return typeof window.matchMedia === "function"
+    ? window.matchMedia(query).matches
+    : false;
+}
+
+function useMediaQuery(query: string) {
+  const [matches, setMatches] = useState(() => getMediaQueryMatches(query));
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== "function") return;
+
+    const mediaQuery = window.matchMedia(query);
+    const syncMatches = () => setMatches(mediaQuery.matches);
+
+    syncMatches();
+    mediaQuery.addEventListener("change", syncMatches);
+    return () => mediaQuery.removeEventListener("change", syncMatches);
+  }, [query]);
+
+  return matches;
+}
 
 function createDefaultCmsSignupDraft(): CmsSignupDraft {
   return {
@@ -1631,6 +1671,11 @@ function normalizeMatchStatus(value: unknown): MatchStatus {
   return "NORMAL";
 }
 
+function normalizeLookupSn(value: unknown, fallback: string) {
+  const sn = String(value ?? fallback ?? "").trim();
+  return sn.startsWith("PC_ONLY:") ? "" : sn;
+}
+
 function normalizeLookup(raw: unknown, qr: QrFields): ReturnLookup {
   const item = unwrapObjectPayload(raw);
   const sellerCandidates = firstArrayPayload(item, [
@@ -1657,6 +1702,12 @@ function normalizeLookup(raw: unknown, qr: QrFields): ReturnLookup {
       : "NONE";
 
   if (matchType === "CONFIRMED") {
+    const receiptCandidates = firstArrayPayload(item, [
+      "receiptCandidates",
+      "stockItemCandidates",
+      "stockItems",
+      "items",
+    ]).map(normalizeReturnReceiptCandidate);
     const productTotalQuantity = Number(
       item.productTotalQuantity ?? item.packageQuantity ?? 0,
     );
@@ -1669,15 +1720,17 @@ function normalizeLookup(raw: unknown, qr: QrFields): ReturnLookup {
     return {
       matchType: "CONFIRMED",
       pc: String(item.pc ?? qr.pc),
-      sn: String(item.sn ?? qr.sn),
+      sn: normalizeLookupSn(item.sn, qr.sn),
       lot: String(item.lot ?? qr.lot),
       exp: String(item.exp ?? qr.exp),
       drugName: String(item.drugName ?? item.name ?? "미확인 약품"),
+      insuranceCode: String(item.insuranceCode ?? item.productCode ?? ""),
       wholesalerName: String(item.wholesalerName ?? item.sellerName ?? "-"),
       productTotalQuantity,
       returnedQuantity,
       returnableQuantity,
       stockQuantity: Number(item.stockQuantity ?? returnableQuantity),
+      receiptCandidates,
     };
   }
 
@@ -1689,6 +1742,7 @@ function normalizeLookup(raw: unknown, qr: QrFields): ReturnLookup {
       lot: String(item.lot ?? qr.lot),
       exp: String(item.exp ?? qr.exp),
       drugName: String(item.drugName ?? item.name ?? "미확인 약품"),
+      insuranceCode: String(item.insuranceCode ?? item.productCode ?? ""),
       message: String(
         item.message ??
           "입고 이력은 없지만 구매 내역 기준 판매처 후보가 있습니다.",
@@ -1708,6 +1762,7 @@ function normalizeLookup(raw: unknown, qr: QrFields): ReturnLookup {
     lot: qr.lot,
     exp: qr.exp,
     drugName: String(item.drugName ?? item.name ?? "미확인 약품"),
+    insuranceCode: String(item.insuranceCode ?? item.productCode ?? ""),
     message: String(item.message ?? "입고 내역이 확인되지 않는 상품입니다."),
   };
 }
@@ -1722,6 +1777,7 @@ function noReceiptHistoryLookup(
     lot: lookup.lot,
     exp: lookup.exp,
     drugName: lookup.drugName,
+    insuranceCode: lookup.insuranceCode,
     message: "입고 내역이 확인되지 않는 상품입니다.",
   };
 }
@@ -1787,6 +1843,25 @@ function normalizeCandidate(raw: unknown, index: number): SellerCandidate {
         "",
     ),
     quantity: Number(item.quantity ?? item.productTotalQuantity ?? 0),
+  };
+}
+
+function normalizeReturnReceiptCandidate(
+  raw: unknown,
+  index: number,
+): ReturnReceiptCandidate {
+  const item = asRecord(raw);
+  return {
+    id: String(item.id ?? item.stockItemId ?? index),
+    wholesalerName: String(item.wholesalerName ?? item.sellerName ?? "-"),
+    receivedAt: formatTransactionAt(item.receivedAt ?? item.createdAt),
+    productTotalQuantity: Number(
+      item.productTotalQuantity ?? item.packageQuantity ?? 0,
+    ),
+    returnedQuantity: Number(item.returnedQuantity ?? 0),
+    returnableQuantity: Number(
+      item.returnableQuantity ?? item.availableQuantity ?? 0,
+    ),
   };
 }
 
@@ -2231,6 +2306,17 @@ function isOpenShortageStatus(status?: CmsShortageStatus) {
   return !status || status === "OPEN";
 }
 
+function returnReviewStatusText(status?: CmsReturnReviewStatus) {
+  switch (status) {
+    case "HOLD":
+      return "보류";
+    case "RESOLVED":
+      return "처리 완료";
+    default:
+      return "확인 필요";
+  }
+}
+
 function resolutionText(resolutionType: CmsDeductionResolution) {
   switch (resolutionType) {
     case "EXISTING_STOCK":
@@ -2468,6 +2554,74 @@ function filterStocksByControlledFilter(
     return stocks.filter(isVirtualStock);
   }
   return stocks;
+}
+
+function sortStockItems(
+  stocks: StockItem[],
+  sortKey: CmsStockSortKey,
+  sortDirection: CmsStockSortDirection,
+) {
+  const direction = sortDirection === "asc" ? 1 : -1;
+
+  return [...stocks].sort((left, right) => {
+    const compared =
+      sortKey === "name"
+        ? left.name.localeCompare(right.name, "ko")
+        : left.quantity - right.quantity;
+
+    if (compared !== 0) return compared * direction;
+    return left.name.localeCompare(right.name, "ko");
+  });
+}
+
+function nextStockSortDirection(
+  currentKey: CmsStockSortKey,
+  currentDirection: CmsStockSortDirection,
+  nextKey: CmsStockSortKey,
+) {
+  if (currentKey === nextKey) {
+    return currentDirection === "asc" ? "desc" : "asc";
+  }
+  return nextKey === "quantity" ? "desc" : "asc";
+}
+
+function stockSortAriaLabel(
+  label: string,
+  key: CmsStockSortKey,
+  sortKey: CmsStockSortKey,
+  sortDirection: CmsStockSortDirection,
+) {
+  if (sortKey !== key) return `${label} 정렬`;
+  return `${label} ${sortDirection === "asc" ? "오름차순" : "내림차순"} 정렬`;
+}
+
+function StockSortIcon({
+  active,
+  direction,
+}: {
+  active: boolean;
+  direction: CmsStockSortDirection;
+}) {
+  if (!active) {
+    return (
+      <ArrowUpDown
+        aria-hidden="true"
+        className="cms-sort-icon"
+        size={14}
+        strokeWidth={2.4}
+      />
+    );
+  }
+
+  const Icon = direction === "asc" ? ArrowUp : ArrowDown;
+  return (
+    <Icon
+      aria-hidden="true"
+      className="cms-sort-icon"
+      size={14}
+      strokeWidth={2.6}
+    />
+  );
 }
 
 function isVirtualStock(stock: StockItem) {
@@ -2884,6 +3038,7 @@ function MobileApp() {
   const [returnQuantity, setReturnQuantity] = useState(10);
   const [returnMemo, setReturnMemo] = useState("유통기한 임박 반품");
   const [selectedCandidateId, setSelectedCandidateId] = useState("");
+  const [returnReviewMessage, setReturnReviewMessage] = useState("");
   const [returnSummary, setReturnSummary] = useState<ReturnSummary | null>(
     null,
   );
@@ -2908,6 +3063,7 @@ function MobileApp() {
     setReturnQuantity(10);
     setReturnMemo("유통기한 임박 반품");
     setSelectedCandidateId("");
+    setReturnReviewMessage("");
     setReturnSummary(null);
   }, []);
 
@@ -3632,6 +3788,63 @@ function MobileApp() {
     ],
   );
 
+  const createReturnReview = useCallback(
+    async (
+      lookup: Extract<ReturnLookup, { matchType: "ESTIMATED" | "NONE" }>,
+    ) => {
+      setReturnReviewMessage("CMS 반품 확인 목록에 등록 중입니다.");
+      const sellerCandidates =
+        lookup.matchType === "ESTIMATED" ? lookup.sellerCandidates : [];
+      const sellerCandidateSummary = sellerCandidates
+        .slice(0, 6)
+        .map((candidate) =>
+          [
+            candidate.sellerName,
+            candidate.transactionAt,
+            candidate.productName || candidate.orderItemName,
+          ]
+            .filter(Boolean)
+            .join(" · "),
+        )
+        .join("\n");
+
+      try {
+        const response = await apiFetch<unknown>("/returns/reviews", {
+          method: "POST",
+          body: JSON.stringify({
+            pc: lookup.pc,
+            sn: lookup.sn || undefined,
+            lot: lookup.lot || undefined,
+            exp: lookup.exp || undefined,
+            drugName: lookup.drugName,
+            insuranceCode: lookup.insuranceCode || undefined,
+            matchType: lookup.matchType,
+            message: lookup.message,
+            sellerCandidateCount: sellerCandidates.length,
+            sellerCandidateSummary,
+            requestedQuantity:
+              lookup.matchType === "ESTIMATED" && lookup.returnableQuantity > 0
+                ? lookup.returnableQuantity
+                : undefined,
+          }),
+        });
+        const item = unwrapObjectPayload(response);
+        const id = optionalText(item.id ?? item.reviewId);
+        const message = id
+          ? `CMS 반품 확인 #${id}에 등록했습니다.`
+          : "CMS 반품 확인 목록에 등록했습니다.";
+        setReturnReviewMessage(message);
+        setScanNotice(`${message} CMS에서 재고를 선택해 처리해 주세요.`);
+      } catch (error) {
+        const message =
+          "CMS 반품 확인 등록에 실패했습니다. 다시 스캔해 주세요.";
+        setReturnReviewMessage(message);
+        setScanNotice(message);
+      }
+    },
+    [],
+  );
+
   const lookupReturn = useCallback(
     async (qr: QrFields) => {
       setLastScanName("반품 판매처 조회 중");
@@ -3650,7 +3863,11 @@ function MobileApp() {
         if (lookup.matchType === "CONFIRMED") {
           setReturnLookup(lookup);
           setLastScanName(`${lookup.drugName} · 확정`);
-          setScanNotice("입고 이력에서 도매처를 확정했습니다.");
+          setScanNotice(
+            lookup.sn
+              ? "입고 이력에서 도매처를 확정했습니다."
+              : "보험코드 기준 보유 재고에서 반품 대상을 확인했습니다.",
+          );
           setReturnQuantity(
             clampReturnQuantity(
               lookup.returnableQuantity,
@@ -3665,7 +3882,8 @@ function MobileApp() {
             const noHistoryLookup = noReceiptHistoryLookup(lookup);
             setReturnLookup(noHistoryLookup);
             setLastScanName(`${lookup.drugName} · 판매처 후보 없음`);
-            setScanNotice(noHistoryLookup.message);
+            setScanNotice("CMS 반품 확인 목록에 등록하고 있습니다.");
+            void createReturnReview(noHistoryLookup);
             setScreen("returnNone");
             return;
           }
@@ -3675,22 +3893,15 @@ function MobileApp() {
           setLastScanName(
             `${lookup.drugName} · 판매처 후보 ${lookup.sellerCandidates.length}건`,
           );
-          setScanNotice(
-            lookup.message ??
-              "입고 이력은 없지만 구매 내역 기준 판매처 후보가 있습니다.",
-          );
-          setReturnQuantity(
-            clampReturnQuantity(
-              lookup.returnableQuantity,
-              lookup.returnableQuantity,
-            ),
-          );
+          setScanNotice("CMS 반품 확인 목록에 등록하고 있습니다.");
+          void createReturnReview(lookup);
           setScreen("returnEstimated");
           return;
         }
         setReturnLookup(lookup);
         setLastScanName("입고 이력 없음");
-        setScanNotice(lookup.message);
+        setScanNotice("CMS 반품 확인 목록에 등록하고 있습니다.");
+        void createReturnReview(lookup);
         setScreen("returnNone");
       } catch (error) {
         setApiFallback(error);
@@ -3708,7 +3919,11 @@ function MobileApp() {
         if (lookup.matchType === "CONFIRMED") {
           setReturnLookup(lookup);
           setLastScanName(`${lookup.drugName} · 확정`);
-          setScanNotice("데모 데이터의 입고 이력에서 도매처를 확정했습니다.");
+          setScanNotice(
+            lookup.sn
+              ? "데모 데이터의 입고 이력에서 도매처를 확정했습니다."
+              : "보험코드 기준 보유 재고에서 반품 대상을 확인했습니다.",
+          );
           setReturnQuantity(
             clampReturnQuantity(
               lookup.returnableQuantity,
@@ -3735,12 +3950,6 @@ function MobileApp() {
             lookup.message ??
               "입고 이력은 없지만 구매 내역 기준 판매처 후보가 있습니다.",
           );
-          setReturnQuantity(
-            clampReturnQuantity(
-              lookup.returnableQuantity,
-              lookup.returnableQuantity,
-            ),
-          );
           setScreen("returnEstimated");
         } else {
           setReturnLookup(lookup);
@@ -3750,7 +3959,7 @@ function MobileApp() {
         }
       }
     },
-    [setApiFallback, stocks, traces],
+    [createReturnReview, setApiFallback, stocks, traces],
   );
 
   const handlePayload = useCallback(
@@ -4456,10 +4665,7 @@ function MobileApp() {
   }
 
   async function commitReturn(quantityOverride?: number) {
-    if (
-      returnLookup?.matchType !== "CONFIRMED" &&
-      returnLookup?.matchType !== "ESTIMATED"
-    ) {
+    if (returnLookup?.matchType !== "CONFIRMED") {
       return;
     }
 
@@ -4478,10 +4684,6 @@ function MobileApp() {
           lot: returnLookup.lot,
           exp: returnLookup.exp,
           matchType: returnLookup.matchType,
-          purchaseHistoryId:
-            returnLookup.matchType === "ESTIMATED"
-              ? selectedCandidate?.id
-              : undefined,
           returnQuantity: quantity,
           memo: returnMemo,
         }),
@@ -4719,20 +4921,11 @@ function MobileApp() {
         returnLookup?.matchType === "ESTIMATED" && (
           <ReturnEstimatedScreen
             lookup={returnLookup}
-            selectedCandidateId={selectedCandidate?.id ?? ""}
-            onChoose={setSelectedCandidateId}
+            reviewMessage={returnReviewMessage}
             onClose={() => {
               resetReturnFlow();
               setLastScanName("QR 스캔 대기");
               setScreen("scan");
-            }}
-            onNext={() => {
-              const candidate =
-                selectedCandidate ?? returnLookup.sellerCandidates[0];
-              if (!candidate) return;
-              setSelectedCandidateId(candidate.id);
-              setReturnQuantity(clampReturnQuantity(returnMax, returnMax));
-              setScreen("returnQty");
             }}
           />
         )}
@@ -4740,6 +4933,7 @@ function MobileApp() {
       {screen === "returnNone" && (
         <ReturnNoneScreen
           lookup={returnLookup?.matchType === "NONE" ? returnLookup : null}
+          reviewMessage={returnReviewMessage}
           onClose={() => {
             resetReturnFlow();
             setLastScanName("QR 스캔 대기");
@@ -4748,31 +4942,23 @@ function MobileApp() {
         />
       )}
 
-      {screen === "returnQty" &&
-        (returnLookup?.matchType === "CONFIRMED" ||
-          returnLookup?.matchType === "ESTIMATED") && (
-          <ReturnQtyScreen
-            memo={returnMemo}
-            quantity={returnQuantity}
-            stockBefore={returnStockBefore}
-            max={returnMax}
-            drugName={returnDrugName}
-            wholesalerName={returnWholesalerName}
-            matchType={returnLookup.matchType}
-            onBack={() =>
-              setScreen(
-                returnLookup.matchType === "CONFIRMED"
-                  ? "returnConfirmed"
-                  : "returnEstimated",
-              )
-            }
-            onCommit={() => void commitReturn()}
-            onMemo={setReturnMemo}
-            onQuantity={(next) =>
-              setReturnQuantity(clampReturnQuantity(next, returnMax))
-            }
-          />
-        )}
+      {screen === "returnQty" && returnLookup?.matchType === "CONFIRMED" && (
+        <ReturnQtyScreen
+          memo={returnMemo}
+          quantity={returnQuantity}
+          stockBefore={returnStockBefore}
+          max={returnMax}
+          drugName={returnDrugName}
+          wholesalerName={returnWholesalerName}
+          matchType={returnLookup.matchType}
+          onBack={() => setScreen("returnConfirmed")}
+          onCommit={() => void commitReturn()}
+          onMemo={setReturnMemo}
+          onQuantity={(next) =>
+            setReturnQuantity(clampReturnQuantity(next, returnMax))
+          }
+        />
+      )}
 
       {screen === "returnDone" && returnSummary && (
         <DoneScreen
@@ -4850,6 +5036,7 @@ function lookupReturnDemo(
       lot: qr.lot,
       exp: qr.exp,
       drugName: trace.drugName,
+      insuranceCode: trace.insuranceCode,
       wholesalerName: trace.wholesalerName,
       productTotalQuantity: trace.productTotalQuantity,
       returnedQuantity: trace.returnedQuantity,
@@ -4858,6 +5045,7 @@ function lookupReturnDemo(
         trace.productTotalQuantity - trace.returnedQuantity,
       ),
       stockQuantity: stock?.quantity ?? 0,
+      receiptCandidates: [],
     };
   }
 
@@ -4870,6 +5058,7 @@ function lookupReturnDemo(
       lot: qr.lot,
       exp: qr.exp,
       drugName: "예시약 30T",
+      insuranceCode: stock?.insuranceCode ?? "",
       sellerCandidates: demoPurchaseHistories,
       returnableQuantity: stock?.quantity ?? 0,
       stockQuantity: stock?.quantity ?? 0,
@@ -4883,6 +5072,7 @@ function lookupReturnDemo(
     lot: qr.lot,
     exp: qr.exp,
     drugName: "미확인 약품",
+    insuranceCode: "",
     message: "입고·구매 내역에 근거가 없어 반품 대상으로 등록할 수 없습니다.",
   };
 }
@@ -5387,7 +5577,7 @@ function ReceiptReviewScreen({
         </div>
         {queue.length > 0 ? (
           <div className="list-card">
-            {queue.slice(0, 4).map((item) => (
+            {queue.map((item) => (
               <DrugRow
                 key={item.id}
                 item={item}
@@ -5401,9 +5591,6 @@ function ReceiptReviewScreen({
             <strong>입고할 QR이 없습니다</strong>
             <span>스캔 화면에서 다시 QR을 추가하세요.</span>
           </div>
-        )}
-        {queue.length > 4 && (
-          <div className="more">+ {queue.length - 4}건 더 보기</div>
         )}
       </section>
       <BottomBar>
@@ -5734,25 +5921,39 @@ function ReturnConfirmedScreen({
   const fullQuantity = lookup.productTotalQuantity;
   const canReturnFullBottle =
     fullQuantity > 0 && fullQuantity <= lookup.returnableQuantity;
+  const isPcOnlyReturn = !lookup.sn;
+  const snLabel = lookup.sn || "SN 없음";
+  const lotLabel = lookup.lot || "LOT 없음";
+  const expLabel = lookup.exp ? `EXP ${lookup.exp.slice(0, 7)}` : "EXP 없음";
 
   return (
-    <ReturnSheet height="confirmed">
+    <ReturnSheet
+      height="confirmed"
+      variant={isPcOnlyReturn ? "pc-only" : undefined}
+    >
       <span className="state-badge confirmed">
         <span />
-        확정 · 입고 이력 있음
+        {isPcOnlyReturn ? "확정 · 보험코드 재고" : "확정 · 입고 이력 있음"}
       </span>
       <div className="seller-card">
-        <span>확정 도매처</span>
-        <strong>{lookup.wholesalerName}</strong>
+        <span>{isPcOnlyReturn ? "반품 기준" : "확정 도매처"}</span>
+        <strong>
+          {isPcOnlyReturn ? "보험코드 합산 재고" : lookup.wholesalerName}
+        </strong>
       </div>
       <h1>{lookup.drugName}</h1>
-      <p className="code-line">
-        {lookup.sn} · {lookup.lot} · EXP {lookup.exp.slice(0, 7)}
-      </p>
+      {/* <p className="code-line">
+        {snLabel} · {lotLabel} · {expLabel}
+      </p> */}
       <div className="info-card">
         <div className="triple">
           <MiniMetric label="제품총수량" value={lookup.productTotalQuantity} />
-          <MiniMetric label="반품 누적" value={lookup.returnedQuantity} />
+          <MiniMetric
+            label={isPcOnlyReturn ? "현재 재고" : "반품 누적"}
+            value={
+              isPcOnlyReturn ? lookup.stockQuantity : lookup.returnedQuantity
+            }
+          />
           <MiniMetric
             label="반품 가능"
             value={lookup.returnableQuantity}
@@ -5760,6 +5961,20 @@ function ReturnConfirmedScreen({
           />
         </div>
       </div>
+      {isPcOnlyReturn && lookup.receiptCandidates.length > 0 && (
+        <div className="return-receipt-candidates">
+          <span>입고 이력</span>
+          <div>
+            {lookup.receiptCandidates.slice(0, 5).map((candidate) => (
+              <p key={candidate.id}>
+                <strong>{candidate.receivedAt}</strong>
+                <em>{candidate.wholesalerName}</em>
+                <b>{candidate.returnableQuantity}개</b>
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="return-confirm-actions push">
         <button
           className="primary-btn"
@@ -5786,36 +6001,33 @@ function ReturnConfirmedScreen({
 
 function ReturnEstimatedScreen({
   lookup,
-  selectedCandidateId,
-  onChoose,
+  reviewMessage,
   onClose,
-  onNext,
 }: {
   lookup: Extract<ReturnLookup, { matchType: "ESTIMATED" }>;
-  selectedCandidateId: string;
-  onChoose: (id: string) => void;
+  reviewMessage: string;
   onClose: () => void;
-  onNext: () => void;
 }) {
-  const candidateCount = lookup.sellerCandidates.length;
+  const snLabel = lookup.sn || "SN 없음";
+  const lotLabel = lookup.lot || "LOT 없음";
+  const expLabel = lookup.exp ? `EXP ${lookup.exp.slice(0, 7)}` : "EXP 없음";
 
   return (
     <ReturnSheet height="estimated">
       <span className="state-badge estimated">
         <span />
-        추정 · 구매 내역 후보
+        CMS 확인 필요
       </span>
       <h1>{lookup.drugName}</h1>
-      <p className="code-line">
-        {lookup.sn} · {lookup.lot} · EXP {lookup.exp.slice(0, 7)}
-      </p>
+      {/* <p className="code-line">
+        {snLabel} · {lotLabel} · {expLabel}
+      </p> */}
       <p className="estimated-copy">
-        {lookup.message ??
-          "입고 이력은 없지만 구매 내역 기준 판매처 후보가 있습니다."}
+        {reviewMessage ||
+          "입고 이력으로 확정되지 않아 CMS 반품 확인에서 재고를 선택해 처리해야 합니다."}
       </p>
       <div className="candidate-list return-candidate-list">
         {lookup.sellerCandidates.map((candidate) => {
-          const isActive = candidate.id === selectedCandidateId;
           const productName =
             candidate.productName && candidate.productName !== "-"
               ? candidate.productName
@@ -5828,12 +6040,7 @@ function ReturnEstimatedScreen({
           ].filter(Boolean);
 
           return (
-            <button
-              key={candidate.id}
-              className={`return-candidate ${isActive ? "is-active" : ""}`}
-              type="button"
-              onClick={() => onChoose(candidate.id)}
-            >
+            <div key={candidate.id} className="return-candidate">
               <span className="return-candidate-main">
                 <strong>{candidate.sellerName}</strong>
                 <em>{candidate.transactionAt}</em>
@@ -5846,17 +6053,12 @@ function ReturnEstimatedScreen({
                   {metaParts.join(" · ")}
                 </span>
               )}
-            </button>
+            </div>
           );
         })}
       </div>
-      <button
-        className="primary-btn push"
-        type="button"
-        disabled={candidateCount === 0}
-        onClick={onNext}
-      >
-        선택한 판매처로 반품
+      <button className="primary-btn push" type="button" onClick={onClose}>
+        다시 스캔
       </button>
       <button
         className="secondary-btn return-close-btn"
@@ -5871,9 +6073,11 @@ function ReturnEstimatedScreen({
 
 function ReturnNoneScreen({
   lookup,
+  reviewMessage,
   onClose,
 }: {
   lookup: Extract<ReturnLookup, { matchType: "NONE" }> | null;
+  reviewMessage: string;
   onClose: () => void;
 }) {
   const drugName =
@@ -5887,9 +6091,10 @@ function ReturnNoneScreen({
         <div className="none-icon" />
         <h1>{lookup?.message ?? "입고 내역이 확인되지 않는 상품입니다."}</h1>
         <p>
-          {drugName
-            ? `${drugName}은 입고 이력이 확인되지 않아 반품을 진행할 수 없습니다.`
-            : "입고 이력이 확인되지 않아 반품을 진행할 수 없습니다."}
+          {reviewMessage ||
+            (drugName
+              ? `${drugName}은 CMS 반품 확인에서 재고를 선택해 처리해야 합니다.`
+              : "CMS 반품 확인에서 재고를 선택해 처리해야 합니다.")}
         </p>
       </div>
       <div className="stack">
@@ -6345,9 +6550,11 @@ function receiptDrugDetail(item: ReceiptQueueItem) {
 function ReturnSheet({
   children,
   height,
+  variant,
 }: {
   children: ReactNode;
   height: "confirmed" | "estimated" | "none";
+  variant?: "pc-only";
 }) {
   return (
     <>
@@ -6362,7 +6569,9 @@ function ReturnSheet({
           <span className="corner br" />
         </div>
       </div>
-      <section className={`return-sheet ${height}`}>
+      <section
+        className={`return-sheet ${height} ${variant ? `is-${variant}` : ""}`}
+      >
         <div className="sheet-handle" />
         {children}
       </section>
@@ -6415,6 +6624,7 @@ type CmsPage =
   | "signup"
   | "inventory"
   | "inventory-shortages"
+  | "return-reviews"
   | "wholesaler"
   | "prescriptions"
   | "purchase";
@@ -6498,6 +6708,8 @@ type CmsStockControlledFilter =
   | "CONTROLLED"
   | "NON_CONTROLLED"
   | "VIRTUAL";
+type CmsStockSortKey = "name" | "quantity";
+type CmsStockSortDirection = "asc" | "desc";
 type CmsStockSearchStatus = "idle" | "short" | "loading" | "done" | "error";
 type CmsStockSnapshotSyncSummary = {
   type: string;
@@ -6515,6 +6727,32 @@ type CmsDeductionResolution =
   | "UNREGISTERED_DRUG";
 type CmsShortageStatus = "OPEN" | "ORDERED" | "HOLD" | "RESOLVED" | "IGNORED";
 type CmsShortageListFilter = "OPEN" | "ORDERED" | "HOLD";
+type CmsReturnReviewStatus = "OPEN" | "HOLD" | "RESOLVED";
+type CmsReturnReviewFilter = CmsReturnReviewStatus;
+
+type CmsReturnReview = {
+  id: string;
+  pc: string;
+  sn: string;
+  lot: string;
+  exp: string;
+  drugName: string;
+  insuranceCode: string;
+  matchType: "ESTIMATED" | "NO_SELLER_CANDIDATE" | "CONFIRMED";
+  status: CmsReturnReviewStatus;
+  message: string;
+  sellerCandidateCount: number;
+  sellerCandidateSummary: string;
+  requestedQuantity: number;
+  returnQuantity: number;
+  stockId?: string;
+  stockName?: string;
+  stockBefore?: number;
+  stockAfter?: number;
+  memo?: string;
+  createdAt: string;
+  resolvedAt?: string;
+};
 
 type CmsDeductionRecord = {
   id: string;
@@ -6993,6 +7231,9 @@ function getCmsPage(path: string): CmsPage {
   if (segment === "inventory" && subSegment === "shortages") {
     return "inventory-shortages";
   }
+  if (segment === "inventory" && subSegment === "returns") {
+    return "return-reviews";
+  }
   if (
     segment === "master" ||
     segment === "import" ||
@@ -7011,6 +7252,12 @@ function getCmsPage(path: string): CmsPage {
 function getCmsShortageId(path: string) {
   const segments = path.split("/").filter(Boolean);
   if (segments[1] !== "inventory" || segments[2] !== "shortages") return "";
+  return decodeURIComponent(segments[3] ?? "");
+}
+
+function getCmsReturnReviewId(path: string) {
+  const segments = path.split("/").filter(Boolean);
+  if (segments[1] !== "inventory" || segments[2] !== "returns") return "";
   return decodeURIComponent(segments[3] ?? "");
 }
 
@@ -7065,6 +7312,7 @@ function CmsApp({
 }) {
   const page = getCmsPage(path);
   const shortageRouteId = getCmsShortageId(path);
+  const returnReviewRouteId = getCmsReturnReviewId(path);
   const isCmsLoginRoute = path === "/cms/login";
   const [postLoginPath, setPostLoginPath] = useState(
     path === "/cms/login" ? "/cms" : path,
@@ -7078,6 +7326,7 @@ function CmsApp({
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(storageKeys.cmsSidebarCollapsed) === "true",
   );
+  const compactCmsNav = useMediaQuery(cmsCompactNavQuery);
   const [cmsReady, setCmsReady] = useState(() => !hasStoredAuthTokens());
   const [authAccount, setAuthAccount] = useState<AuthAccount | null>(() =>
     getStoredAuthAccount(),
@@ -7098,6 +7347,9 @@ function CmsApp({
   const [stockQuery, setStockQuery] = useState("");
   const [stockControlledFilter, setStockControlledFilter] =
     useState<CmsStockControlledFilter>("ALL");
+  const [stockSortKey, setStockSortKey] = useState<CmsStockSortKey>("quantity");
+  const [stockSortDirection, setStockSortDirection] =
+    useState<CmsStockSortDirection>("desc");
   const [cmsStockSearchStatus, setCmsStockSearchStatus] =
     useState<CmsStockSearchStatus>("idle");
   const [wholesalers, setWholesalers] = useState<Wholesaler[]>([]);
@@ -7133,11 +7385,13 @@ function CmsApp({
   const [deductionRecords, setDeductionRecords] = useState<
     CmsDeductionRecord[]
   >([]);
+  const [returnReviews, setReturnReviews] = useState<CmsReturnReview[]>([]);
   const [deductionFilter, setDeductionFilter] =
     useState<CmsDeductionFilter>("FAILED");
   const [selectedMasterId, setSelectedMasterId] = useState("");
   const [selectedDeductionId, setSelectedDeductionId] = useState("");
   const [selectedShortageId, setSelectedShortageId] = useState("");
+  const [selectedReturnReviewId, setSelectedReturnReviewId] = useState("");
   const [selectedShortageDetail, setSelectedShortageDetail] =
     useState<CmsShortageDetail | null>(null);
   const [shortageDetailLoading, setShortageDetailLoading] = useState(false);
@@ -7183,7 +7437,12 @@ function CmsApp({
   const selectedShortage =
     shortageRecords.find((record) => record.id === activeShortageId) ??
     (shortageRouteId ? undefined : shortageRecords[0]);
+  const activeReturnReviewId = returnReviewRouteId || selectedReturnReviewId;
+  const selectedReturnReview =
+    returnReviews.find((record) => record.id === activeReturnReviewId) ??
+    (returnReviewRouteId ? undefined : returnReviews[0]);
   const hasCmsSession = hasStoredAuthTokens();
+  const effectiveSidebarCollapsed = sidebarCollapsed && !compactCmsNav;
 
   useEffect(() => {
     localStorage.setItem(
@@ -7242,6 +7501,22 @@ function CmsApp({
       setSelectedShortageId(shortageRecords[0].id);
     }
   }, [selectedShortageId, shortageRecords, shortageRouteId]);
+
+  useEffect(() => {
+    if (returnReviews.length === 0) {
+      if (selectedReturnReviewId) setSelectedReturnReviewId("");
+      return;
+    }
+    if (returnReviewRouteId) {
+      if (selectedReturnReviewId !== returnReviewRouteId) {
+        setSelectedReturnReviewId(returnReviewRouteId);
+      }
+      return;
+    }
+    if (!returnReviews.some((record) => record.id === selectedReturnReviewId)) {
+      setSelectedReturnReviewId(returnReviews[0].id);
+    }
+  }, [returnReviewRouteId, returnReviews, selectedReturnReviewId]);
 
   useEffect(() => {
     setEditingWholesalerName(selectedWholesaler?.name ?? "");
@@ -7339,131 +7614,210 @@ function CmsApp({
 
     setApiState("checking");
     try {
-      const masterParams = new URLSearchParams();
-      if (masterQuery.trim()) masterParams.set("keyword", masterQuery.trim());
-      if (includeInactive) masterParams.set("includeInactive", "true");
-      const masterPath = `/drug-masters${
-        masterParams.toString() ? `?${masterParams}` : ""
-      }`;
-      const [
-        dashboardResult,
-        accountResult,
-        masterResult,
-        stockResult,
-        cookieResult,
-        purchaseResult,
-        syncResult,
-        failureResult,
-        deductionResult,
-        shortageResult,
-      ] = await Promise.allSettled([
-        optionalCmsApiFetch<unknown>("/dashboard"),
-        apiFetch<unknown>("/auth/me"),
-        apiFetch<unknown>(masterPath),
-        apiFetch<unknown>("/stocks"),
-        apiFetch<unknown>("/baropharm/cookie"),
-        apiFetch<unknown>("/purchase-histories"),
-        apiFetch<unknown>("/purchase-histories/sync-jobs"),
-        apiFetch<unknown>("/prescription-deductions/failed"),
-        optionalCmsApiFetch<unknown>("/prescription-deductions"),
-        optionalCmsApiFetch<unknown>("/prescription-shortages"),
-      ]);
+      const accountResponse = await apiFetch<unknown>("/auth/me");
+      const nextAccount = storeAuthAccount(
+        normalizeAuthAccount(
+          accountResponse,
+          getStoredAccessToken() ?? undefined,
+        ),
+      );
+      setAuthAccount(nextAccount);
 
-      if (dashboardResult.status === "fulfilled") {
-        setDashboardData(
-          dashboardResult.value
-            ? normalizeCmsDashboard(dashboardResult.value)
-            : null,
+      const targetPage =
+        canAccessMasterDataCms(nextAccount) || !isRestrictedCmsPage(page)
+          ? page
+          : "dashboard";
+      const throwRejected = (results: PromiseSettledResult<unknown>[]) => {
+        const rejected = results.find(
+          (result): result is PromiseRejectedResult =>
+            result.status === "rejected",
         );
-      }
-      if (accountResult.status === "fulfilled") {
-        setAuthAccount(
-          storeAuthAccount(
-            normalizeAuthAccount(
-              accountResult.value,
-              getStoredAccessToken() ?? undefined,
-            ),
-          ),
-        );
-      }
-      if (masterResult.status === "fulfilled") {
-        setMasters(arrayPayload(masterResult.value).map(normalizeCmsMaster));
-      }
-      if (stockResult.status === "fulfilled") {
-        setStocks(arrayPayload(stockResult.value).map(normalizeStock));
-      }
-      if (cookieResult.status === "fulfilled") {
-        setCookieState(normalizeCmsCookie(cookieResult.value));
-      }
-      if (purchaseResult.status === "fulfilled") {
-        setPurchaseHistories(
-          arrayPayload(purchaseResult.value).map(normalizeCmsPurchase),
-        );
-      }
-      if (syncResult.status === "fulfilled") {
-        setSyncJobs(arrayPayload(syncResult.value).map(normalizeCmsSyncJob));
-      }
-      if (failureResult.status === "fulfilled") {
-        const failures = deductionPayload(failureResult.value).map(
-          normalizeCmsDeduction,
-        );
-        setDeductionRecords((current) =>
-          mergeDeductionRecords(
-            current.filter((record) => record.status !== "FAILED"),
-            failures,
-          ),
-        );
-      }
-      if (deductionResult.status === "fulfilled" && deductionResult.value) {
-        const records = deductionPayload(deductionResult.value).map(
-          normalizeCmsDeduction,
-        );
-        if (records.length > 0) {
-          setDeductionRecords(records);
-        }
-      }
-      if (shortageResult.status === "fulfilled" && shortageResult.value) {
-        const records = deductionPayload(shortageResult.value).map(
-          normalizeCmsDeduction,
-        );
-        if (records.length > 0) {
-          setDeductionRecords((current) =>
-            mergeDeductionRecords(current, records),
+        if (rejected) throw rejected.reason;
+      };
+
+      if (targetPage === "dashboard") {
+        const [dashboardResult, failureResult, shortageResult] =
+          await Promise.allSettled([
+            optionalCmsApiFetch<unknown>("/dashboard"),
+            apiFetch<unknown>("/prescription-deductions/failed"),
+            optionalCmsApiFetch<unknown>("/prescription-shortages"),
+          ]);
+        throwRejected([dashboardResult, failureResult, shortageResult]);
+
+        if (dashboardResult.status === "fulfilled") {
+          setDashboardData(
+            dashboardResult.value
+              ? normalizeCmsDashboard(dashboardResult.value)
+              : null,
           );
         }
+
+        const failures =
+          failureResult.status === "fulfilled"
+            ? deductionPayload(failureResult.value).map(normalizeCmsDeduction)
+            : [];
+        const shortages =
+          shortageResult.status === "fulfilled" && shortageResult.value
+            ? deductionPayload(shortageResult.value).map(normalizeCmsDeduction)
+            : [];
+        setDeductionRecords(mergeDeductionRecords(failures, shortages));
+      } else if (targetPage === "master") {
+        const masterParams = new URLSearchParams();
+        if (masterQuery.trim()) {
+          masterParams.set("keyword", masterQuery.trim());
+        }
+        if (includeInactive) masterParams.set("includeInactive", "true");
+        const response = await apiFetch<unknown>(
+          `/drug-masters${masterParams.toString() ? `?${masterParams}` : ""}`,
+        );
+        setMasters(arrayPayload(response).map(normalizeCmsMaster));
+      } else if (targetPage === "inventory") {
+        const trimmed = stockQuery.trim();
+        const normalizedKeyword = normalizeSearchText(trimmed);
+        if (normalizedKeyword.length === 1) {
+          setCmsStockSearchStatus("short");
+          setApiMessage("재고 검색어는 2글자 이상 입력해 주세요.");
+        } else {
+          const stockParams = new URLSearchParams({
+            sortBy: stockSortKey,
+            sortDirection: stockSortDirection,
+          });
+          if (trimmed) stockParams.set("keyword", trimmed);
+          if (stockControlledFilter === "CONTROLLED") {
+            stockParams.set("controlledOnly", "true");
+          }
+          setCmsStockSearchStatus("loading");
+          const response = await apiFetch<unknown>(`/stocks?${stockParams}`);
+          const results = sortStockItems(
+            filterStocksByControlledFilter(
+              arrayPayload(response).map(normalizeStock),
+              stockControlledFilter,
+            ),
+            stockSortKey,
+            stockSortDirection,
+          );
+          setStocks(results);
+          setSelectedStockId((current) =>
+            results.some((stock) => stock.id === current)
+              ? current
+              : (results[0]?.id ?? ""),
+          );
+          setCmsStockSearchStatus("done");
+        }
+      } else if (targetPage === "inventory-shortages") {
+        const response = await optionalCmsApiFetch<unknown>(
+          "/prescription-shortages",
+        );
+        setDeductionRecords(
+          response ? deductionPayload(response).map(normalizeCmsDeduction) : [],
+        );
+      } else if (targetPage === "return-reviews") {
+        const [reviewResult, stockResult] = await Promise.allSettled([
+          apiFetch<unknown>("/returns/reviews"),
+          apiFetch<unknown>(
+            "/stocks?includeZero=false&sortBy=name&sortDirection=asc",
+          ),
+        ]);
+        throwRejected([reviewResult, stockResult]);
+
+        if (reviewResult.status === "fulfilled") {
+          setReturnReviews(
+            returnReviewPayload(reviewResult.value).map(
+              normalizeCmsReturnReview,
+            ),
+          );
+        }
+        if (stockResult.status === "fulfilled") {
+          setStocks(arrayPayload(stockResult.value).map(normalizeStock));
+        }
+      } else if (targetPage === "prescriptions") {
+        const [deductionResult, shortageResult] = await Promise.allSettled([
+          apiFetch<unknown>("/prescription-deductions"),
+          optionalCmsApiFetch<unknown>("/prescription-shortages"),
+        ]);
+        throwRejected([deductionResult, shortageResult]);
+
+        const deductions =
+          deductionResult.status === "fulfilled"
+            ? deductionPayload(deductionResult.value).map(normalizeCmsDeduction)
+            : [];
+        const shortages =
+          shortageResult.status === "fulfilled" && shortageResult.value
+            ? deductionPayload(shortageResult.value).map(normalizeCmsDeduction)
+            : [];
+        setDeductionRecords(mergeDeductionRecords(deductions, shortages));
+      } else if (targetPage === "purchase") {
+        const [cookieResult, purchaseResult, syncResult] =
+          await Promise.allSettled([
+            apiFetch<unknown>("/baropharm/cookie"),
+            apiFetch<unknown>("/purchase-histories"),
+            apiFetch<unknown>("/purchase-histories/sync-jobs"),
+          ]);
+        throwRejected([cookieResult, purchaseResult, syncResult]);
+
+        if (cookieResult.status === "fulfilled") {
+          setCookieState(normalizeCmsCookie(cookieResult.value));
+        }
+        if (purchaseResult.status === "fulfilled") {
+          setPurchaseHistories(
+            arrayPayload(purchaseResult.value).map(normalizeCmsPurchase),
+          );
+        }
+        if (syncResult.status === "fulfilled") {
+          setSyncJobs(arrayPayload(syncResult.value).map(normalizeCmsSyncJob));
+        }
+      } else if (targetPage === "wholesaler") {
+        if (normalizeSearchText(wholesalerQuery).length >= 2) {
+          const params = new URLSearchParams({ keyword: wholesalerQuery });
+          const response = await apiFetch<unknown>(`/wholesalers?${params}`);
+          const results = arrayPayload(response).map(normalizeWholesaler);
+          setWholesalers(results);
+          setSelectedWholesalerId((current) =>
+            results.some((wholesaler) => wholesaler.id === current)
+              ? current
+              : (results[0]?.id ?? ""),
+          );
+          setCmsWholesalerSearchStatus("done");
+        } else {
+          setWholesalers([]);
+          setSelectedWholesalerId("");
+          setCmsWholesalerSearchStatus("idle");
+        }
       }
 
-      const rejected = [
-        dashboardResult,
-        accountResult,
-        masterResult,
-        stockResult,
-        cookieResult,
-        purchaseResult,
-        syncResult,
-        failureResult,
-        deductionResult,
-        shortageResult,
-      ].find((result) => result.status === "rejected");
-
-      if (rejected?.status === "rejected") {
-        cmsFallback(rejected.reason);
-        return false;
-      } else {
-        setApiState("connected");
-        setApiMessage("데이터 연결됨");
-        setCmsReady(true);
-        return true;
-      }
+      setApiState("connected");
+      setApiMessage("현재 화면 데이터 갱신 완료");
+      setCmsReady(true);
+      return true;
     } catch (error) {
       cmsFallback(error);
       return false;
     }
-  }, [cmsFallback, includeInactive, masterQuery]);
+  }, [
+    cmsFallback,
+    includeInactive,
+    masterQuery,
+    page,
+    stockControlledFilter,
+    stockSortDirection,
+    stockSortKey,
+    stockQuery,
+    wholesalerQuery,
+  ]);
 
   useEffect(() => {
     void refreshCms();
-  }, [refreshCms]);
+  }, [visiblePage]);
+
+  useEffect(() => {
+    if (visiblePage !== "master" || !hasStoredAuthTokens()) return;
+
+    const timer = window.setTimeout(() => {
+      void refreshCms();
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [includeInactive, masterQuery, visiblePage]);
 
   async function submitCmsLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -7700,6 +8054,8 @@ function CmsApp({
     async (
       keyword: string,
       controlledFilter: CmsStockControlledFilter = "ALL",
+      sortKey: CmsStockSortKey = stockSortKey,
+      sortDirection: CmsStockSortDirection = stockSortDirection,
     ) => {
       const trimmed = keyword.trim();
       const normalizedKeyword = normalizeSearchText(trimmed);
@@ -7715,15 +8071,21 @@ function CmsApp({
       if (controlledFilter === "CONTROLLED") {
         params.set("controlledOnly", "true");
       }
+      params.set("sortBy", sortKey);
+      params.set("sortDirection", sortDirection);
 
       setCmsStockSearchStatus("loading");
       try {
         const response = await apiFetch<unknown>(
           `/stocks${params.toString() ? `?${params}` : ""}`,
         );
-        const results = filterStocksByControlledFilter(
-          arrayPayload(response).map(normalizeStock),
-          controlledFilter,
+        const results = sortStockItems(
+          filterStocksByControlledFilter(
+            arrayPayload(response).map(normalizeStock),
+            controlledFilter,
+          ),
+          sortKey,
+          sortDirection,
         );
 
         setStocks(results);
@@ -7738,7 +8100,7 @@ function CmsApp({
       } catch (error) {
         cmsFallback(error);
         const fallbackBase = filterStocksByControlledFilter(
-          initialStocks,
+          initialStocks.filter((stock) => stock.quantity !== 0),
           controlledFilter,
         );
         const fallbackResults = fallbackBase.filter((stock) =>
@@ -7748,14 +8110,18 @@ function CmsApp({
             } ${stock.controlledDrug.habitKind ?? ""}`,
           ).includes(normalizeSearchText(trimmed)),
         );
-        const nextStocks = trimmed ? fallbackResults : fallbackBase;
+        const nextStocks = sortStockItems(
+          trimmed ? fallbackResults : fallbackBase,
+          sortKey,
+          sortDirection,
+        );
 
         setStocks(nextStocks);
         setSelectedStockId(nextStocks[0]?.id ?? "");
         setCmsStockSearchStatus("error");
       }
     },
-    [cmsFallback],
+    [cmsFallback, stockSortDirection, stockSortKey],
   );
 
   async function syncStocksFromSnapshot(targetPharmacyId?: string) {
@@ -7766,7 +8132,7 @@ function CmsApp({
       const response = await apiFetch<unknown>(
         `/stocks/sync-snapshot${params.toString() ? `?${params}` : ""}`,
         {
-        method: "POST",
+          method: "POST",
         },
       );
       const summary = normalizeStockSnapshotSyncSummary(response);
@@ -7803,11 +8169,16 @@ function CmsApp({
         stocks.length,
       );
 
-      setStocks((current) => [
-        stock,
-        ...current.filter((item) => item.id !== stock.id),
-      ]);
-      setSelectedStockId(stock.id);
+      setStocks((current) =>
+        stock.quantity === 0
+          ? current.filter((item) => item.id !== stock.id)
+          : sortStockItems(
+              [stock, ...current.filter((item) => item.id !== stock.id)],
+              stockSortKey,
+              stockSortDirection,
+            ),
+      );
+      setSelectedStockId(stock.quantity === 0 ? "" : stock.id);
       setApiState("connected");
       setApiMessage("재고 약품 생성 완료");
       return true;
@@ -7929,25 +8300,33 @@ function CmsApp({
         stocks.findIndex((stock) => stock.id === selectedStock.id),
       );
       setStocks((current) =>
-        current.map((stock) =>
-          stock.id === selectedStock.id ? adjustedStock : stock,
-        ),
+        adjustedStock.quantity === 0
+          ? current.filter((stock) => stock.id !== selectedStock.id)
+          : sortStockItems(
+              current.map((stock) =>
+                stock.id === selectedStock.id ? adjustedStock : stock,
+              ),
+              stockSortKey,
+              stockSortDirection,
+            ),
       );
-      setSelectedStockId(adjustedStock.id);
+      setSelectedStockId(adjustedStock.quantity === 0 ? "" : adjustedStock.id);
       setAdjustQuantity(1);
       setApiState("connected");
       setApiMessage("수동 재고 조정 완료");
     } catch (error) {
       cmsFallback(error);
       setStocks((current) =>
-        current.map((stock) =>
-          stock.id === selectedStock.id
-            ? {
-                ...stock,
-                quantity: Math.max(0, stock.quantity + signedQuantity),
-              }
-            : stock,
-        ),
+        current
+          .map((stock) =>
+            stock.id === selectedStock.id
+              ? {
+                  ...stock,
+                  quantity: Math.max(0, stock.quantity + signedQuantity),
+                }
+              : stock,
+          )
+          .filter((stock) => stock.quantity !== 0),
       );
     }
   }
@@ -8147,6 +8526,76 @@ function CmsApp({
     }
   }
 
+  async function updateReturnReviewStatus(
+    record: CmsReturnReview,
+    status: CmsReturnReviewStatus,
+  ) {
+    if (status === "RESOLVED") return;
+
+    try {
+      const response = await apiFetch<unknown>(
+        `/returns/reviews/${record.id}/status`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            status,
+            memo: `CMS 반품 확인 상태 변경: ${returnReviewStatusText(status)}`,
+          }),
+        },
+      );
+      const nextRecord = normalizeCmsReturnReview(response, 0);
+      setReturnReviews((current) =>
+        current.map((item) =>
+          item.id === record.id
+            ? { ...item, ...nextRecord, id: item.id }
+            : item,
+        ),
+      );
+      setApiState("connected");
+      setApiMessage("반품 확인 상태 변경 완료");
+      void refreshCms();
+    } catch (error) {
+      cmsFallback(error);
+    }
+  }
+
+  async function resolveReturnReview(
+    record: CmsReturnReview,
+    stockId: string,
+    returnQuantity: number,
+    memo: string,
+  ) {
+    if (!stockId || returnQuantity <= 0) return;
+
+    try {
+      const response = await apiFetch<unknown>(
+        `/returns/reviews/${record.id}/resolve`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            stockId,
+            returnQuantity,
+            memo: memo || "CMS 반품 확인 처리",
+          }),
+        },
+      );
+      const nextRecord = normalizeCmsReturnReview(response, 0);
+      setReturnReviews((current) =>
+        current.map((item) =>
+          item.id === record.id
+            ? { ...item, ...nextRecord, id: item.id }
+            : item,
+        ),
+      );
+      setSelectedReturnReviewId(record.id);
+      setApiState("connected");
+      setApiMessage("반품 확인 항목 처리 완료");
+      void refreshCms();
+    } catch (error) {
+      cmsFallback(error);
+    }
+  }
+
   async function loadShortageDetail(record: CmsDeductionRecord) {
     setSelectedShortageId(record.id);
     setShortageDetailLoading(true);
@@ -8191,12 +8640,14 @@ function CmsApp({
 
   return (
     <div
-      className={`cms-shell ${sidebarCollapsed ? "is-sidebar-collapsed" : ""}`}
+      className={`cms-shell ${
+        effectiveSidebarCollapsed ? "is-sidebar-collapsed" : ""
+      }`}
     >
       <CmsSidebar
         account={authAccount}
         canAccessMasterData={canAccessMasterData}
-        collapsed={sidebarCollapsed}
+        collapsed={effectiveSidebarCollapsed}
         page={visiblePage}
         navigate={navigate}
         onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
@@ -8255,6 +8706,8 @@ function CmsApp({
               query={stockQuery}
               searchStatus={cmsStockSearchStatus}
               selectedStock={selectedStock}
+              sortDirection={stockSortDirection}
+              sortKey={stockSortKey}
               stocks={stocks}
               canSyncSnapshot={canSyncStockSnapshotCms(authAccount)}
               syncSnapshotDefaultPharmacyId={authAccount?.pharmacyId ?? ""}
@@ -8271,6 +8724,16 @@ function CmsApp({
               onQuery={setStockQuery}
               onSearch={searchCmsStocks}
               onSelect={setSelectedStockId}
+              onSort={(nextKey) => {
+                setStockSortDirection((currentDirection) =>
+                  nextStockSortDirection(
+                    stockSortKey,
+                    currentDirection,
+                    nextKey,
+                  ),
+                );
+                setStockSortKey(nextKey);
+              }}
               onSyncSnapshot={syncStocksFromSnapshot}
               onUpdatePrice={updateCmsStockPrice}
             />
@@ -8296,6 +8759,29 @@ function CmsApp({
               }
               onSelect={(record) => setSelectedShortageId(record.id)}
               onShortageStatus={updateShortageStatus}
+            />
+          )}
+          {visiblePage === "return-reviews" && (
+            <CmsReturnReviewPage
+              detailMode={Boolean(returnReviewRouteId)}
+              records={returnReviews}
+              selectedRecord={selectedReturnReview}
+              stocks={stocks}
+              onBack={() =>
+                navigate(
+                  returnReviewRouteId
+                    ? "/cms/inventory/returns"
+                    : "/cms/inventory",
+                )
+              }
+              onOpenDetail={(record) =>
+                navigate(
+                  `/cms/inventory/returns/${encodeURIComponent(record.id)}`,
+                )
+              }
+              onResolve={resolveReturnReview}
+              onSelect={(record) => setSelectedReturnReviewId(record.id)}
+              onStatus={updateReturnReviewStatus}
             />
           )}
           {visiblePage === "wholesaler" && (
@@ -8405,6 +8891,25 @@ function deductionPayload(raw: unknown): unknown[] {
   return [];
 }
 
+function returnReviewPayload(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  const item = asRecord(raw);
+  for (const key of ["returnReviews", "reviews", "items", "content", "data"]) {
+    const value = item[key];
+    if (Array.isArray(value)) return value;
+  }
+
+  const payload = unwrapObjectPayload(raw);
+  if (payload !== item) {
+    const nestedPayload = returnReviewPayload(payload);
+    if (nestedPayload.length > 0) return nestedPayload;
+    return isReturnReviewLikePayload(payload) ? [payload] : [];
+  }
+
+  if (isReturnReviewLikePayload(item)) return [item];
+  return [];
+}
+
 function normalizeStockSnapshotSyncSummary(
   raw: unknown,
 ): CmsStockSnapshotSyncSummary {
@@ -8441,6 +8946,13 @@ function isDeductionLikePayload(raw: unknown) {
   ].some((key) => item[key] !== undefined);
 }
 
+function isReturnReviewLikePayload(raw: unknown) {
+  const item = asRecord(raw);
+  return ["id", "reviewId", "pc", "drugName", "status", "matchType"].some(
+    (key) => item[key] !== undefined,
+  );
+}
+
 function mergeDeductionRecords(
   current: CmsDeductionRecord[],
   incoming: CmsDeductionRecord[],
@@ -8450,6 +8962,63 @@ function mergeDeductionRecords(
   return [...next.values()].sort((a, b) =>
     `${b.createdAt}${b.id}`.localeCompare(`${a.createdAt}${a.id}`),
   );
+}
+
+function normalizeCmsReturnReview(
+  raw: unknown,
+  index: number,
+): CmsReturnReview {
+  const item = unwrapObjectPayload(raw);
+  const rawStatus = String(item.status ?? "OPEN").toUpperCase();
+  const status: CmsReturnReviewStatus =
+    rawStatus === "RESOLVED"
+      ? "RESOLVED"
+      : rawStatus === "HOLD"
+        ? "HOLD"
+        : "OPEN";
+  const rawMatchType = String(
+    item.matchType ?? "NO_SELLER_CANDIDATE",
+  ).toUpperCase();
+  const matchType: CmsReturnReview["matchType"] = rawMatchType.includes(
+    "ESTIMATED",
+  )
+    ? "ESTIMATED"
+    : rawMatchType.includes("CONFIRMED")
+      ? "CONFIRMED"
+      : "NO_SELLER_CANDIDATE";
+
+  return {
+    id: String(item.id ?? item.reviewId ?? index),
+    pc: optionalText(item.pc) || "",
+    sn: normalizeLookupSn(item.sn, ""),
+    lot: optionalText(item.lot) || "",
+    exp: optionalText(item.exp) || "",
+    drugName: optionalText(item.drugName ?? item.name) || "미확인 약품",
+    insuranceCode: optionalText(item.insuranceCode ?? item.productCode) || "",
+    matchType,
+    status,
+    message: optionalText(item.message) || "",
+    sellerCandidateCount: finiteNumber(item.sellerCandidateCount),
+    sellerCandidateSummary: optionalText(item.sellerCandidateSummary) || "",
+    requestedQuantity: finiteNumber(item.requestedQuantity),
+    returnQuantity: finiteNumber(item.returnQuantity),
+    stockId: optionalText(item.stockId) || undefined,
+    stockName: optionalText(item.stockName) || undefined,
+    stockBefore:
+      item.stockBeforeQuantity === undefined
+        ? undefined
+        : finiteNumber(item.stockBeforeQuantity),
+    stockAfter:
+      item.stockAfterQuantity === undefined
+        ? undefined
+        : finiteNumber(item.stockAfterQuantity),
+    memo: optionalText(item.memo) || undefined,
+    createdAt: formatTransactionAt(item.createdAt),
+    resolvedAt:
+      item.resolvedAt === undefined
+        ? undefined
+        : formatTransactionAt(item.resolvedAt, "-"),
+  };
 }
 
 function normalizeCmsMaster(raw: unknown, index: number): CmsMaster {
@@ -8941,18 +9510,36 @@ function CmsSidebar({
   ];
   const accountDisplay = getCmsAccountDisplay(account);
   const isInventorySection =
-    page === "inventory" || page === "inventory-shortages";
+    page === "inventory" ||
+    page === "inventory-shortages" ||
+    page === "return-reviews";
   const [inventoryExpanded, setInventoryExpanded] =
     useState(isInventorySection);
+  const [inventoryFlyoutOpen, setInventoryFlyoutOpen] = useState(false);
 
   useEffect(() => {
     if (isInventorySection) setInventoryExpanded(true);
   }, [isInventorySection]);
 
+  useEffect(() => {
+    setInventoryFlyoutOpen(false);
+  }, [collapsed, page]);
+
   const inventorySubItems: Array<[CmsPage, string, string]> = [
     ["inventory", "재고 목록", "/cms/inventory"],
     ["inventory-shortages", "초과 처방", "/cms/inventory/shortages"],
+    ["return-reviews", "반품 확인", "/cms/inventory/returns"],
   ];
+  const showInventorySubnav = collapsed || inventoryExpanded;
+
+  function handleInventoryParentClick() {
+    if (collapsed) {
+      setInventoryFlyoutOpen((current) => !current);
+      return;
+    }
+
+    setInventoryExpanded((current) => !current);
+  }
 
   return (
     <aside className="cms-sidebar">
@@ -8980,17 +9567,32 @@ function CmsSidebar({
         {items.map(([key, label, href, icon]) =>
           key === "inventory" ? (
             <div
-              className={`cms-nav-group ${inventoryExpanded ? "is-open" : ""}`}
+              className={`cms-nav-group ${
+                inventoryExpanded ? "is-open" : ""
+              } ${inventoryFlyoutOpen ? "is-flyout-open" : ""}`}
               key={key}
+              onBlur={(event) => {
+                const nextTarget = event.relatedTarget;
+                if (
+                  !(nextTarget instanceof Node) ||
+                  !event.currentTarget.contains(nextTarget)
+                ) {
+                  setInventoryFlyoutOpen(false);
+                }
+              }}
+              onMouseLeave={() => setInventoryFlyoutOpen(false)}
             >
               <button
-                aria-expanded={inventoryExpanded}
+                aria-expanded={
+                  collapsed ? inventoryFlyoutOpen : inventoryExpanded
+                }
+                aria-haspopup={collapsed ? "menu" : undefined}
                 className={`cms-nav-parent ${
                   isInventorySection ? "is-section-active" : ""
                 }`}
                 type="button"
                 title={label}
-                onClick={() => setInventoryExpanded((current) => !current)}
+                onClick={handleInventoryParentClick}
               >
                 <img className="cms-nav-icon" src={icon} alt="" aria-hidden />
                 <span className="cms-nav-label">{label}</span>
@@ -9000,7 +9602,7 @@ function CmsSidebar({
                   strokeWidth={2.6}
                 />
               </button>
-              {inventoryExpanded && (
+              {showInventorySubnav && (
                 <div className="cms-subnav" aria-label="재고 하위 메뉴">
                   {inventorySubItems.map(([subKey, subLabel, subHref]) => (
                     <button
@@ -9008,7 +9610,10 @@ function CmsSidebar({
                       key={subKey}
                       type="button"
                       title={subLabel}
-                      onClick={() => navigate(subHref)}
+                      onClick={() => {
+                        setInventoryFlyoutOpen(false);
+                        navigate(subHref);
+                      }}
                     >
                       <span className="cms-nav-label">{subLabel}</span>
                     </button>
@@ -9057,6 +9662,7 @@ function CmsHeader({
     signup: "계정 생성",
     inventory: "재고",
     "inventory-shortages": "재고 · 초과 처방",
+    "return-reviews": "재고 · 반품 확인",
     wholesaler: "도매처 관리",
     prescriptions: "처방전",
     purchase: "구매 내역",
@@ -9068,6 +9674,7 @@ function CmsHeader({
     signup: "root 계정으로 신규 약국과 기본 계정을 생성합니다.",
     inventory: "보유 재고와 수량을 관리합니다.",
     "inventory-shortages": "초과 처방과 부족 수량을 확인합니다.",
+    "return-reviews": "앱에서 확정되지 않은 반품을 확인하고 처리합니다.",
     wholesaler: "약국별 도매처 정보를 관리합니다.",
     prescriptions: "처방전 차감 결과와 수동 처리 항목을 확인합니다.",
     purchase: "구매 내역과 주문 기록을 확인합니다.",
@@ -10068,6 +10675,8 @@ function CmsInventoryPage({
   query,
   searchStatus,
   selectedStock,
+  sortDirection,
+  sortKey,
   stocks,
   canSyncSnapshot,
   syncSnapshotDefaultPharmacyId,
@@ -10082,6 +10691,7 @@ function CmsInventoryPage({
   onQuery,
   onSearch,
   onSelect,
+  onSort,
   onSyncSnapshot,
   onUpdatePrice,
 }: {
@@ -10093,6 +10703,8 @@ function CmsInventoryPage({
   query: string;
   searchStatus: CmsStockSearchStatus;
   selectedStock?: StockItem;
+  sortDirection: CmsStockSortDirection;
+  sortKey: CmsStockSortKey;
   stocks: StockItem[];
   canSyncSnapshot: boolean;
   syncSnapshotDefaultPharmacyId: string;
@@ -10108,8 +10720,11 @@ function CmsInventoryPage({
   onSearch: (
     keyword: string,
     controlledFilter: CmsStockControlledFilter,
+    sortKey?: CmsStockSortKey,
+    sortDirection?: CmsStockSortDirection,
   ) => void;
   onSelect: (id: string) => void;
+  onSort: (sortKey: CmsStockSortKey) => void;
   onSyncSnapshot: (
     targetPharmacyId: string,
   ) => Promise<CmsStockSnapshotSyncSummary>;
@@ -10162,11 +10777,11 @@ function CmsInventoryPage({
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      onSearch(query, controlledFilter);
+      onSearch(query, controlledFilter, sortKey, sortDirection);
     }, 250);
 
     return () => window.clearTimeout(timer);
-  }, [controlledFilter, onSearch, query]);
+  }, [controlledFilter, onSearch, query, sortDirection, sortKey]);
 
   useEffect(() => {
     setSyncPharmacyId(syncSnapshotDefaultPharmacyId);
@@ -10309,10 +10924,58 @@ function CmsInventoryPage({
         <div className="cms-table-scroll">
           <div className="cms-table inventory">
             <div className="cms-tr cms-th">
-              <span>약품명</span>
+              <button
+                className={`cms-sort-header ${
+                  sortKey === "name" ? "is-active" : ""
+                }`}
+                type="button"
+                aria-label={stockSortAriaLabel(
+                  "약품명",
+                  "name",
+                  sortKey,
+                  sortDirection,
+                )}
+                title={stockSortAriaLabel(
+                  "약품명",
+                  "name",
+                  sortKey,
+                  sortDirection,
+                )}
+                onClick={() => onSort("name")}
+              >
+                약품명
+                <StockSortIcon
+                  active={sortKey === "name"}
+                  direction={sortDirection}
+                />
+              </button>
               <span>보험코드</span>
               <span>가격</span>
-              <span>보유수량</span>
+              <button
+                className={`cms-sort-header ${
+                  sortKey === "quantity" ? "is-active" : ""
+                }`}
+                type="button"
+                aria-label={stockSortAriaLabel(
+                  "보유수량",
+                  "quantity",
+                  sortKey,
+                  sortDirection,
+                )}
+                title={stockSortAriaLabel(
+                  "보유수량",
+                  "quantity",
+                  sortKey,
+                  sortDirection,
+                )}
+                onClick={() => onSort("quantity")}
+              >
+                보유수량
+                <StockSortIcon
+                  active={sortKey === "quantity"}
+                  direction={sortDirection}
+                />
+              </button>
               <span>예상금액</span>
               <span>매칭</span>
             </div>
@@ -10396,8 +11059,8 @@ function CmsInventoryPage({
               <span>동기화 방식</span>
               <strong>같은 보험코드는 기존 재고를 업데이트합니다.</strong>
               <em>
-                스냅샷을 보험코드별로 합산해 수량을 다시 맞추며, 0개와
-                음수 재고도 반영됩니다.
+                스냅샷을 보험코드별로 합산해 수량을 다시 맞추며, 0개와 음수
+                재고도 반영됩니다.
               </em>
             </div>
             {syncResult ? (
@@ -11095,6 +11758,407 @@ function CmsInventoryShortagePage({
                     )}
                 </div>
               </div>
+            </>
+          )}
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function CmsReturnReviewPage({
+  detailMode,
+  records,
+  selectedRecord,
+  stocks,
+  onBack,
+  onOpenDetail,
+  onResolve,
+  onSelect,
+  onStatus,
+}: {
+  detailMode: boolean;
+  records: CmsReturnReview[];
+  selectedRecord?: CmsReturnReview;
+  stocks: StockItem[];
+  onBack: () => void;
+  onOpenDetail: (record: CmsReturnReview) => void;
+  onResolve: (
+    record: CmsReturnReview,
+    stockId: string,
+    returnQuantity: number,
+    memo: string,
+  ) => void;
+  onSelect: (record: CmsReturnReview) => void;
+  onStatus: (record: CmsReturnReview, status: CmsReturnReviewStatus) => void;
+}) {
+  const [listFilter, setListFilter] = useState<CmsReturnReviewFilter>("OPEN");
+  const [resolveStockId, setResolveStockId] = useState("");
+  const [resolveQuantity, setResolveQuantity] = useState(1);
+  const [resolveMemo, setResolveMemo] = useState("CMS 반품 확인 처리");
+  const openRecords = records.filter((record) => record.status === "OPEN");
+  const holdRecords = records.filter((record) => record.status === "HOLD");
+  const resolvedRecords = records.filter(
+    (record) => record.status === "RESOLVED",
+  );
+  const visibleRecords =
+    listFilter === "HOLD"
+      ? holdRecords
+      : listFilter === "RESOLVED"
+        ? resolvedRecords
+        : openRecords;
+  const recordPagination = usePagination(
+    visibleRecords,
+    CMS_PAGE_SIZES.shortages,
+    `${listFilter}-${visibleRecords.length}`,
+  );
+  const activeRecord = selectedRecord;
+  const selectedStock =
+    stocks.find((stock) => stock.id === resolveStockId) ?? stocks[0];
+  const maxQuantity = Math.max(0, selectedStock?.quantity ?? 0);
+  const canResolve =
+    Boolean(activeRecord) &&
+    activeRecord?.status !== "RESOLVED" &&
+    Boolean(selectedStock) &&
+    resolveQuantity > 0 &&
+    resolveQuantity <= maxQuantity;
+  const filterItems: Array<{
+    count: number;
+    label: string;
+    value: CmsReturnReviewFilter;
+  }> = [
+    { count: openRecords.length, label: "확인 필요", value: "OPEN" },
+    { count: holdRecords.length, label: "보류", value: "HOLD" },
+    { count: resolvedRecords.length, label: "처리 완료", value: "RESOLVED" },
+  ];
+  const emptyMessage =
+    listFilter === "HOLD"
+      ? "보류된 반품 확인 항목이 없습니다."
+      : listFilter === "RESOLVED"
+        ? "처리 완료된 반품 확인 항목이 없습니다."
+        : "확인 필요한 반품 항목이 없습니다.";
+
+  useEffect(() => {
+    if (detailMode || visibleRecords.length === 0) return;
+    if (visibleRecords.some((record) => record.id === selectedRecord?.id)) {
+      return;
+    }
+    onSelect(visibleRecords[0]);
+  }, [detailMode, onSelect, selectedRecord?.id, visibleRecords]);
+
+  useEffect(() => {
+    if (!activeRecord) return;
+    const matchedStock =
+      (activeRecord.insuranceCode
+        ? stocks.find(
+            (stock) => stock.insuranceCode === activeRecord.insuranceCode,
+          )
+        : undefined) ?? stocks[0];
+    setResolveStockId(matchedStock?.id ?? "");
+    setResolveQuantity(Math.max(1, activeRecord.requestedQuantity || 1));
+    setResolveMemo("CMS 반품 확인 처리");
+  }, [
+    activeRecord?.id,
+    activeRecord?.insuranceCode,
+    activeRecord?.requestedQuantity,
+    stocks,
+  ]);
+
+  function selectListFilter(nextFilter: CmsReturnReviewFilter) {
+    setListFilter(nextFilter);
+    if (detailMode) onBack();
+  }
+
+  return (
+    <section className="cms-content cms-list-page cms-shortage-page">
+      <div className="cms-shortage-header">
+        {detailMode && (
+          <button type="button" onClick={onBack}>
+            반품 확인 목록
+          </button>
+        )}
+        <div>
+          <strong>반품 확인</strong>
+          <span>
+            앱에서 입고 이력으로 확정되지 않은 반품을 CMS에서 재고 선택 후
+            처리합니다.
+          </span>
+        </div>
+      </div>
+
+      <div className="cms-kpis compact">
+        <CmsKpi
+          label="확인 필요"
+          value={`${openRecords.length}`}
+          unit="건"
+          tone="red"
+        />
+        <CmsKpi label="보류" value={`${holdRecords.length}`} unit="건" />
+        <CmsKpi
+          label="처리 완료"
+          value={`${resolvedRecords.length}`}
+          unit="건"
+          tone="blue"
+        />
+      </div>
+
+      <div className="cms-shortage-filter" role="tablist">
+        {filterItems.map((item) => (
+          <button
+            className={listFilter === item.value ? "is-active" : ""}
+            key={item.value}
+            type="button"
+            onClick={() => selectListFilter(item.value)}
+          >
+            <span>{item.label}</span>
+            <b>{item.count}건</b>
+          </button>
+        ))}
+      </div>
+
+      <div className={`cms-shortage-layout ${detailMode ? "is-detail" : ""}`}>
+        {!detailMode && (
+          <div className="cms-table-card">
+            <div className="cms-table-scroll">
+              <div className="cms-shortage-table">
+                <div className="cms-shortage-row cms-return-review-row cms-th">
+                  <span>스캔일시</span>
+                  <span>약품</span>
+                  <span>PC/SN</span>
+                  <span>후보</span>
+                  <span>상태</span>
+                  <span>상세</span>
+                </div>
+                {recordPagination.items.map((record) => (
+                  <div
+                    className={`cms-shortage-row cms-return-review-row ${
+                      selectedRecord?.id === record.id ? "is-selected" : ""
+                    }`}
+                    key={record.id}
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => onSelect(record)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" || event.key === " ") {
+                        event.preventDefault();
+                        onSelect(record);
+                      }
+                    }}
+                  >
+                    <span>{record.createdAt}</span>
+                    <strong>
+                      {record.drugName}
+                      <em>{record.insuranceCode || "보험코드 없음"}</em>
+                    </strong>
+                    <span>
+                      {record.pc}
+                      <em>{record.sn || "SN 없음"}</em>
+                    </span>
+                    <b>{record.sellerCandidateCount}건</b>
+                    <span className="cms-badge missing">
+                      {returnReviewStatusText(record.status)}
+                    </span>
+                    <button
+                      className="cms-shortage-open-detail"
+                      type="button"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onSelect(record);
+                        onOpenDetail(record);
+                      }}
+                    >
+                      상세 보기
+                    </button>
+                  </div>
+                ))}
+                {visibleRecords.length === 0 && (
+                  <p className="cms-empty table-empty">{emptyMessage}</p>
+                )}
+              </div>
+            </div>
+            <CmsPagination {...recordPagination} />
+          </div>
+        )}
+
+        <aside className="cms-shortage-detail-card">
+          {!activeRecord ? (
+            <p className="cms-empty">선택된 반품 확인 항목이 없습니다.</p>
+          ) : (
+            <>
+              <div className="cms-shortage-detail-head">
+                <span className="cms-badge missing">
+                  {returnReviewStatusText(activeRecord.status)}
+                </span>
+                <strong>{activeRecord.drugName}</strong>
+                <em>{activeRecord.createdAt}</em>
+              </div>
+              <div className="cms-prescription-paper">
+                <div className="cms-prescription-paper-head">
+                  <div>
+                    <span>스캔 코드</span>
+                    <strong>{activeRecord.pc}</strong>
+                  </div>
+                  <b>{activeRecord.sn || "SN 없음"}</b>
+                </div>
+                <div className="cms-prescription-paper-meta">
+                  <span>
+                    보험코드
+                    <b>{activeRecord.insuranceCode || "없음"}</b>
+                  </span>
+                  <span>
+                    LOT / EXP
+                    <b>
+                      {activeRecord.lot || "LOT 없음"} ·{" "}
+                      {activeRecord.exp || "EXP 없음"}
+                    </b>
+                  </span>
+                </div>
+                <div className="cms-prescription-quantity-strip">
+                  <div>
+                    <span>앱 판단</span>
+                    <strong>
+                      {activeRecord.matchType === "ESTIMATED"
+                        ? "구매 후보"
+                        : "후보 없음"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>후보 수</span>
+                    <strong>{activeRecord.sellerCandidateCount}건</strong>
+                  </div>
+                  <div>
+                    <span>요청 수량</span>
+                    <strong>
+                      {activeRecord.requestedQuantity > 0
+                        ? `${activeRecord.requestedQuantity}개`
+                        : "-"}
+                    </strong>
+                  </div>
+                </div>
+              </div>
+
+              {activeRecord.sellerCandidateSummary && (
+                <div className="cms-prescription-full-paper">
+                  <div className="cms-prescription-summary">
+                    <strong>앱에서 확인한 구매 후보</strong>
+                    <span>{activeRecord.sellerCandidateCount}건</span>
+                  </div>
+                  <p className="cms-empty">
+                    {activeRecord.sellerCandidateSummary}
+                  </p>
+                </div>
+              )}
+
+              {activeRecord.status === "RESOLVED" ? (
+                <div className="cms-prescription-paper">
+                  <div className="cms-prescription-paper-head">
+                    <div>
+                      <span>처리 재고</span>
+                      <strong>{activeRecord.stockName ?? "-"}</strong>
+                    </div>
+                    <b>{activeRecord.returnQuantity}개 반품</b>
+                  </div>
+                  <div className="cms-prescription-paper-meta">
+                    <span>
+                      처리 전<b>{activeRecord.stockBefore ?? 0}개</b>
+                    </span>
+                    <span>
+                      처리 후<b>{activeRecord.stockAfter ?? 0}개</b>
+                    </span>
+                  </div>
+                </div>
+              ) : (
+                <>
+                  <div className="cms-detail-section">
+                    <strong>재고 차감 처리</strong>
+                    <label className="cms-field">
+                      <span>차감할 재고</span>
+                      <select
+                        value={resolveStockId}
+                        onChange={(event) => {
+                          const nextStock = stocks.find(
+                            (stock) => stock.id === event.target.value,
+                          );
+                          setResolveStockId(event.target.value);
+                          setResolveQuantity((current) =>
+                            Math.min(
+                              Math.max(1, current),
+                              Math.max(1, nextStock?.quantity ?? 1),
+                            ),
+                          );
+                        }}
+                      >
+                        {stocks.map((stock) => (
+                          <option key={stock.id} value={stock.id}>
+                            {stock.name} · {stock.quantity}개
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="cms-field">
+                      <span>반품 수량</span>
+                      <input
+                        min={1}
+                        max={Math.max(1, maxQuantity)}
+                        type="number"
+                        value={resolveQuantity}
+                        onChange={(event) =>
+                          setResolveQuantity(
+                            Math.max(
+                              1,
+                              Math.min(
+                                Math.max(1, maxQuantity),
+                                Number(event.target.value) || 1,
+                              ),
+                            ),
+                          )
+                        }
+                      />
+                    </label>
+                    <label className="cms-field">
+                      <span>메모</span>
+                      <input
+                        value={resolveMemo}
+                        onChange={(event) => setResolveMemo(event.target.value)}
+                      />
+                    </label>
+                  </div>
+                  <div className="cms-shortage-actions">
+                    <button
+                      className={
+                        activeRecord.status === "OPEN" ? "is-active" : ""
+                      }
+                      type="button"
+                      onClick={() => onStatus(activeRecord, "OPEN")}
+                    >
+                      확인 필요
+                    </button>
+                    <button
+                      className={
+                        activeRecord.status === "HOLD" ? "is-active" : ""
+                      }
+                      type="button"
+                      onClick={() => onStatus(activeRecord, "HOLD")}
+                    >
+                      보류
+                    </button>
+                    <button
+                      disabled={!canResolve}
+                      type="button"
+                      onClick={() =>
+                        onResolve(
+                          activeRecord,
+                          resolveStockId,
+                          resolveQuantity,
+                          resolveMemo,
+                        )
+                      }
+                    >
+                      선택 재고 차감
+                    </button>
+                  </div>
+                </>
+              )}
             </>
           )}
         </aside>
