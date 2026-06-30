@@ -11665,8 +11665,7 @@ function CmsInventoryShortagePage({
                 </span>
                 <strong>{activeRecord.drugName}</strong>
                 <em>
-                  {activeDetail?.capturedAt ?? activeRecord.createdAt} ·{" "}
-                  {activeRecord.prescriptionCode}
+                  {activeRecord.createdAt} · {activeRecord.prescriptionCode}
                 </em>
               </div>
               <div className="cms-prescription-paper">
