@@ -11,6 +11,7 @@ import {
   ArrowUp,
   ArrowUpDown,
   ChevronDown,
+  CircleHelp,
   Focus,
   HardDriveDownload,
   PanelLeftClose,
@@ -10789,6 +10790,9 @@ function CmsInventoryPage({
     emptyCmsStockCreateDraft,
   );
   const [priceDraft, setPriceDraft] = useState(0);
+  const [stockSheetTab, setStockSheetTab] = useState<"quantity" | "meta">(
+    "quantity",
+  );
   const [syncModalOpen, setSyncModalOpen] = useState(false);
   const [syncRunning, setSyncRunning] = useState(false);
   const [syncResult, setSyncResult] =
@@ -10854,13 +10858,14 @@ function CmsInventoryPage({
   function openCreateSheet() {
     setCreateDraft(emptyCmsStockCreateDraft());
     setSheetStockId(null);
+    setStockSheetTab("quantity");
     setSheetMode("create");
   }
 
   async function saveVirtualPrice() {
     if (!sheetStock) return;
     const saved = await onUpdatePrice(sheetStock, priceDraft);
-    if (saved) setSheetMode(null);
+    if (saved && sheetMode === "virtualPrice") setSheetMode(null);
   }
 
   async function confirmSnapshotSync() {
@@ -11050,8 +11055,11 @@ function CmsInventoryPage({
                 onClick={() => {
                   onSelect(stock.id);
                   setSheetStockId(stock.id);
+                  setStockSheetTab("quantity");
                   if (isVirtualStock(stock)) {
                     setPriceDraft(stock.price);
+                  }
+                  if (isVirtualStock(stock) && stock.price <= 0) {
                     setSheetMode("virtualPrice");
                   } else {
                     setSheetMode("adjust");
@@ -11184,14 +11192,11 @@ function CmsInventoryPage({
         <div
           className="cms-sheet-backdrop"
           role="presentation"
-          onClick={() => setSheetMode(null)}
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) setSheetMode(null);
+          }}
         >
-          <aside
-            aria-modal="true"
-            className="cms-sheet"
-            role="dialog"
-            onClick={(event) => event.stopPropagation()}
-          >
+          <aside aria-modal="true" className="cms-sheet" role="dialog">
             <header className="cms-sheet-header">
               <div>
                 <strong>
@@ -11231,83 +11236,178 @@ function CmsInventoryPage({
                     </em>
                   </div>
                 )}
-                <CmsField
-                  label="현재 재고"
-                  value={`${sheetStock.quantity}개`}
-                />
-                <div className="cms-segment">
-                  <button
-                    className={
-                      adjustDirection === "INCREASE" ? "is-active" : ""
-                    }
-                    type="button"
-                    onClick={() => onAdjustDirection("INCREASE")}
+                {isVirtualStock(sheetStock) && (
+                  <div
+                    className="cms-sheet-tabs"
+                    role="tablist"
+                    aria-label="임의 재고 수정 메뉴"
                   >
-                    증가
-                  </button>
-                  <button
-                    className={
-                      adjustDirection === "DECREASE" ? "is-active" : ""
-                    }
-                    type="button"
-                    onClick={() => onAdjustDirection("DECREASE")}
-                  >
-                    감소
-                  </button>
-                </div>
-                <div className="cms-stepper">
-                  <button
-                    type="button"
-                    onClick={() => onAdjustQuantity(adjustQuantity - 1)}
-                  >
-                    -
-                  </button>
-                  <strong>{adjustQuantity}</strong>
-                  <button
-                    type="button"
-                    onClick={() => onAdjustQuantity(adjustQuantity + 1)}
-                  >
-                    +
-                  </button>
-                </div>
-                <label className="cms-input">
-                  <span>조정 사유</span>
-                  <input
-                    value={adjustMemo}
-                    onChange={(event) => onAdjustMemo(event.target.value)}
-                  />
-                </label>
-                <div className="cms-after">
-                  <span>조정 후 재고</span>
-                  <strong>
-                    {Math.max(0, sheetStock.quantity + signedQuantity)}개
-                  </strong>
-                </div>
-                <button
-                  className="cms-primary"
-                  type="button"
-                  onClick={onAdjust}
-                >
-                  조정 저장
-                </button>
-                <div className="cms-divider" />
-                <h2>임의 보험코드 보정</h2>
-                <label className="cms-input">
-                  <span>전환/병합할 보험코드</span>
-                  <input
-                    value={mergeInsuranceCode}
-                    onChange={(event) =>
-                      onMergeInsuranceCode(event.target.value)
-                    }
-                  />
-                </label>
-                <button
-                  className="cms-primary"
-                  type="button"
-                  onClick={onMergeVirtual}
-                >
-                  실제 코드로 전환/병합
-                </button>
+                    <button
+                      className={
+                        stockSheetTab === "quantity" ? "is-active" : ""
+                      }
+                      type="button"
+                      role="tab"
+                      aria-selected={stockSheetTab === "quantity"}
+                      onClick={() => setStockSheetTab("quantity")}
+                    >
+                      재고 수정
+                    </button>
+                    <button
+                      className={stockSheetTab === "meta" ? "is-active" : ""}
+                      type="button"
+                      role="tab"
+                      aria-selected={stockSheetTab === "meta"}
+                      onClick={() => setStockSheetTab("meta")}
+                    >
+                      가격 및 보험코드 수정
+                    </button>
+                  </div>
+                )}
+
+                {(!isVirtualStock(sheetStock) ||
+                  stockSheetTab === "quantity") && (
+                  <>
+                    <CmsField
+                      label="현재 재고"
+                      value={`${sheetStock.quantity}개`}
+                    />
+                    <div className="cms-segment">
+                      <button
+                        className={
+                          adjustDirection === "INCREASE" ? "is-active" : ""
+                        }
+                        type="button"
+                        onClick={() => onAdjustDirection("INCREASE")}
+                      >
+                        증가
+                      </button>
+                      <button
+                        className={
+                          adjustDirection === "DECREASE" ? "is-active" : ""
+                        }
+                        type="button"
+                        onClick={() => onAdjustDirection("DECREASE")}
+                      >
+                        감소
+                      </button>
+                    </div>
+                    <div className="cms-stepper">
+                      <button
+                        type="button"
+                        onClick={() => onAdjustQuantity(adjustQuantity - 1)}
+                      >
+                        -
+                      </button>
+                      <input
+                        aria-label="조정 수량"
+                        inputMode="numeric"
+                        min={1}
+                        max={999}
+                        type="number"
+                        value={adjustQuantity}
+                        onChange={(event) =>
+                          onAdjustQuantity(Number(event.target.value) || 1)
+                        }
+                      />
+                      <button
+                        type="button"
+                        onClick={() => onAdjustQuantity(adjustQuantity + 1)}
+                      >
+                        +
+                      </button>
+                    </div>
+                    {/* <label className="cms-input">
+                      <span>조정 사유</span>
+                      <input
+                        value={adjustMemo}
+                        onChange={(event) => onAdjustMemo(event.target.value)}
+                      />
+                    </label> */}
+                    <div className="cms-after">
+                      <span>조정 후 재고</span>
+                      <strong>
+                        {Math.max(0, sheetStock.quantity + signedQuantity)}개
+                      </strong>
+                    </div>
+                    <button
+                      className="cms-primary"
+                      type="button"
+                      onClick={onAdjust}
+                    >
+                      저장
+                    </button>
+                  </>
+                )}
+
+                {isVirtualStock(sheetStock) && stockSheetTab === "meta" && (
+                  <>
+                    <h2>임의 재고 가격 수정</h2>
+                    <label className="cms-input">
+                      <span>약품 가격</span>
+                      <input
+                        min="0"
+                        type="number"
+                        value={priceDraft}
+                        onChange={(event) =>
+                          setPriceDraft(
+                            Math.max(0, Number(event.target.value) || 0),
+                          )
+                        }
+                      />
+                    </label>
+                    <div className="cms-after">
+                      <span>입력 기준 재고 금액</span>
+                      <strong>
+                        {currency(
+                          sheetStock.quantity * Math.max(0, priceDraft),
+                        )}
+                        원
+                      </strong>
+                    </div>
+                    <button
+                      className="cms-primary"
+                      type="button"
+                      onClick={saveVirtualPrice}
+                    >
+                      가격 저장
+                    </button>
+                    <div className="cms-divider" />
+                    <div className="cms-section-title-row">
+                      <h2>임의 보험코드 보정</h2>
+                      <button
+                        className="cms-help-icon"
+                        type="button"
+                        aria-label="임의 보험코드 보정 설명"
+                      >
+                        <CircleHelp size={16} strokeWidth={2.4} />
+                        <span>
+                          입력한 코드와 같은 코드의 약이 있으면 이 재고 수량을
+                          <br />
+                          그 약에 더합니다.
+                          <br />
+                          없으면, 이 임의 재고의 코드만 입력한 코드로 바뀝니다.
+                        </span>
+                      </button>
+                    </div>
+                    <label className="cms-input">
+                      <span>전환/병합할 보험코드</span>
+                      <input
+                        value={mergeInsuranceCode}
+                        onChange={(event) =>
+                          onMergeInsuranceCode(event.target.value)
+                        }
+                      />
+                    </label>
+                    <button
+                      className="cms-primary"
+                      type="button"
+                      onClick={onMergeVirtual}
+                    >
+                      실제 코드로 전환/병합
+                    </button>
+                  </>
+                )}
               </div>
             )}
 
@@ -13830,13 +13930,14 @@ function CmsSheet({
   title: string;
 }) {
   return (
-    <div className="cms-sheet-backdrop" role="presentation" onClick={onClose}>
-      <aside
-        aria-modal="true"
-        className="cms-sheet"
-        role="dialog"
-        onClick={(event) => event.stopPropagation()}
-      >
+    <div
+      className="cms-sheet-backdrop"
+      role="presentation"
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <aside aria-modal="true" className="cms-sheet" role="dialog">
         <header className="cms-sheet-header">
           <div>
             <strong>{title}</strong>
@@ -13873,13 +13974,14 @@ function CmsModal({
   const modalClassName =
     variant === "confirm" ? "cms-modal is-confirm" : "cms-modal";
   return (
-    <div className="cms-modal-backdrop" role="presentation" onClick={onClose}>
-      <aside
-        aria-modal="true"
-        className={modalClassName}
-        role="dialog"
-        onClick={(event) => event.stopPropagation()}
-      >
+    <div
+      className="cms-modal-backdrop"
+      role="presentation"
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <aside aria-modal="true" className={modalClassName} role="dialog">
         <header className="cms-modal-header">
           <div>
             <strong>{title}</strong>
