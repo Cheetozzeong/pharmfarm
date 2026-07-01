@@ -6683,16 +6683,35 @@ body:has(.cms-shell) {
   text-align: right;
 }
 
-.cms-prescription-line-list em {
+.cms-prescription-line-tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cms-prescription-line-tag {
   border: 1px solid rgba(202, 57, 42, 0.28);
   border-radius: 999px;
   background: #fff3f0;
   padding: 5px 8px;
   color: var(--red);
   font-size: 11px;
-  font-style: normal;
   font-weight: 950;
   white-space: nowrap;
+}
+
+.cms-prescription-line-tag.is-substitution-original {
+  border-color: #cbd5e1;
+  background: #f8fafc;
+  color: #475569;
+}
+
+.cms-prescription-line-tag.is-substitution-replacement {
+  border-color: #b8dfcf;
+  background: #edf7f2;
+  color: #16794f;
 }
 
 .cms-stock-candidate-picker {
@@ -7919,9 +7938,10 @@ body:has(.cms-shell) {
     padding-right: 8px;
   }
 
-  .cms-prescription-line-list em {
+  .cms-prescription-line-tags {
     grid-column: 2 / -1;
     justify-self: start;
+    justify-content: flex-start;
   }
 
   .cms-cookie-token-grid {

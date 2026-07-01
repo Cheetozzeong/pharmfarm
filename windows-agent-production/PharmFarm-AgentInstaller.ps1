@@ -12,6 +12,8 @@ $AgentSource = Join-Path $SourceRoot "PharmFarm-Agent.ps1"
 $AgentTarget = Join-Path $InstallRoot "PharmFarm-Agent.ps1"
 $TraySource = Join-Path $SourceRoot "PharmFarm-AgentTray.ps1"
 $TrayTarget = Join-Path $InstallRoot "PharmFarm-AgentTray.ps1"
+$ResyncTodaySource = Join-Path $SourceRoot "resync-today-prescriptions.bat"
+$ResyncTodayTarget = Join-Path $InstallRoot "resync-today-prescriptions.bat"
 $ControlledDrugReferenceSource = Join-Path $SourceRoot "controlled-drug-reference.csv"
 $ControlledDrugReferenceTarget = Join-Path $InstallRoot "controlled-drug-reference.csv"
 $ConfigTarget = Join-Path $InstallRoot "agent.config.json"
@@ -106,6 +108,9 @@ function Write-Config {
   Ensure-Directory $InstallRoot
   Copy-Item -LiteralPath $AgentSource -Destination $AgentTarget -Force
   Copy-Item -LiteralPath $TraySource -Destination $TrayTarget -Force
+  if (Test-Path -LiteralPath $ResyncTodaySource) {
+    Copy-Item -LiteralPath $ResyncTodaySource -Destination $ResyncTodayTarget -Force
+  }
   if (Test-Path -LiteralPath $ControlledDrugReferenceSource) {
     Copy-Item -LiteralPath $ControlledDrugReferenceSource -Destination $ControlledDrugReferenceTarget -Force
   }

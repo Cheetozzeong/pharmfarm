@@ -7004,6 +7004,7 @@ type CmsShortageStatus =
   | "SUBSTITUTED"
   | "RESOLVED"
   | "IGNORED";
+type CmsPrescriptionSubstitutionRole = "NONE" | "ORIGINAL" | "SUBSTITUTE";
 type CmsShortageListFilter = "OPEN" | "ORDERED" | "HOLD" | "SUBSTITUTED";
 type CmsReturnReviewStatus = "OPEN" | "HOLD" | "RESOLVED";
 type CmsReturnReviewFilter = CmsReturnReviewStatus;
@@ -7057,6 +7058,10 @@ type CmsDeductionRecord = {
   stockBefore?: number;
   stockAfter?: number;
   displayAfter?: number;
+  substitutionRole: CmsPrescriptionSubstitutionRole;
+  pdExtype?: number;
+  pdExrow?: number;
+  pdElement?: string;
   memo?: string;
   createdAt: string;
   resolvedAt?: string;
@@ -7070,6 +7075,10 @@ type CmsPrescriptionDrugLine = {
   dailyFrequency: number;
   medicationDays: number;
   totalQuantity: number;
+  substitutionRole: CmsPrescriptionSubstitutionRole;
+  pdExtype?: number;
+  pdExrow?: number;
+  pdElement?: string;
   memo: string;
 };
 
@@ -7304,6 +7313,7 @@ const demoDeductionRecords: CmsDeductionRecord[] = [
     stockBefore: 30,
     stockAfter: 24,
     displayAfter: 24,
+    substitutionRole: "NONE",
     createdAt: "2026.06.18 09:20",
   },
   {
@@ -7323,6 +7333,7 @@ const demoDeductionRecords: CmsDeductionRecord[] = [
     stockBefore: 100,
     stockAfter: 0,
     displayAfter: -80,
+    substitutionRole: "NONE",
     createdAt: "2026.06.18 09:22",
   },
   {
@@ -7336,6 +7347,7 @@ const demoDeductionRecords: CmsDeductionRecord[] = [
     shortageQuantity: 0,
     status: "FAILED",
     reason: "보험코드 기준 재고 미조회",
+    substitutionRole: "NONE",
     createdAt: "2026.06.18 09:24",
   },
   {
@@ -7349,6 +7361,7 @@ const demoDeductionRecords: CmsDeductionRecord[] = [
     shortageQuantity: 0,
     status: "FAILED",
     reason: "기준 데이터 미등록",
+    substitutionRole: "NONE",
     createdAt: "2026.06.18 09:37",
   },
   {
@@ -7367,6 +7380,7 @@ const demoDeductionRecords: CmsDeductionRecord[] = [
     stockBefore: 8,
     stockAfter: 7,
     displayAfter: 7,
+    substitutionRole: "NONE",
     createdAt: "2026.06.17 16:12",
   },
 ];
@@ -9660,6 +9674,77 @@ function normalizeCmsCookie(raw: unknown): CmsCookieState {
   };
 }
 
+function normalizeCmsPrescriptionSubstitutionRole(
+  rawRole: unknown,
+  rawType: unknown,
+): CmsPrescriptionSubstitutionRole {
+  const roleText = optionalText(rawRole);
+
+  if (roleText) {
+    if (roleText.includes("대체 전") || roleText.includes("원처방")) {
+      return "ORIGINAL";
+    }
+
+    if (roleText.includes("대체 처방") || roleText.includes("대체약")) {
+      return "SUBSTITUTE";
+    }
+
+    const normalizedRole = roleText.toUpperCase().replace(/[\s-]+/g, "_");
+
+    if (
+      [
+        "ORIGINAL",
+        "SOURCE",
+        "BEFORE",
+        "SUBSTITUTION_ORIGINAL",
+        "SUBSTITUTED_OUT",
+        "REPLACED_OUT",
+      ].includes(normalizedRole)
+    ) {
+      return "ORIGINAL";
+    }
+
+    if (
+      [
+        "SUBSTITUTE",
+        "REPLACEMENT",
+        "AFTER",
+        "SUBSTITUTION_REPLACEMENT",
+        "SUBSTITUTED_IN",
+        "REPLACED_IN",
+      ].includes(normalizedRole)
+    ) {
+      return "SUBSTITUTE";
+    }
+  }
+
+  const substitutionType = optionalFiniteNumber(rawType);
+
+  if (substitutionType === 1) return "ORIGINAL";
+  if (substitutionType === 2) return "SUBSTITUTE";
+  return "NONE";
+}
+
+function cmsPrescriptionSubstitutionLabel(
+  role: CmsPrescriptionSubstitutionRole,
+) {
+  if (role === "ORIGINAL") return "대체 전 처방";
+  if (role === "SUBSTITUTE") return "대체 처방";
+  return "";
+}
+
+function cmsPrescriptionSubstitutionClass(
+  role: CmsPrescriptionSubstitutionRole,
+) {
+  if (role === "ORIGINAL") return "is-substitution-original";
+  if (role === "SUBSTITUTE") return "is-substitution-replacement";
+  return "";
+}
+
+function hasCmsPrescriptionSubstitution(role: CmsPrescriptionSubstitutionRole) {
+  return role === "ORIGINAL" || role === "SUBSTITUTE";
+}
+
 function normalizeCmsDeduction(
   raw: unknown,
   index: number,
@@ -9702,6 +9787,19 @@ function normalizeCmsDeduction(
       0,
   );
   const shortageQuantity = finiteNumber(item.shortageQuantity);
+  const pdExtype = optionalFiniteNumber(
+    item.pdExtype ?? item.pd_extype ?? item.substitutionType,
+  );
+  const pdExrow = optionalFiniteNumber(
+    item.pdExrow ?? item.pd_exrow ?? item.substitutionRow,
+  );
+  const pdElement = optionalText(
+    item.pdElement ?? item.pd_element ?? item.substitutionElement,
+  );
+  const substitutionRole = normalizeCmsPrescriptionSubstitutionRole(
+    item.substitutionRole ?? item.substitutionStatus ?? item.substitutionKind,
+    pdExtype,
+  );
 
   return {
     id: String(item.id ?? item.deductionId ?? index),
@@ -9780,6 +9878,10 @@ function normalizeCmsDeduction(
       item.displayAfterQuantity === undefined && item.displayAfter === undefined
         ? undefined
         : optionalFiniteNumber(item.displayAfterQuantity ?? item.displayAfter),
+    substitutionRole,
+    pdExtype,
+    pdExrow,
+    pdElement,
     memo:
       item.memo === undefined || item.memo === null
         ? undefined
@@ -9799,14 +9901,50 @@ function normalizeCmsPrescriptionDrugLine(
   raw: unknown,
 ): CmsPrescriptionDrugLine {
   const item = asRecord(raw);
+  const pdExtype = optionalFiniteNumber(
+    item.pdExtype ?? item.pd_extype ?? item.substitutionType,
+  );
+  const pdExrow = optionalFiniteNumber(
+    item.pdExrow ?? item.pd_exrow ?? item.substitutionRow,
+  );
+  const pdElement = optionalText(
+    item.pdElement ?? item.pd_element ?? item.substitutionElement,
+  );
+  const substitutionRole = normalizeCmsPrescriptionSubstitutionRole(
+    item.substitutionRole ?? item.substitutionStatus ?? item.substitutionKind,
+    pdExtype,
+  );
+
   return {
-    lineNo: finiteNumber(item.lineNo ?? item.lineNumber),
-    insuranceCode: String(item.insuranceCode ?? item.productCode ?? "-"),
-    drugName: String(item.drugName ?? item.name ?? "미확인 약품"),
-    quantityPerDose: finiteNumber(item.quantityPerDose ?? item.dose),
-    dailyFrequency: finiteNumber(item.dailyFrequency ?? item.dailyCount),
-    medicationDays: finiteNumber(item.medicationDays ?? item.days),
-    totalQuantity: finiteNumber(item.totalQuantity ?? item.quantity),
+    lineNo: finiteNumber(
+      item.lineNo ?? item.lineNumber ?? item.pdNo ?? item.pd_no,
+    ),
+    insuranceCode: String(
+      item.insuranceCode ??
+        item.productCode ??
+        item.pdIscode ??
+        item.pd_iscode ??
+        "-",
+    ),
+    drugName: String(
+      item.drugName ?? item.name ?? item.drug_name ?? "미확인 약품",
+    ),
+    quantityPerDose: finiteNumber(
+      item.quantityPerDose ?? item.dose ?? item.pdDose ?? item.pd_dose,
+    ),
+    dailyFrequency: finiteNumber(
+      item.dailyFrequency ?? item.dailyCount ?? item.pdDnum ?? item.pd_dnum,
+    ),
+    medicationDays: finiteNumber(
+      item.medicationDays ?? item.days ?? item.pdDday ?? item.pd_dday,
+    ),
+    totalQuantity: finiteNumber(
+      item.totalQuantity ?? item.quantity ?? item.pdAmount ?? item.pd_amount,
+    ),
+    substitutionRole,
+    pdExtype,
+    pdExrow,
+    pdElement,
     memo: String(item.memo ?? ""),
   };
 }
@@ -9846,6 +9984,10 @@ function normalizeCmsShortageDetail(
               dailyFrequency: 0,
               medicationDays: 0,
               totalQuantity: fallback.totalQuantity,
+              substitutionRole: fallback.substitutionRole,
+              pdExtype: fallback.pdExtype,
+              pdExrow: fallback.pdExrow,
+              pdElement: fallback.pdElement,
               memo: "",
             },
           ],
@@ -9867,6 +10009,10 @@ function createFallbackShortageDetail(
           insuranceCode: record.insuranceCode,
           drugName: record.drugName,
           totalQuantity: record.totalQuantity,
+          substitutionRole: record.substitutionRole,
+          pdExtype: record.pdExtype,
+          pdExrow: record.pdExrow,
+          pdElement: record.pdElement,
         },
       ],
     },
@@ -12702,10 +12848,19 @@ function CmsInventoryShortagePage({
                     <div className="cms-prescription-line-list">
                       {(activeDetail?.drugs ?? []).map((drug, index) => {
                         const isTarget = drug.lineNo === activeRecord.lineNo;
+                        const substitutionRole =
+                          drug.substitutionRole ?? "NONE";
+                        const hasSubstitution =
+                          hasCmsPrescriptionSubstitution(substitutionRole);
 
                         return (
                           <div
-                            className={isTarget ? "is-target" : ""}
+                            className={[
+                              isTarget ? "is-target" : "",
+                              hasSubstitution ? "has-substitution" : "",
+                            ]
+                              .filter(Boolean)
+                              .join(" ")}
                             key={`${drug.lineNo}-${drug.insuranceCode}-${drug.drugName}`}
                           >
                             <div className="cms-prescription-line-index">
@@ -12724,7 +12879,24 @@ function CmsInventoryShortagePage({
                               <span>수량</span>
                               <b>{drug.totalQuantity}개</b>
                             </div>
-                            {isTarget && <em>초과 처방</em>}
+                            {(hasSubstitution || isTarget) && (
+                              <div className="cms-prescription-line-tags">
+                                {hasSubstitution && (
+                                  <span
+                                    className={`cms-prescription-line-tag ${cmsPrescriptionSubstitutionClass(substitutionRole)}`}
+                                  >
+                                    {cmsPrescriptionSubstitutionLabel(
+                                      substitutionRole,
+                                    )}
+                                  </span>
+                                )}
+                                {isTarget && (
+                                  <span className="cms-prescription-line-tag is-target">
+                                    초과 처방
+                                  </span>
+                                )}
+                              </div>
+                            )}
                           </div>
                         );
                       })}

@@ -96,7 +96,10 @@ PharmFarm 에이전트는 약국 PC에서 기존 약국 프로그램의 로컬 S
   "deviceId": "dpapi-protected-device-id",
   "eventId": "sha256(source + prescriptionCode + drugRows)",
   "source": "EPHARM_DB",
-  "sourceSchemaVersion": "epharm-prsdrug-v1",
+  "sourceSchemaVersion": "epharm-prsdrug-v2",
+  "syncMode": "LIVE",
+  "overwriteExisting": false,
+  "resyncRequestId": "",
   "capturedAt": "2026-06-23T00:00:00Z",
   "prescriptionRefHash": "sha256-prescription-code",
   "qrHash": "sha256-qr-if-exists",
@@ -108,7 +111,12 @@ PharmFarm 에이전트는 약국 PC에서 기존 약국 프로그램의 로컬 S
       "quantityPerDose": 1,
       "dailyFrequency": 1,
       "medicationDays": 30,
-      "totalQuantity": 30
+      "totalQuantity": 30,
+      "substitutionType": 0,
+      "substitutionRole": "NONE",
+      "pd_extype": 0,
+      "pd_exrow": 0,
+      "pd_element": ""
     }
   ]
 }
@@ -120,6 +128,8 @@ PharmFarm 에이전트는 약국 PC에서 기존 약국 프로그램의 로컬 S
 - `QR 원문`은 운영 기본값에서 보내지 않는다.
 - 서버 중복 방지는 `eventId` unique key로 처리한다.
 - 약품명은 서버의 DUR 마스터로 재매칭 가능하므로, 에이전트에서 받은 약품명은 보조값으로만 쓴다.
+- `pd_extype=1`은 대체 전 원처방으로 보존만 하고 재고 차감 대상에서 제외한다. `pd_extype=2`는 실제 대체 조제 행으로 차감 대상이다.
+- 테스트용 금일 재수집은 `syncMode=TODAY_OVERWRITE`, `overwriteExisting=true`, `resyncRequestId`를 보내며 서버는 같은 처방 라인을 upsert/replace한다.
 
 ## 6. 네트워크 장애 대응
 
@@ -394,4 +404,3 @@ heartbeat payload:
 - [ ] 기존 `/samples` 기반 흐름에서 전용 처방 API로 이전
 - [ ] PowerShell 진단 모드와 운영 모드 분리
 - [ ] .NET Agent 프로젝트 생성
-

@@ -23,7 +23,11 @@ Files:
 4. run-agent-console.bat
    Runs the agent in a visible console for troubleshooting.
 
-5. uninstall-pharmfarm-agent.bat
+5. resync-today-prescriptions.bat
+   Runs a one-time test sync for today's prescription rows.
+   It sends overwriteExisting=true so the server can replace already imported prescription lines.
+
+6. uninstall-pharmfarm-agent.bat
    Removes the Scheduled Task.
    Runtime queue/log files remain in ProgramData for recovery/audit.
 
@@ -55,6 +59,14 @@ Security defaults:
 - Patient name, phone, address, resident number are not collected.
 - Network failures are retried from the local queue.
 
+Prescription substitution rows:
+
+- EPharm prsdrug.pd_extype is sent with every prescription line when present.
+- pd_extype=1 means the original line that was substituted out.
+- pd_extype=2 means the actual replacement line that was dispensed.
+- The server should preserve both lines for prescription detail display, but only pd_extype=0 or pd_extype=2 rows should affect stock deduction.
+- If an older local DB does not expose pd_extype/pd_exrow/pd_element, the agent sends the prescription line as a normal row.
+
 Recommended operation:
 
 1. Double-click install-pharmfarm-agent.bat.
@@ -79,9 +91,18 @@ Tray icon:
 
 - Shows PharmFarm running status in the Windows notification area.
 - Right-click to refresh status, open logs, open queue, start/stop the agent, or close the tray icon.
+- Right-click "금일 처방 다시 가져오기" to resend today's prescription rows with overwriteExisting=true.
 - Right-click "향정 후보 다시 동기화" to rescan only controlled-drug candidate sources.
 - Right-click "참조 데이터 전체 다시 동기화" to rescan drug master, stock, barcode, wholesalers, prices, units, and controlled-drug candidates.
 - Closing the tray icon does not remove the background scheduled task.
+
+Today prescription overwrite test:
+
+- Use this only before changing shortage/order/manual resolution statuses for the test prescriptions.
+- The agent queries today's eP_ERROR_LOG.dbo.PRESCRIPT_EDB rows and their eP_PHARM.dbo.prsdrug lines.
+- The payload uses syncMode=TODAY_OVERWRITE and overwriteExisting=true.
+- The server must upsert by prescriptionCode + lineNo and replace the stored prescription lines before running stock deduction again.
+- Run from the tray menu, or run resync-today-prescriptions.bat from the extracted package.
 
 Bootstrap sync:
 

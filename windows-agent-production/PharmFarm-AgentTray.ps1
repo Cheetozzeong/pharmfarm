@@ -6,6 +6,8 @@ Add-Type -AssemblyName System.Drawing
 $AppName = "PharmFarmAgent"
 $TaskName = "PharmFarmAgent"
 $InstallRoot = Join-Path $env:ProgramData $AppName
+$AgentScript = Join-Path $InstallRoot "PharmFarm-Agent.ps1"
+$ConfigFile = Join-Path $InstallRoot "agent.config.json"
 $StateFile = Join-Path $InstallRoot "agent.state.json"
 $LogDir = Join-Path $InstallRoot "logs"
 $QueueDir = Join-Path $InstallRoot "queue"
@@ -145,6 +147,48 @@ function Restart-AgentTask {
   }
 }
 
+function Get-PowerShellExe {
+  $psExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+  $sysnative = Join-Path $env:SystemRoot "Sysnative\WindowsPowerShell\v1.0\powershell.exe"
+
+  if (Test-Path -LiteralPath $sysnative) {
+    return $sysnative
+  }
+
+  return $psExe
+}
+
+function Request-TodayPrescriptionOverwrite {
+  if (!(Test-Path -LiteralPath $AgentScript)) {
+    Show-Balloon "PharmFarm" "에이전트 파일을 찾지 못했습니다."
+    return
+  }
+
+  $psExe = Get-PowerShellExe
+  if (!(Test-Path -LiteralPath $psExe)) {
+    Show-Balloon "PharmFarm" "Windows PowerShell을 찾지 못했습니다."
+    return
+  }
+
+  try {
+    Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    Start-Sleep -Milliseconds 700
+
+    $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$AgentScript`" -ResyncTodayPrescriptions -ConfigPath `"$ConfigFile`""
+    $process = Start-Process -FilePath $psExe -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
+
+    if ($process.ExitCode -eq 0) {
+      Show-Balloon "PharmFarm" "금일 처방 재수집을 요청했습니다."
+    } else {
+      Show-Balloon "PharmFarm" "금일 처방 재수집이 실패했습니다. 로그를 확인하세요."
+    }
+  } catch {
+    Show-Balloon "PharmFarm" "금일 처방 재수집을 시작하지 못했습니다."
+  } finally {
+    [void](Restart-AgentTask)
+  }
+}
+
 function Request-ReferenceResync {
   Ensure-Directory $SyncStateDir
   Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -266,6 +310,18 @@ $openQueueItem.Text = "전송 대기 큐 열기"
 $openQueueItem.Add_Click({ Open-Folder $QueueDir })
 $menu.Items.Add($openQueueItem) | Out-Null
 $menu.Items.Add((New-Object System.Windows.Forms.ToolStripSeparator)) | Out-Null
+
+$resyncTodayPrescriptionItem = New-Object System.Windows.Forms.ToolStripMenuItem
+$resyncTodayPrescriptionItem.Text = "금일 처방 다시 가져오기"
+$resyncTodayPrescriptionItem.Add_Click({
+  $answer = [System.Windows.Forms.MessageBox]::Show("오늘 등록된 처방 라인을 다시 수집해 서버에 덮어쓰기 요청으로 전송합니다.`r`n아직 상태 변경을 하지 않은 테스트 환경에서만 사용하세요.", "PharmFarm Agent", "OKCancel", "Information")
+  if ($answer -eq [System.Windows.Forms.DialogResult]::OK) {
+    Request-TodayPrescriptionOverwrite
+    Start-Sleep -Milliseconds 500
+    Update-TrayStatus
+  }
+})
+$menu.Items.Add($resyncTodayPrescriptionItem) | Out-Null
 
 $resyncControlledItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $resyncControlledItem.Text = "향정 후보 다시 동기화"

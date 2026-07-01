@@ -1,6 +1,7 @@
 ﻿param(
   [switch]$Console,
   [switch]$Once,
+  [switch]$ResyncTodayPrescriptions,
   [string]$ConfigPath = ""
 )
 
@@ -1401,7 +1402,7 @@ function New-AgentEnvelope {
       pharmacyId = Convert-NullableInt $Config.pharmacyId
       deviceId = $Config.deviceId
       deviceName = $Config.deviceName
-      agentVersion = "1.1.1-ps"
+      agentVersion = "1.1.3-ps"
       batchId = "$Kind-$($eventId.Substring(0, 16))-$Part-$TotalParts"
       capturedAt = $now
       items = $Items
@@ -1622,6 +1623,32 @@ ORDER BY ps_Date DESC, ps_Code DESC
   return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_ERROR_LOG" -Query $query -TimeoutSeconds 8
 }
 
+function Get-TodayPrescriptionRows {
+  param([object]$Config)
+
+  $query = @"
+SELECT
+  ps_Code,
+  ps_Date,
+  ps_CnvDef,
+  ps_edbBarcode,
+  ps_Mcode,
+  ps_Mcodetype
+FROM dbo.PRESCRIPT_EDB WITH (NOLOCK)
+WHERE ps_Code IS NOT NULL
+  AND (
+    (
+      TRY_CONVERT(datetime2, ps_Date) >= CONVERT(date, GETDATE())
+      AND TRY_CONVERT(datetime2, ps_Date) < DATEADD(day, 1, CONVERT(date, GETDATE()))
+    )
+    OR CONVERT(varchar(8), ps_Date, 112) = CONVERT(varchar(8), GETDATE(), 112)
+  )
+ORDER BY ps_Date ASC, ps_Code ASC
+"@
+
+  return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_ERROR_LOG" -Query $query -TimeoutSeconds 20
+}
+
 function Get-PrescriptionDrugs {
   param(
     [object]$Config,
@@ -1638,7 +1665,10 @@ SELECT
   d.pd_dose,
   d.pd_dnum,
   d.pd_dday,
-  d.pd_amount
+  d.pd_amount,
+  d.pd_extype,
+  d.pd_exrow,
+  d.pd_element
 FROM dbo.prsdrug d WITH (NOLOCK)
 LEFT JOIN eP_BASES.dbo.dgmast m WITH (NOLOCK)
   ON m.dm_iscode = d.pd_iscode
@@ -1649,7 +1679,7 @@ ORDER BY d.pd_no
   try {
     return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_PHARM" -Query $query -TimeoutSeconds 10
   } catch {
-    $fallback = @"
+    $fallbackWithSubstitution = @"
 SELECT
   pd_code,
   pd_no,
@@ -1658,12 +1688,36 @@ SELECT
   pd_dose,
   pd_dnum,
   pd_dday,
-  pd_amount
+  pd_amount,
+  pd_extype,
+  pd_exrow,
+  pd_element
 FROM dbo.prsdrug WITH (NOLOCK)
 WHERE pd_code = $codeLiteral
 ORDER BY pd_no
 "@
-    return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_PHARM" -Query $fallback -TimeoutSeconds 10
+    try {
+      return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_PHARM" -Query $fallbackWithSubstitution -TimeoutSeconds 10
+    } catch {
+      $fallback = @"
+SELECT
+  pd_code,
+  pd_no,
+  pd_iscode,
+  '' AS drug_name,
+  pd_dose,
+  pd_dnum,
+  pd_dday,
+  pd_amount,
+  0 AS pd_extype,
+  0 AS pd_exrow,
+  '' AS pd_element
+FROM dbo.prsdrug WITH (NOLOCK)
+WHERE pd_code = $codeLiteral
+ORDER BY pd_no
+"@
+      return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_PHARM" -Query $fallback -TimeoutSeconds 10
+    }
   }
 }
 
@@ -1671,7 +1725,10 @@ function New-Payload {
   param(
     [object]$Config,
     [object]$QrRow,
-    [object[]]$DrugRows
+    [object[]]$DrugRows,
+    [string]$SyncMode = "LIVE",
+    [bool]$OverwriteExisting = $false,
+    [string]$ResyncRequestId = ""
   )
 
   $prescriptionCode = ""
@@ -1697,6 +1754,15 @@ function New-Payload {
     $dailyFrequency = Convert-NullableInt $drug.pd_dnum
     $medicationDays = Convert-NullableInt $drug.pd_dday
     $totalQuantity = Convert-NullableDouble $drug.pd_amount
+    $substitutionType = Convert-NullableInt $drug.pd_extype
+    if ($null -eq $substitutionType) { $substitutionType = 0 }
+    $substitutionRow = Convert-NullableInt $drug.pd_exrow
+    $substitutionElement = if ($drug.pd_element) { $drug.pd_element.ToString() } else { "" }
+    $substitutionRole = switch ($substitutionType) {
+      1 { "ORIGINAL" }
+      2 { "SUBSTITUTE" }
+      default { "NONE" }
+    }
 
     $items.Add([ordered]@{
       prescriptionCode = $prescriptionCode
@@ -1720,11 +1786,26 @@ function New-Payload {
       pd_dday = $medicationDays
       totalQuantity = $totalQuantity
       pd_amount = $totalQuantity
+      substitutionType = $substitutionType
+      substitutionRole = $substitutionRole
+      isSubstitutionOriginal = ($substitutionType -eq 1)
+      isSubstitutionReplacement = ($substitutionType -eq 2)
+      isSubstituted = ($substitutionType -eq 1 -or $substitutionType -eq 2)
+      substitutionElement = $substitutionElement
+      pd_extype = $substitutionType
+      pd_exrow = $substitutionRow
+      pd_element = $substitutionElement
+      syncMode = $SyncMode
+      overwriteExisting = $OverwriteExisting
+      replaceExisting = $OverwriteExisting
     })
   }
 
   $identity = [ordered]@{
     source = "EPHARM_DB"
+    syncMode = $SyncMode
+    overwriteExisting = $OverwriteExisting
+    resyncRequestId = $ResyncRequestId
     prescriptionRefHash = Get-Sha256Hex $prescriptionCode
     drugs = $items.ToArray()
   }
@@ -1742,9 +1823,15 @@ function New-Payload {
       pharmacyId = Convert-NullableInt $Config.pharmacyId
       deviceId = $Config.deviceId
       deviceName = $Config.deviceName
-      agentVersion = "1.1.1-ps"
+      agentVersion = "1.1.3-ps"
       batchId = "prescription-$($eventId.Substring(0, 16))"
       capturedAt = $now
+      source = "EPHARM_DB"
+      sourceSchemaVersion = "epharm-prsdrug-v2"
+      syncMode = $SyncMode
+      overwriteExisting = $OverwriteExisting
+      replaceExisting = $OverwriteExisting
+      resyncRequestId = $ResyncRequestId
       items = $items.ToArray()
     }
   }
@@ -1788,7 +1875,7 @@ function New-RequestHeaders {
   )
 
   $headers = @{
-    "X-PharmFarm-Agent-Version" = "1.0.0-ps"
+    "X-PharmFarm-Agent-Version" = "1.1.3-ps"
     "X-PharmFarm-Device-Id" = $Config.deviceId
   }
 
@@ -1946,6 +2033,51 @@ function Write-State {
   Write-JsonFile -Path $StateFile -Value $state -Depth 8
 }
 
+function Queue-TodayPrescriptionOverwrite {
+  param([object]$Config)
+
+  $requestId = [Guid]::NewGuid().ToString("N")
+  $queued = 0
+  $skipped = 0
+
+  try {
+    $rows = @(Convert-DataTableRows (Get-TodayPrescriptionRows $Config))
+    Write-AgentLog "today prescription overwrite scan rows=$($rows.Count) requestId=$requestId"
+
+    foreach ($row in $rows) {
+      $code = if ($row.ps_Code) { $row.ps_Code.ToString() } else { "" }
+
+      if ([string]::IsNullOrWhiteSpace($code)) {
+        $skipped += 1
+        continue
+      }
+
+      $drugRows = @(Convert-DataTableRows (Get-PrescriptionDrugs -Config $Config -PrescriptionCode $code))
+
+      if ($drugRows.Count -eq 0) {
+        Write-AgentLog "today prescription overwrite skipped prescription=$((Get-Sha256Hex $code).Substring(0, 12)) drugs=0 requestId=$requestId" "WARN"
+        $skipped += 1
+        continue
+      }
+
+      $envelope = New-Payload -Config $Config -QrRow $row -DrugRows $drugRows -SyncMode "TODAY_OVERWRITE" -OverwriteExisting $true -ResyncRequestId $requestId
+
+      if (Save-QueueItem $envelope) {
+        $queued += 1
+        Write-AgentLog "today prescription overwrite queued event=$($envelope.eventId) drugs=$($drugRows.Count) requestId=$requestId"
+      }
+    }
+
+    Flush-Queue $Config
+    Write-State -Config $Config -Status "OK" -Message "today prescription overwrite queued=$queued skipped=$skipped"
+    Write-AgentLog "today prescription overwrite complete queued=$queued skipped=$skipped requestId=$requestId"
+  } catch {
+    Write-AgentLog "today prescription overwrite error $($_.Exception.Message)" "ERROR"
+    Write-State -Config $Config -Status "ERROR" -Message $_.Exception.Message
+    throw
+  }
+}
+
 function Watch-Once {
   param([object]$Config)
 
@@ -2033,7 +2165,13 @@ try {
     exit 1
   }
 
-  Write-AgentLog "PharmFarm Agent started api=$($config.apiBase) sql=$($config.sqlServer) interval=${intervalSeconds}s pharmacyId=$($config.pharmacyId) deviceId=$($config.deviceId) includeRawQr=$($config.includeRawQrText) secretConfigured=$(![string]::IsNullOrWhiteSpace($config.agentSecret))"
+  Write-AgentLog "PharmFarm Agent started api=$($config.apiBase) sql=$($config.sqlServer) interval=${intervalSeconds}s pharmacyId=$($config.pharmacyId) deviceId=$($config.deviceId) includeRawQr=$($config.includeRawQrText) secretConfigured=$(![string]::IsNullOrWhiteSpace($config.agentSecret)) resyncTodayPrescriptions=$ResyncTodayPrescriptions"
+
+  if ($ResyncTodayPrescriptions) {
+    Queue-TodayPrescriptionOverwrite $config
+    exit 0
+  }
+
   Invoke-BootstrapSync $config
   Flush-Queue $config
   $script:LastReferenceSyncAt = Get-Date
