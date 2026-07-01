@@ -955,6 +955,80 @@ WHERE hd_iscode IS NOT NULL
   return 0
 }
 
+function Get-ControlledDrugProductInfoRows {
+  param(
+    [object]$Config,
+    [int]$Offset,
+    [int]$Limit
+  )
+
+  $end = $Offset + $Limit
+  $query = @"
+SELECT
+  q.insuranceCode,
+  q.habitGroup,
+  q.habitNo,
+  q.shortName,
+  q.remark,
+  q.appliedDate,
+  q.locate,
+  q.button,
+  q.subIndex,
+  q.habitKind,
+  q.groupPrice,
+  q.unitNo,
+  q.storeCode,
+  q.referenceSource
+FROM (
+  SELECT
+    CONVERT(NVARCHAR(80), B21_ISCODE) AS insuranceCode,
+    N'B21_PRODUCT_INFO' AS habitGroup,
+    CONVERT(NVARCHAR(80), B21_PRDUCT_CD) AS habitNo,
+    CONVERT(NVARCHAR(300), B21_PRDUCT_NM) AS shortName,
+    CONVERT(NVARCHAR(300), B21_PRTM_SE_NM) AS remark,
+    CONVERT(NVARCHAR(40), B21_UPD_DT) AS appliedDate,
+    N'eP_BASES.dbo.B21_PRODUCT_INFO' AS locate,
+    CONVERT(NVARCHAR(80), B21_PRDUCT_CD) AS button,
+    CONVERT(NVARCHAR(80), B21_PRDLST_MST_CD) AS subIndex,
+    CONVERT(NVARCHAR(40), B21_NRCD_SE_NM) AS habitKind,
+    CONVERT(NVARCHAR(80), B21_PRD_TOT_PCE_QY) AS groupPrice,
+    CONVERT(NVARCHAR(80), B21_PRDLST_MST_CD) AS unitNo,
+    CONVERT(NVARCHAR(80), B21_PRDUCT_CD) AS storeCode,
+    N'B21_PRODUCT_INFO' AS referenceSource,
+    ROW_NUMBER() OVER (ORDER BY B21_ISCODE, B21_PRDUCT_CD) AS row_num
+  FROM dbo.B21_PRODUCT_INFO WITH (NOLOCK)
+  WHERE NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(80), B21_ISCODE))), '') IS NOT NULL
+    AND B21_NRCD_SE_NM IN (N'마약', N'향정')
+) q
+WHERE q.row_num > $Offset
+  AND q.row_num <= $end
+ORDER BY q.row_num
+"@
+
+  return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 30
+}
+
+function Get-ControlledDrugProductInfoCount {
+  param([object]$Config)
+
+  $query = @"
+SELECT COUNT(1) AS row_count
+FROM dbo.B21_PRODUCT_INFO WITH (NOLOCK)
+WHERE NULLIF(LTRIM(RTRIM(CONVERT(NVARCHAR(80), B21_ISCODE))), '') IS NOT NULL
+  AND B21_NRCD_SE_NM IN (N'마약', N'향정')
+"@
+  $table = Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_BASES" -Query $query -TimeoutSeconds 30
+
+  foreach ($row in $table.Rows) {
+    $value = Get-DataRowValue $row "row_count"
+    if ($null -ne $value) {
+      return [int]$value
+    }
+  }
+
+  return 0
+}
+
 function Get-ControlledDrugMasterCandidateRows {
   param(
     [object]$Config,
@@ -1494,6 +1568,7 @@ function Invoke-BootstrapSync {
 
   if ($Config.bootstrapControlledDrug -eq $true -or $Config.bootstrapControlledDrugs -eq $true) {
     Queue-AgentRowsSync -Config $Config -State $state -StateKey "controlledDrugReferenceCompleted" -Kind "controlled-drug" -TargetPath "/agent/controlled-drugs" -FetchRows { param($c, $o, $l) Get-ControlledDrugReferenceSyncRows -Config $c -Offset $o -Limit $l } -CountRows { param($c) Get-ControlledDrugReferenceSyncCount -Config $c }
+    Queue-AgentTableSync -Config $Config -State $state -StateKey "controlledDrugProductInfoCompleted" -Kind "controlled-drug-product-info" -TargetPath "/agent/controlled-drugs" -DbName "eP_BASES" -TableName "dbo.B21_PRODUCT_INFO" -Where "B21_ISCODE IS NOT NULL AND B21_NRCD_SE_NM IN (N'마약', N'향정')" -FetchRows { param($c, $o, $l) Get-ControlledDrugProductInfoRows -Config $c -Offset $o -Limit $l } -CountRows { param($c) Get-ControlledDrugProductInfoCount -Config $c }
     Queue-AgentTableSync -Config $Config -State $state -StateKey "controlledDrugCompleted" -Kind "controlled-drug" -TargetPath "/agent/controlled-drugs" -DbName "eP_BASES" -TableName "dbo.habitdrug" -Where "hd_iscode IS NOT NULL" -FetchRows { param($c, $o, $l) Get-ControlledDrugRows -Config $c -Offset $o -Limit $l } -CountRows { param($c) Get-ControlledDrugReferenceCount -Config $c }
     Queue-AgentTableSync -Config $Config -State $state -StateKey "controlledDrugMasterCompleted" -Kind "controlled-drug-master" -TargetPath "/agent/controlled-drugs" -DbName "eP_BASES" -TableName "dbo.dgmast" -Where "dm_iscode IS NOT NULL" -FetchRows { param($c, $o, $l) Get-ControlledDrugMasterCandidateRows -Config $c -Offset $o -Limit $l } -CountRows { param($c) Get-ControlledDrugMasterCandidateCount -Config $c }
   }
