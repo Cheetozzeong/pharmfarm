@@ -7440,6 +7440,14 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
             <HardDriveDownload size={20} />
             Windows 설치 파일 다운로드
           </a>
+          <a
+            className="agent-secondary-button"
+            href="/pharmfarm-prescription-trace-tools.zip"
+            download
+          >
+            <HardDriveDownload size={20} />
+            처방 trace 진단 도구 다운로드
+          </a>
           <button
             type="button"
             className="agent-secondary-button"

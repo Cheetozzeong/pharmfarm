@@ -22,7 +22,23 @@ $ColumnPath = Join-Path $ExportRoot "candidate_columns.csv"
 $SummaryPath = Join-Path $ExportRoot "summary.txt"
 $CodexPath = Join-Path $ExportRoot "SEND_TO_CODEX.txt"
 
-$SensitiveColumnPattern = '(name|patient|jumin|resident|birth|phone|mobile|tel|address|addr|email|ssn|rrn|chart|환자|성명|이름|주민|생년|전화|휴대|주소|차트)'
+$InsuranceCode = @($InsuranceCode + $args | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+$SensitiveColumnTerms = @(
+  "name",
+  "patient",
+  "jumin",
+  "resident",
+  "birth",
+  "phone",
+  "mobile",
+  "tel",
+  "address",
+  "addr",
+  "email",
+  "ssn",
+  "rrn",
+  "chart"
+)
 
 function Ensure-Directory {
   param([string]$Path)
@@ -34,6 +50,18 @@ function Ensure-Directory {
 function Write-Log {
   param([string]$Message)
   Write-Host ("[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $Message)
+}
+
+function Test-SensitiveColumnName {
+  param([string]$ColumnName)
+
+  foreach ($term in $SensitiveColumnTerms) {
+    if ($ColumnName.IndexOf($term, [StringComparison]::InvariantCultureIgnoreCase) -ge 0) {
+      return $true
+    }
+  }
+
+  return $false
 }
 
 function New-ConnectionString {
@@ -117,7 +145,7 @@ function Convert-SafeCellValue {
     return $null
   }
 
-  if ($ColumnName -match $SensitiveColumnPattern) {
+  if (Test-SensitiveColumnName $ColumnName) {
     $text = $Value.ToString()
     if ([string]::IsNullOrWhiteSpace($text)) {
       return ""
@@ -431,7 +459,7 @@ foreach ($database in $databases) {
         typeName = (Get-DataRowValue $row "typeName").ToString()
         maxLength = Get-DataRowValue $row "maxLength"
         isNullable = Get-DataRowValue $row "isNullable"
-        maskedInExports = if ((Get-DataRowValue $row "columnName").ToString() -match $SensitiveColumnPattern) { "true" } else { "false" }
+        maskedInExports = if (Test-SensitiveColumnName (Get-DataRowValue $row "columnName").ToString()) { "true" } else { "false" }
       })
     }
 
