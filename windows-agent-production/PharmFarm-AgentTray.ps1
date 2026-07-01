@@ -150,7 +150,7 @@ function Request-ReferenceResync {
   Stop-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
   Start-Sleep -Milliseconds 700
 
-  foreach ($kind in @("drug-master", "stock", "barcode", "wholesaler", "controlled-drug", "controlled-drug-master", "drug-price", "drug-unit")) {
+  foreach ($kind in @("drug-master", "stock", "barcode", "wholesaler", "controlled-drug", "controlled-drug-product-info", "controlled-drug-master", "drug-price", "drug-unit")) {
     Remove-SyncHash $kind
   }
 
@@ -171,8 +171,9 @@ function Request-ControlledDrugResync {
   Start-Sleep -Milliseconds 700
 
   Remove-SyncHash "controlled-drug"
+  Remove-SyncHash "controlled-drug-product-info"
   Remove-SyncHash "controlled-drug-master"
-  Reset-BootstrapFlags @("controlledDrugCompleted", "controlledDrugMasterCompleted")
+  Reset-BootstrapFlags @("controlledDrugReferenceCompleted", "controlledDrugProductInfoCompleted", "controlledDrugCompleted", "controlledDrugMasterCompleted")
 
   if (Restart-AgentTask) {
     Show-Balloon "PharmFarm" "향정 후보 재동기화를 시작했습니다."

@@ -10,6 +10,7 @@ import {
   ArrowDown,
   ArrowUp,
   ArrowUpDown,
+  CalendarDays,
   ChevronDown,
   CircleHelp,
   Focus,
@@ -2290,6 +2291,8 @@ function shortageStatusText(status?: CmsShortageStatus) {
   switch (status) {
     case "ORDERED":
       return "주문 완료";
+    case "SUBSTITUTED":
+      return "대체 처리";
     case "HOLD":
     case "RESOLVED":
     case "IGNORED":
@@ -2305,6 +2308,17 @@ function isHoldShortageStatus(status?: CmsShortageStatus) {
 
 function isOpenShortageStatus(status?: CmsShortageStatus) {
   return !status || status === "OPEN";
+}
+
+function isActiveShortageStatus(status?: CmsShortageStatus) {
+  return isOpenShortageStatus(status) || status === "ORDERED";
+}
+
+function shortageStatusBadgeClass(status?: CmsShortageStatus) {
+  if (status === "SUBSTITUTED") return "name";
+  if (status === "ORDERED") return "normal";
+  if (isHoldShortageStatus(status)) return "virtual";
+  return "missing";
 }
 
 function returnReviewStatusText(status?: CmsReturnReviewStatus) {
@@ -2391,6 +2405,23 @@ function optionalFiniteNumber(value: unknown) {
   const numericValue = Number(value);
   if (!Number.isFinite(numericValue)) return undefined;
   return Object.is(numericValue, -0) ? 0 : numericValue;
+}
+
+function dateInputValue(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function recentWeekDateRange() {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(end.getDate() - 6);
+  return {
+    endDate: dateInputValue(end),
+    startDate: dateInputValue(start),
+  };
 }
 
 function currency(value: number) {
@@ -2665,6 +2696,97 @@ function StockSortIcon({
       strokeWidth={2.6}
     />
   );
+}
+
+function CmsSortHeader({
+  active,
+  direction,
+  label,
+  title,
+  onClick,
+}: {
+  active: boolean;
+  direction: CmsStockSortDirection;
+  label: string;
+  title: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`cms-sort-header ${active ? "is-active" : ""}`}
+      type="button"
+      aria-label={title}
+      title={title}
+      onClick={onClick}
+    >
+      {label}
+      <StockSortIcon active={active} direction={direction} />
+    </button>
+  );
+}
+
+function sortCmsDeductionRecords(
+  records: CmsDeductionRecord[],
+  sortKey: CmsPrescriptionSortKey,
+  sortDirection: CmsStockSortDirection,
+) {
+  const direction = sortDirection === "asc" ? 1 : -1;
+
+  return [...records].sort((left, right) => {
+    let compared = 0;
+    if (sortKey === "drugName") {
+      compared = left.drugName.localeCompare(right.drugName, "ko");
+    } else if (sortKey === "quantity") {
+      compared = left.totalQuantity - right.totalQuantity;
+    } else if (sortKey === "shortage") {
+      compared = left.shortageQuantity - right.shortageQuantity;
+    } else if (sortKey === "status") {
+      compared = shortageStatusText(left.shortageStatus).localeCompare(
+        shortageStatusText(right.shortageStatus),
+        "ko",
+      );
+      if (compared === 0) {
+        compared = deductionStatusText(left.status).localeCompare(
+          deductionStatusText(right.status),
+          "ko",
+        );
+      }
+    } else {
+      compared = left.createdAt.localeCompare(right.createdAt);
+    }
+
+    if (compared !== 0) return compared * direction;
+    return right.id.localeCompare(left.id);
+  });
+}
+
+function nextPrescriptionSortDirection(
+  currentKey: CmsPrescriptionSortKey,
+  currentDirection: CmsStockSortDirection,
+  nextKey: CmsPrescriptionSortKey,
+) {
+  if (currentKey === nextKey) {
+    return currentDirection === "asc" ? "desc" : "asc";
+  }
+  return nextKey === "drugName" || nextKey === "status" ? "asc" : "desc";
+}
+
+function prescriptionSortAriaLabel(
+  label: string,
+  key: CmsPrescriptionSortKey,
+  sortKey: CmsPrescriptionSortKey,
+  sortDirection: CmsStockSortDirection,
+) {
+  if (sortKey !== key) return `${label} 정렬`;
+  return `${label} ${sortDirection === "asc" ? "오름차순" : "내림차순"} 정렬`;
+}
+
+function prescriptionSearchStateText(status: CmsPrescriptionSearchStatus) {
+  if (status === "loading") return "조회 중";
+  if (status === "short") return "2글자 이상 검색";
+  if (status === "error") return "조회 실패";
+  if (status === "done") return "조회 완료";
+  return "조회 대기";
 }
 
 function isVirtualStock(stock: StockItem) {
@@ -6758,6 +6880,18 @@ type CmsStockControlledFilter =
 type CmsStockSortKey = "name" | "quantity";
 type CmsStockSortDirection = "asc" | "desc";
 type CmsStockSearchStatus = "idle" | "short" | "loading" | "done" | "error";
+type CmsPrescriptionSortKey =
+  | "createdAt"
+  | "drugName"
+  | "quantity"
+  | "shortage"
+  | "status";
+type CmsPrescriptionSearchStatus =
+  | "idle"
+  | "short"
+  | "loading"
+  | "done"
+  | "error";
 type CmsStockSnapshotSyncSummary = {
   type: string;
   pharmacyId: string;
@@ -6772,8 +6906,14 @@ type CmsDeductionResolution =
   | "VIRTUAL_DRUG"
   | "EXISTING_STOCK"
   | "UNREGISTERED_DRUG";
-type CmsShortageStatus = "OPEN" | "ORDERED" | "HOLD" | "RESOLVED" | "IGNORED";
-type CmsShortageListFilter = "OPEN" | "ORDERED" | "HOLD";
+type CmsShortageStatus =
+  | "OPEN"
+  | "ORDERED"
+  | "HOLD"
+  | "SUBSTITUTED"
+  | "RESOLVED"
+  | "IGNORED";
+type CmsShortageListFilter = "OPEN" | "ORDERED" | "HOLD" | "SUBSTITUTED";
 type CmsReturnReviewStatus = "OPEN" | "HOLD" | "RESOLVED";
 type CmsReturnReviewFilter = CmsReturnReviewStatus;
 
@@ -6816,6 +6956,13 @@ type CmsDeductionRecord = {
   shortageStatus?: CmsShortageStatus;
   stockId?: string;
   stockName?: string;
+  substituteStockId?: string;
+  substituteStockName?: string;
+  substituteInsuranceCode?: string;
+  substituteQuantity?: number;
+  substituteStockBefore?: number;
+  substituteStockAfter?: number;
+  substituteProcessedAt?: string;
   stockBefore?: number;
   stockAfter?: number;
   displayAfter?: number;
@@ -7437,6 +7584,32 @@ function CmsApp({
   const [returnReviews, setReturnReviews] = useState<CmsReturnReview[]>([]);
   const [deductionFilter, setDeductionFilter] =
     useState<CmsDeductionFilter>("FAILED");
+  const [prescriptionQuery, setPrescriptionQuery] = useState("");
+  const [prescriptionStartDate, setPrescriptionStartDate] = useState(
+    () => recentWeekDateRange().startDate,
+  );
+  const [prescriptionEndDate, setPrescriptionEndDate] = useState(
+    () => recentWeekDateRange().endDate,
+  );
+  const [prescriptionSortKey, setPrescriptionSortKey] =
+    useState<CmsPrescriptionSortKey>("createdAt");
+  const [prescriptionSortDirection, setPrescriptionSortDirection] =
+    useState<CmsStockSortDirection>("desc");
+  const [prescriptionSearchStatus, setPrescriptionSearchStatus] =
+    useState<CmsPrescriptionSearchStatus>("idle");
+  const [shortageQuery, setShortageQuery] = useState("");
+  const [shortageStartDate, setShortageStartDate] = useState(
+    () => recentWeekDateRange().startDate,
+  );
+  const [shortageEndDate, setShortageEndDate] = useState(
+    () => recentWeekDateRange().endDate,
+  );
+  const [shortageSortKey, setShortageSortKey] =
+    useState<CmsPrescriptionSortKey>("createdAt");
+  const [shortageSortDirection, setShortageSortDirection] =
+    useState<CmsStockSortDirection>("desc");
+  const [shortageSearchStatus, setShortageSearchStatus] =
+    useState<CmsPrescriptionSearchStatus>("idle");
   const [selectedMasterId, setSelectedMasterId] = useState("");
   const [selectedDeductionId, setSelectedDeductionId] = useState("");
   const [selectedShortageId, setSelectedShortageId] = useState("");
@@ -7467,23 +7640,40 @@ function CmsApp({
     wholesalers.find((wholesaler) => wholesaler.id === selectedWholesalerId) ??
     wholesalers[0];
   const filteredDeductionRecords = useMemo(
-    () =>
-      deductionFilter === "ALL"
+    () => {
+      const filtered =
+        deductionFilter === "ALL"
         ? deductionRecords
         : deductionFilter === "SHORTAGE_ITEMS"
           ? deductionRecords.filter((record) => record.shortageQuantity > 0)
           : deductionRecords.filter(
               (record) => record.status === deductionFilter,
-            ),
-    [deductionFilter, deductionRecords],
+            );
+      return sortCmsDeductionRecords(
+        filtered,
+        prescriptionSortKey,
+        prescriptionSortDirection,
+      );
+    },
+    [
+      deductionFilter,
+      deductionRecords,
+      prescriptionSortDirection,
+      prescriptionSortKey,
+    ],
   );
   const selectedDeduction =
     filteredDeductionRecords.find(
       (record) => record.id === selectedDeductionId,
     ) ?? filteredDeductionRecords[0];
   const shortageRecords = useMemo(
-    () => deductionRecords.filter((record) => record.shortageQuantity > 0),
-    [deductionRecords],
+    () =>
+      sortCmsDeductionRecords(
+        deductionRecords.filter((record) => record.shortageQuantity > 0),
+        shortageSortKey,
+        shortageSortDirection,
+      ),
+    [deductionRecords, shortageSortDirection, shortageSortKey],
   );
   const activeShortageId = shortageRouteId || selectedShortageId;
   const selectedShortage =
@@ -7782,12 +7972,30 @@ function CmsApp({
           setCmsStockSearchStatus("done");
         }
       } else if (targetPage === "inventory-shortages") {
-        const response = await optionalCmsApiFetch<unknown>(
-          "/prescription-shortages",
-        );
-        setDeductionRecords(
-          response ? deductionPayload(response).map(normalizeCmsDeduction) : [],
-        );
+        const trimmed = shortageQuery.trim();
+        const normalizedKeyword = normalizeSearchText(trimmed);
+        if (normalizedKeyword.length === 1) {
+          setShortageSearchStatus("short");
+          setApiMessage("초과 처방 검색어는 2글자 이상 입력해 주세요.");
+        } else {
+          const shortageParams = new URLSearchParams({
+            sortBy: shortageSortKey,
+            sortDirection: shortageSortDirection,
+          });
+          if (shortageStartDate) shortageParams.set("startDate", shortageStartDate);
+          if (shortageEndDate) shortageParams.set("endDate", shortageEndDate);
+          if (trimmed) shortageParams.set("keyword", trimmed);
+          setShortageSearchStatus("loading");
+          const response = await optionalCmsApiFetch<unknown>(
+            `/prescription-shortages?${shortageParams}`,
+          );
+          setDeductionRecords(
+            response
+              ? deductionPayload(response).map(normalizeCmsDeduction)
+              : [],
+          );
+          setShortageSearchStatus("done");
+        }
       } else if (targetPage === "return-reviews") {
         const [reviewResult, stockResult] = await Promise.allSettled([
           apiFetch<unknown>("/returns/reviews"),
@@ -7808,21 +8016,48 @@ function CmsApp({
           setStocks(arrayPayload(stockResult.value).map(normalizeStock));
         }
       } else if (targetPage === "prescriptions") {
-        const [deductionResult, shortageResult] = await Promise.allSettled([
-          apiFetch<unknown>("/prescription-deductions"),
-          optionalCmsApiFetch<unknown>("/prescription-shortages"),
-        ]);
-        throwRejected([deductionResult, shortageResult]);
+        const trimmed = prescriptionQuery.trim();
+        const normalizedKeyword = normalizeSearchText(trimmed);
+        if (normalizedKeyword.length === 1) {
+          setPrescriptionSearchStatus("short");
+          setApiMessage("처방 검색어는 2글자 이상 입력해 주세요.");
+        } else {
+          const prescriptionParams = new URLSearchParams({
+            sortBy: prescriptionSortKey,
+            sortDirection: prescriptionSortDirection,
+          });
+          if (prescriptionStartDate) {
+            prescriptionParams.set("startDate", prescriptionStartDate);
+          }
+          if (prescriptionEndDate) {
+            prescriptionParams.set("endDate", prescriptionEndDate);
+          }
+          if (trimmed) prescriptionParams.set("keyword", trimmed);
+          setPrescriptionSearchStatus("loading");
+          const queryString = prescriptionParams.toString();
+          const [deductionResult, shortageResult] = await Promise.allSettled([
+            apiFetch<unknown>(`/prescription-deductions?${queryString}`),
+            optionalCmsApiFetch<unknown>(
+              `/prescription-shortages?${queryString}`,
+            ),
+          ]);
+          throwRejected([deductionResult, shortageResult]);
 
-        const deductions =
-          deductionResult.status === "fulfilled"
-            ? deductionPayload(deductionResult.value).map(normalizeCmsDeduction)
-            : [];
-        const shortages =
-          shortageResult.status === "fulfilled" && shortageResult.value
-            ? deductionPayload(shortageResult.value).map(normalizeCmsDeduction)
-            : [];
-        setDeductionRecords(mergeDeductionRecords(deductions, shortages));
+          const deductions =
+            deductionResult.status === "fulfilled"
+              ? deductionPayload(deductionResult.value).map(
+                  normalizeCmsDeduction,
+                )
+              : [];
+          const shortages =
+            shortageResult.status === "fulfilled" && shortageResult.value
+              ? deductionPayload(shortageResult.value).map(
+                  normalizeCmsDeduction,
+                )
+              : [];
+          setDeductionRecords(mergeDeductionRecords(deductions, shortages));
+          setPrescriptionSearchStatus("done");
+        }
       } else if (targetPage === "purchase") {
         const [cookieResult, purchaseResult, syncResult] =
           await Promise.allSettled([
@@ -7875,6 +8110,16 @@ function CmsApp({
     includeInactive,
     masterQuery,
     page,
+    prescriptionEndDate,
+    prescriptionQuery,
+    prescriptionSortDirection,
+    prescriptionSortKey,
+    prescriptionStartDate,
+    shortageEndDate,
+    shortageQuery,
+    shortageSortDirection,
+    shortageSortKey,
+    shortageStartDate,
     stockControlledFilter,
     stockSortDirection,
     stockSortKey,
@@ -8605,6 +8850,59 @@ function CmsApp({
     }
   }
 
+  async function substituteShortage(
+    record: CmsDeductionRecord,
+    stockId: string,
+    quantity: number,
+  ) {
+    if (record.shortageQuantity <= 0 || !stockId || quantity <= 0) {
+      return false;
+    }
+
+    try {
+      const response = await apiFetch<unknown>(
+        `/prescription-shortages/${record.id}/substitute`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            stockId,
+            quantity,
+            memo: `관리자 대체 약품 처리: ${currency(quantity)}개`,
+          }),
+        },
+      );
+      const nextRecord =
+        deductionPayload(response).map(normalizeCmsDeduction)[0] ??
+        normalizeCmsDeduction(response, 0);
+      setDeductionRecords((current) =>
+        current.map((item) =>
+          item.id === record.id
+            ? { ...item, ...nextRecord, id: item.id }
+            : item,
+        ),
+      );
+      setSelectedShortageDetail((current) =>
+        current?.deduction.id === record.id
+          ? {
+              ...current,
+              deduction: {
+                ...current.deduction,
+                ...nextRecord,
+                id: current.deduction.id,
+              },
+            }
+          : current,
+      );
+      setApiState("connected");
+      setApiMessage("대체 약품 처리 완료");
+      void refreshCms();
+      return true;
+    } catch (error) {
+      cmsFallback(error);
+      return false;
+    }
+  }
+
   async function updateReturnReviewStatus(
     record: CmsReturnReview,
     status: CmsReturnReviewStatus,
@@ -8822,8 +9120,14 @@ function CmsApp({
               detail={selectedShortageDetail}
               detailLoading={shortageDetailLoading}
               detailMode={Boolean(shortageRouteId)}
+              endDate={shortageEndDate}
+              query={shortageQuery}
               records={shortageRecords}
+              searchStatus={shortageSearchStatus}
               selectedRecord={selectedShortage}
+              sortDirection={shortageSortDirection}
+              sortKey={shortageSortKey}
+              startDate={shortageStartDate}
               onBack={() =>
                 shortageRouteId
                   ? navigate("/cms/inventory/shortages")
@@ -8835,7 +9139,14 @@ function CmsApp({
                 )
               }
               onSelect={(record) => setSelectedShortageId(record.id)}
+              onApplyFilters={() => void refreshCms()}
+              onEndDate={setShortageEndDate}
+              onQuery={setShortageQuery}
               onShortageStatus={updateShortageStatus}
+              onSortDirection={setShortageSortDirection}
+              onSortKey={setShortageSortKey}
+              onStartDate={setShortageStartDate}
+              onSubstituteShortage={substituteShortage}
             />
           )}
           {visiblePage === "return-reviews" && (
@@ -8878,13 +9189,21 @@ function CmsApp({
           )}
           {visiblePage === "prescriptions" && (
             <CmsPrescriptionPage
+              endDate={prescriptionEndDate}
               filter={deductionFilter}
               prescriptionId={prescriptionId}
+              query={prescriptionQuery}
               records={deductionRecords}
+              searchStatus={prescriptionSearchStatus}
               selectedRecord={selectedDeduction}
               selectedStockId={selectedStockId}
+              sortDirection={prescriptionSortDirection}
+              sortKey={prescriptionSortKey}
+              startDate={prescriptionStartDate}
               stocks={stocks}
+              onApplyFilters={() => void refreshCms()}
               onDeduct={deductPrescriptionStock}
+              onEndDate={setPrescriptionEndDate}
               onFilter={(nextFilter) => {
                 setDeductionFilter(nextFilter);
                 const nextRecord =
@@ -8900,10 +9219,14 @@ function CmsApp({
                 setSelectedDeductionId(nextRecord?.id ?? "");
               }}
               onPrescriptionId={setPrescriptionId}
+              onQuery={setPrescriptionQuery}
               onResolve={resolveDeduction}
               onSelectRecord={setSelectedDeductionId}
               onSelectStock={setSelectedStockId}
               onShortageStatus={updateShortageStatus}
+              onSortDirection={setPrescriptionSortDirection}
+              onSortKey={setPrescriptionSortKey}
+              onStartDate={setPrescriptionStartDate}
             />
           )}
           {visiblePage === "purchase" && (
@@ -9265,6 +9588,7 @@ function normalizeCmsDeduction(
     "OPEN",
     "ORDERED",
     "HOLD",
+    "SUBSTITUTED",
     "RESOLVED",
     "IGNORED",
   ].includes(rawShortageStatus)
@@ -9310,6 +9634,35 @@ function normalizeCmsDeduction(
         ? undefined
         : String(item.stockId),
     stockName: optionalText(item.stockName ?? item.matchedStockName),
+    substituteStockId:
+      item.substituteStockId === undefined || item.substituteStockId === null
+        ? undefined
+        : String(item.substituteStockId),
+    substituteStockName: optionalText(item.substituteStockName),
+    substituteInsuranceCode: optionalText(item.substituteInsuranceCode),
+    substituteQuantity:
+      item.substituteQuantity === undefined
+        ? undefined
+        : optionalFiniteNumber(item.substituteQuantity),
+    substituteStockBefore:
+      item.substituteStockBeforeQuantity === undefined &&
+      item.substituteStockBefore === undefined
+        ? undefined
+        : optionalFiniteNumber(
+            item.substituteStockBeforeQuantity ?? item.substituteStockBefore,
+          ),
+    substituteStockAfter:
+      item.substituteStockAfterQuantity === undefined &&
+      item.substituteStockAfter === undefined
+        ? undefined
+        : optionalFiniteNumber(
+            item.substituteStockAfterQuantity ?? item.substituteStockAfter,
+          ),
+    substituteProcessedAt:
+      item.substituteProcessedAt === undefined ||
+      item.substituteProcessedAt === null
+        ? undefined
+        : formatTransactionAt(item.substituteProcessedAt, "-"),
     stockBefore:
       item.stockBeforeQuantity === undefined && item.stockBefore === undefined
         ? undefined
@@ -10103,7 +10456,7 @@ function CmsDashboard({
     (record) => record.shortageQuantity > 0,
   );
   const activeShortageRecords = shortageRecords.filter(
-    (record) => !isHoldShortageStatus(record.shortageStatus),
+    (record) => isActiveShortageStatus(record.shortageStatus),
   );
   const failedPrescriptionRecords = deductionRecords.filter(
     (record) => record.status === "FAILED" || record.status === "PENDING",
@@ -10116,6 +10469,9 @@ function CmsDashboard({
   );
   const holdShortageRecords = shortageRecords.filter((record) =>
     isHoldShortageStatus(record.shortageStatus),
+  );
+  const substitutedShortageRecords = shortageRecords.filter(
+    (record) => record.shortageStatus === "SUBSTITUTED",
   );
   const prescriptionIssueCount =
     activeShortageRecords.length + failedPrescriptionRecords.length;
@@ -10266,10 +10622,9 @@ function CmsDashboard({
           action="재고 보기"
           onAction={() => navigate("/cms/inventory")}
         >
-          <div
-            className={`cms-kpis compact4 dashboard-kpis ${
-              canViewAmounts ? "" : "is-amount-hidden"
-            }`}
+          <CmsKpiGrid
+            className={`dashboard-kpis ${canViewAmounts ? "" : "is-amount-hidden"}`}
+            columns={canViewAmounts ? 4 : 3}
           >
             <CmsKpi
               label="보유 재고 품목"
@@ -10296,7 +10651,7 @@ function CmsDashboard({
                 tone="blue"
               />
             )}
-          </div>
+          </CmsKpiGrid>
           <CmsMiniList
             items={[
               ["90일 내 만료", `${data.traceSummary.expiringSoonItemCount}건`],
@@ -10317,6 +10672,7 @@ function CmsDashboard({
               ["주문 필요", `${orderNeededShortageRecords.length}건`],
               ["주문 완료", `${orderedShortageRecords.length}건`],
               ["보류", `${holdShortageRecords.length}건`],
+              ["대체 처리", `${substitutedShortageRecords.length}건`],
             ]}
           />
         </CmsDashboardSection>
@@ -10948,7 +11304,7 @@ function CmsInventoryPage({
   return (
     <section className="cms-content cms-list-page cms-inventory-page">
       <div className="cms-table-card">
-        <div className="cms-kpis compact">
+        <CmsKpiGrid columns={5}>
           <CmsKpi label="보유 품목" value={`${stocks.length}`} unit="종" />
           <CmsKpi
             label="총 보유 수량"
@@ -10965,7 +11321,7 @@ function CmsInventoryPage({
           />
           <CmsKpi label="향정 품목" value={`${controlledCount}`} unit="종" />
           <CmsKpi label="임의 재고" value={`${virtualCount}`} unit="종" />
-        </div>
+        </CmsKpiGrid>
         <div className="cms-toolbar">
           {/* <div className="cms-pills">
             <span>
@@ -11652,27 +12008,71 @@ function CmsInventoryShortagePage({
   detail,
   detailLoading,
   detailMode,
+  endDate,
+  query,
   records,
+  searchStatus,
   selectedRecord,
+  sortDirection,
+  sortKey,
+  startDate,
   onBack,
+  onApplyFilters,
+  onEndDate,
   onOpenDetail,
+  onQuery,
   onSelect,
   onShortageStatus,
+  onSortDirection,
+  onSortKey,
+  onStartDate,
+  onSubstituteShortage,
 }: {
   detail: CmsShortageDetail | null;
   detailLoading: boolean;
   detailMode: boolean;
+  endDate: string;
+  query: string;
   records: CmsDeductionRecord[];
+  searchStatus: CmsPrescriptionSearchStatus;
   selectedRecord?: CmsDeductionRecord;
+  sortDirection: CmsStockSortDirection;
+  sortKey: CmsPrescriptionSortKey;
+  startDate: string;
   onBack: () => void;
+  onApplyFilters: () => void;
+  onEndDate: (value: string) => void;
   onOpenDetail: (record: CmsDeductionRecord) => void;
+  onQuery: (value: string) => void;
   onSelect: (record: CmsDeductionRecord) => void;
   onShortageStatus: (
     record: CmsDeductionRecord,
     shortageStatus: CmsShortageStatus,
   ) => void;
+  onSortDirection: (value: CmsStockSortDirection) => void;
+  onSortKey: (value: CmsPrescriptionSortKey) => void;
+  onStartDate: (value: string) => void;
+  onSubstituteShortage: (
+    record: CmsDeductionRecord,
+    stockId: string,
+    quantity: number,
+  ) => Promise<boolean>;
 }) {
   const [listFilter, setListFilter] = useState<CmsShortageListFilter>("OPEN");
+  const [substituteModalOpen, setSubstituteModalOpen] = useState(false);
+  const [substituteSearchModalOpen, setSubstituteSearchModalOpen] =
+    useState(false);
+  const [substituteConfirmOpen, setSubstituteConfirmOpen] = useState(false);
+  const [substituteQuery, setSubstituteQuery] = useState("");
+  const [substituteStocks, setSubstituteStocks] = useState<StockItem[]>([]);
+  const [selectedSubstituteStockId, setSelectedSubstituteStockId] =
+    useState("");
+  const [substituteStatus, setSubstituteStatus] = useState<
+    "idle" | "short" | "loading" | "done" | "error"
+  >("idle");
+  const [substituteMessage, setSubstituteMessage] =
+    useState("약품명 또는 보험코드를 입력해 주세요.");
+  const [substituteSubmitting, setSubstituteSubmitting] = useState(false);
   const orderNeededRecords = records.filter((record) =>
     isOpenShortageStatus(record.shortageStatus),
   );
@@ -11686,12 +12086,22 @@ function CmsInventoryShortagePage({
   const holdRecords = records.filter((record) =>
     isHoldShortageStatus(record.shortageStatus),
   );
-  const visibleRecords =
-    listFilter === "HOLD"
+  const substitutedRecords = records.filter(
+    (record) => record.shortageStatus === "SUBSTITUTED",
+  );
+  const filteredRecords =
+    listFilter === "SUBSTITUTED"
+      ? substitutedRecords
+      : listFilter === "HOLD"
       ? holdRecords
       : listFilter === "ORDERED"
         ? orderedRecords
         : orderNeededRecords;
+  const visibleRecords = sortCmsDeductionRecords(
+    filteredRecords,
+    sortKey,
+    sortDirection,
+  );
   const recordPagination = usePagination(
     visibleRecords,
     CMS_PAGE_SIZES.shortages,
@@ -11708,17 +12118,137 @@ function CmsInventoryShortagePage({
     { count: orderNeededRecords.length, label: "주문 필요", value: "OPEN" },
     { count: orderedRecords.length, label: "주문 완료", value: "ORDERED" },
     { count: holdRecords.length, label: "보류", value: "HOLD" },
+    {
+      count: substitutedRecords.length,
+      label: "대체 처리",
+      value: "SUBSTITUTED",
+    },
   ];
   const emptyMessage =
-    listFilter === "HOLD"
+    listFilter === "SUBSTITUTED"
+      ? "대체 약품으로 처리된 초과 처방 내역이 없습니다."
+      : listFilter === "HOLD"
       ? "보류된 초과 처방 내역이 없습니다."
       : listFilter === "ORDERED"
         ? "주문 완료된 초과 처방 내역이 없습니다."
         : "주문 필요한 초과 처방 내역이 없습니다.";
+  const selectedSubstituteStock = substituteStocks.find(
+    (stock) => stock.id === selectedSubstituteStockId,
+  );
+  const substituteQuantity = finiteNumber(activeRecord?.shortageQuantity);
+  const canSubstitute =
+    Boolean(activeRecord) &&
+    activeRecord?.shortageStatus !== "SUBSTITUTED" &&
+    Boolean(selectedSubstituteStock) &&
+    substituteQuantity > 0;
+  const substituteAfterQuantity = selectedSubstituteStock
+    ? selectedSubstituteStock.quantity - substituteQuantity
+    : 0;
+  const substituteMakesNegative = Boolean(
+    selectedSubstituteStock && substituteAfterQuantity < 0,
+  );
 
   function selectListFilter(nextFilter: CmsShortageListFilter) {
     setListFilter(nextFilter);
     onBack();
+  }
+
+  function sortByHeader(nextKey: CmsPrescriptionSortKey) {
+    onSortDirection(
+      nextPrescriptionSortDirection(sortKey, sortDirection, nextKey),
+    );
+    onSortKey(nextKey);
+  }
+
+  async function searchSubstituteStocks(nextQuery = substituteQuery) {
+    const trimmed = nextQuery.trim();
+    if (normalizeSearchText(trimmed).length < 2) {
+      setSubstituteStocks([]);
+      setSelectedSubstituteStockId("");
+      setSubstituteStatus("short");
+      setSubstituteMessage("검색어를 2글자 이상 입력해 주세요.");
+      return;
+    }
+
+    setSubstituteStatus("loading");
+    setSubstituteMessage("대체할 재고를 검색 중입니다.");
+    try {
+      const params = new URLSearchParams({
+        keyword: trimmed,
+        includeZero: "true",
+        sortBy: "name",
+        sortDirection: "asc",
+      });
+      const response = await apiFetch<unknown>(`/stocks?${params}`);
+      const results = arrayPayload(response)
+        .map(normalizeStock)
+        .slice(0, 20);
+      setSubstituteStocks(results);
+      setSelectedSubstituteStockId((current) =>
+        results.some((stock) => stock.id === current)
+          ? current
+          : (results[0]?.id ?? ""),
+      );
+      setSubstituteStatus("done");
+      setSubstituteMessage(
+        results.length > 0
+          ? `${results.length}건의 재고를 찾았습니다.`
+          : "재고에 등록된 약품을 찾지 못했습니다.",
+      );
+    } catch {
+      setSubstituteStocks([]);
+      setSelectedSubstituteStockId("");
+      setSubstituteStatus("error");
+      setSubstituteMessage("재고 검색에 실패했습니다.");
+    }
+  }
+
+  function openSubstituteModal(record: CmsDeductionRecord) {
+    setSubstituteModalOpen(true);
+    setSubstituteSearchModalOpen(false);
+    setSubstituteConfirmOpen(false);
+    setSubstituteQuery("");
+    setSubstituteStocks([]);
+    setSelectedSubstituteStockId("");
+    setSubstituteStatus("idle");
+    setSubstituteMessage("약품명 또는 보험코드를 입력해 주세요.");
+  }
+
+  function openSubstituteSearchModal() {
+    const defaultQuery =
+      substituteQuery.trim() ||
+      activeRecord?.drugName ||
+      activeRecord?.insuranceCode ||
+      "";
+    setSubstituteQuery(defaultQuery);
+    setSubstituteSearchModalOpen(true);
+    if (normalizeSearchText(defaultQuery).length >= 2) {
+      void searchSubstituteStocks(defaultQuery);
+    }
+  }
+
+  function selectSubstituteStock(stock: StockItem) {
+    setSelectedSubstituteStockId(stock.id);
+    setSubstituteSearchModalOpen(false);
+  }
+
+  async function confirmSubstitute() {
+    if (!activeRecord || !selectedSubstituteStock || !canSubstitute) return;
+    setSubstituteSubmitting(true);
+    try {
+      const ok = await onSubstituteShortage(
+        activeRecord,
+        selectedSubstituteStock.id,
+        substituteQuantity,
+      );
+      if (ok) {
+        setSubstituteConfirmOpen(false);
+        setSubstituteSearchModalOpen(false);
+        setSubstituteModalOpen(false);
+      }
+    } finally {
+      setSubstituteSubmitting(false);
+    }
   }
 
   return (
@@ -11746,7 +12276,7 @@ function CmsInventoryShortagePage({
 
       {!detailMode && (
         <>
-          <div className="cms-kpis compact4">
+          <CmsKpiGrid columns={5}>
             <CmsKpi
               label="주문 필요"
               value={`${orderNeededRecords.length}`}
@@ -11761,26 +12291,54 @@ function CmsInventoryShortagePage({
             />
             <CmsKpi label="보류" value={`${holdRecords.length}`} unit="건" />
             <CmsKpi
+              label="대체 처리"
+              value={`${substitutedRecords.length}`}
+              unit="건"
+              tone="blue"
+            />
+            <CmsKpi
               label="부족 수량"
               value={currency(totalShortageQuantity)}
               unit="개"
               tone="red"
             />
-          </div>
+          </CmsKpiGrid>
 
-          <div className="cms-shortage-filter" role="tablist">
-            {shortageFilterItems.map((item) => (
-              <button
-                className={listFilter === item.value ? "is-active" : ""}
-                key={item.value}
-                type="button"
-                onClick={() => selectListFilter(item.value)}
-              >
-                <span>{item.label}</span>
-                <b>{item.count}건</b>
-              </button>
-            ))}
-          </div>
+          <form
+            className="cms-prescription-list-controls"
+            onSubmit={(event) => {
+              event.preventDefault();
+              onApplyFilters();
+            }}
+          >
+            <label className="cms-search">
+              <span className="search-icon" />
+              <input
+                placeholder="약품명 · 보험코드 · 처방전 검색"
+                value={query}
+                onChange={(event) => onQuery(event.target.value)}
+              />
+            </label>
+            <CmsDateRangeInline
+              endDate={endDate}
+              startDate={startDate}
+              onEndDate={onEndDate}
+              onStartDate={onStartDate}
+            />
+            <button className="cms-primary cms-toolbar-action" type="submit">
+              적용
+            </button>
+            <span className={`cms-list-search-state is-${searchStatus}`}>
+              {prescriptionSearchStateText(searchStatus)}
+            </span>
+          </form>
+
+          <CmsSegmentFilter
+            columns={shortageFilterItems.length}
+            items={shortageFilterItems}
+            value={listFilter}
+            onChange={selectListFilter}
+          />
         </>
       )}
 
@@ -11790,12 +12348,56 @@ function CmsInventoryShortagePage({
             <div className="cms-table-scroll">
               <div className="cms-shortage-table">
                 <div className="cms-shortage-row cms-th">
-                  <span>처방일시</span>
-                  <span>약품</span>
+                  <CmsSortHeader
+                    active={sortKey === "createdAt"}
+                    direction={sortDirection}
+                    label="처방일시"
+                    title={prescriptionSortAriaLabel(
+                      "처방일시",
+                      "createdAt",
+                      sortKey,
+                      sortDirection,
+                    )}
+                    onClick={() => sortByHeader("createdAt")}
+                  />
+                  <CmsSortHeader
+                    active={sortKey === "drugName"}
+                    direction={sortDirection}
+                    label="약품"
+                    title={prescriptionSortAriaLabel(
+                      "약품",
+                      "drugName",
+                      sortKey,
+                      sortDirection,
+                    )}
+                    onClick={() => sortByHeader("drugName")}
+                  />
                   <span>처방전</span>
                   <span>차감</span>
-                  <span>부족</span>
-                  <span>상태</span>
+                  <CmsSortHeader
+                    active={sortKey === "shortage"}
+                    direction={sortDirection}
+                    label="부족"
+                    title={prescriptionSortAriaLabel(
+                      "부족",
+                      "shortage",
+                      sortKey,
+                      sortDirection,
+                    )}
+                    onClick={() => sortByHeader("shortage")}
+                  />
+                  <CmsSortHeader
+                    active={sortKey === "status"}
+                    direction={sortDirection}
+                    label="상태"
+                    title={prescriptionSortAriaLabel(
+                      "상태",
+                      "status",
+                      sortKey,
+                      sortDirection,
+                    )}
+                    onClick={() => sortByHeader("status")}
+                  />
                   <span>상세</span>
                 </div>
                 {recordPagination.items.map((record) => (
@@ -11824,7 +12426,9 @@ function CmsInventoryShortagePage({
                       {record.deductedQuantity}/{record.totalQuantity}
                     </b>
                     <b className="is-shortage">{record.shortageQuantity}개</b>
-                    <span className="cms-badge missing">
+                    <span
+                      className={`cms-badge ${shortageStatusBadgeClass(record.shortageStatus)}`}
+                    >
                       {shortageStatusText(record.shortageStatus)}
                     </span>
                     <button
@@ -11874,7 +12478,9 @@ function CmsInventoryShortagePage({
                     닫기
                   </button>
                 )}
-                <span className="cms-badge missing">
+                <span
+                  className={`cms-badge ${shortageStatusBadgeClass(activeRecord.shortageStatus)}`}
+                >
                   {shortageStatusText(activeRecord.shortageStatus)}
                 </span>
                 <strong>{activeRecord.drugName}</strong>
@@ -11923,40 +12529,64 @@ function CmsInventoryShortagePage({
                   </div>
                 </div>
               </div>
-              <div className="cms-shortage-actions">
-                <button
-                  className={
-                    activeRecord.shortageStatus === "OPEN" ||
-                    !activeRecord.shortageStatus
-                      ? "is-active"
-                      : ""
-                  }
-                  type="button"
-                  onClick={() => onShortageStatus(activeRecord, "OPEN")}
-                >
-                  주문 필요
-                </button>
-                <button
-                  className={
-                    activeRecord.shortageStatus === "ORDERED" ? "is-active" : ""
-                  }
-                  type="button"
-                  onClick={() => onShortageStatus(activeRecord, "ORDERED")}
-                >
-                  주문 완료
-                </button>
-                <button
-                  className={
-                    isHoldShortageStatus(activeRecord.shortageStatus)
-                      ? "is-active"
-                      : ""
-                  }
-                  type="button"
-                  onClick={() => onShortageStatus(activeRecord, "HOLD")}
-                >
-                  보류
-                </button>
-              </div>
+              {activeRecord.shortageStatus === "SUBSTITUTED" ? (
+                <div className="cms-substitute-done-card">
+                  <span>대체 약품 처리 완료</span>
+                  <strong>
+                    {activeRecord.substituteStockName ?? "대체 약품"}
+                  </strong>
+                  <em>
+                    {currency(activeRecord.substituteQuantity ?? 0)}개 차감
+                    {activeRecord.substituteProcessedAt
+                      ? ` · ${activeRecord.substituteProcessedAt}`
+                      : ""}
+                  </em>
+                </div>
+              ) : (
+                <div className="cms-shortage-actions">
+                  <button
+                    className={
+                      activeRecord.shortageStatus === "OPEN" ||
+                      !activeRecord.shortageStatus
+                        ? "is-active"
+                        : ""
+                    }
+                    type="button"
+                    onClick={() => onShortageStatus(activeRecord, "OPEN")}
+                  >
+                    주문 필요
+                  </button>
+                  <button
+                    className={
+                      activeRecord.shortageStatus === "ORDERED"
+                        ? "is-active"
+                        : ""
+                    }
+                    type="button"
+                    onClick={() => onShortageStatus(activeRecord, "ORDERED")}
+                  >
+                    주문 완료
+                  </button>
+                  <button
+                    className={
+                      isHoldShortageStatus(activeRecord.shortageStatus)
+                        ? "is-active"
+                        : ""
+                    }
+                    type="button"
+                    onClick={() => onShortageStatus(activeRecord, "HOLD")}
+                  >
+                    보류
+                  </button>
+                  <button
+                    className="is-substitute"
+                    type="button"
+                    onClick={() => openSubstituteModal(activeRecord)}
+                  >
+                    대체 약품 처리
+                  </button>
+                </div>
+              )}
               <div className="cms-divider" />
               <div className="cms-prescription-full-paper">
                 <div className="cms-prescription-summary">
@@ -12004,6 +12634,216 @@ function CmsInventoryShortagePage({
           </>
         )}
       </div>
+      {substituteModalOpen && activeRecord && (
+        <CmsModal
+          title="대체 약품 처리"
+          subtitle={activeRecord.drugName}
+          onClose={() => {
+            if (!substituteSubmitting) {
+              setSubstituteModalOpen(false);
+              setSubstituteSearchModalOpen(false);
+              setSubstituteConfirmOpen(false);
+            }
+          }}
+        >
+          <div className="cms-substitute-modal">
+            <section className="cms-connect-section">
+              <header>
+                <strong>대체할 약품</strong>
+                <span>검색 모달에서 재고에 등록된 약품을 선택합니다.</span>
+              </header>
+              {selectedSubstituteStock ? (
+                <div className="cms-substitute-selected-card">
+                  <div>
+                    <span>선택한 대체 약품</span>
+                    <strong>{selectedSubstituteStock.name}</strong>
+                    <em>
+                      {selectedSubstituteStock.insuranceCode || "보험코드 없음"} ·
+                      보유 {currency(selectedSubstituteStock.quantity)}개
+                    </em>
+                  </div>
+                  <button
+                    className="cms-secondary"
+                    type="button"
+                    onClick={openSubstituteSearchModal}
+                  >
+                    변경
+                  </button>
+                </div>
+              ) : (
+                <button
+                  className="cms-substitute-empty-selection"
+                  type="button"
+                  onClick={openSubstituteSearchModal}
+                >
+                  <span>선택된 대체 약품이 없습니다</span>
+                  <strong>대체 약품 선택</strong>
+                </button>
+              )}
+            </section>
+
+            <section className="cms-connect-section">
+              <header>
+                <strong>차감 수량</strong>
+                <span>부분 대체 없이 부족 수량 전체를 차감합니다.</span>
+              </header>
+              <div className="cms-substitute-quantity-row">
+                <div>
+                  <span>부족 수량</span>
+                  <strong>{currency(activeRecord.shortageQuantity)}개</strong>
+                </div>
+                <div>
+                  <span>대체 차감 수량</span>
+                  <strong>{currency(substituteQuantity)}개</strong>
+                </div>
+              </div>
+              {selectedSubstituteStock && (
+                <div className="cms-resolution-confirm-card is-stock">
+                  <span>처리 후 재고</span>
+                  <strong>{selectedSubstituteStock.name}</strong>
+                  <em>
+                    현재 {currency(selectedSubstituteStock.quantity)}개 → 처리
+                    후 {currency(substituteAfterQuantity)}개
+                  </em>
+                  {substituteMakesNegative && (
+                    <em className="is-danger-text">
+                      처리 후 {currency(Math.abs(substituteAfterQuantity))}개
+                      부족 상태가 됩니다.
+                    </em>
+                  )}
+                </div>
+              )}
+              <div className="cms-connect-confirm-bar">
+                <button
+                  className="cms-primary"
+                  type="button"
+                  disabled={!canSubstitute}
+                  onClick={() => setSubstituteConfirmOpen(true)}
+                >
+                  대체 처리 확인
+                </button>
+              </div>
+            </section>
+          </div>
+        </CmsModal>
+      )}
+      {substituteSearchModalOpen && activeRecord && (
+        <CmsModal
+          title="대체 약품 검색"
+          subtitle={activeRecord.drugName}
+          onClose={() => {
+            if (!substituteSubmitting) setSubstituteSearchModalOpen(false);
+          }}
+        >
+          <div className="cms-substitute-search-modal">
+            <div className="cms-candidate-search-row">
+              <label className="cms-input">
+                <span>약품명 또는 보험코드</span>
+                <input
+                  placeholder="대체 약품 검색"
+                  value={substituteQuery}
+                  onChange={(event) => setSubstituteQuery(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") {
+                      event.preventDefault();
+                      void searchSubstituteStocks();
+                    }
+                  }}
+                />
+              </label>
+              <button
+                className="cms-primary"
+                type="button"
+                onClick={() => void searchSubstituteStocks()}
+              >
+                검색
+              </button>
+            </div>
+            <div className="cms-candidate-hint">
+              <strong>
+                {substituteStatus === "loading"
+                  ? "검색 중"
+                  : substituteStatus === "done"
+                    ? "검색 결과"
+                    : substituteStatus === "error"
+                      ? "검색 실패"
+                      : "검색 대기"}
+              </strong>
+              <span>{substituteMessage}</span>
+            </div>
+            <div className="cms-stock-candidate-list cms-substitute-stock-list">
+              {substituteStocks.map((stock) => (
+                <button
+                  className={`cms-stock-candidate ${
+                    stock.id === selectedSubstituteStockId ? "is-selected" : ""
+                  }`}
+                  key={stock.id}
+                  type="button"
+                  onClick={() => selectSubstituteStock(stock)}
+                >
+                  <span>대체 후보</span>
+                  <strong>{stock.name}</strong>
+                  <em>{stock.insuranceCode || "보험코드 없음"}</em>
+                  <b>보유 {currency(stock.quantity)}개</b>
+                </button>
+              ))}
+              {substituteStatus !== "loading" && substituteStocks.length === 0 && (
+                <p className="cms-empty">검색 후 대체할 재고를 선택하세요.</p>
+              )}
+            </div>
+          </div>
+        </CmsModal>
+      )}
+      {substituteConfirmOpen && activeRecord && selectedSubstituteStock && (
+        <CmsModal
+          title="대체 약품 차감 확인"
+          subtitle={activeRecord.drugName}
+          variant="confirm"
+          onClose={() => {
+            if (!substituteSubmitting) setSubstituteConfirmOpen(false);
+          }}
+        >
+          <div className="cms-resolution-confirm">
+            <div className="cms-resolution-confirm-card is-stock">
+              <span>아래 약품 재고를 차감합니다.</span>
+              <strong>{selectedSubstituteStock.name}</strong>
+              <em>
+                {currency(substituteQuantity)}개 차감 · 현재{" "}
+                {currency(selectedSubstituteStock.quantity)}개 → 처리 후{" "}
+                {currency(substituteAfterQuantity)}개
+              </em>
+              {substituteMakesNegative && (
+                <em className="is-danger-text">
+                  처리 후 {currency(Math.abs(substituteAfterQuantity))}개 부족
+                  상태가 되며, 이후 주문 필요 재고로 확인해야 합니다.
+                </em>
+              )}
+            </div>
+            <p>
+              확인 시 초과 처방 상태가 대체 처리로 바뀌고, 선택한 대체 약품
+              재고가 부족 수량 전체만큼 감소합니다.
+            </p>
+            <div className="cms-confirm-actions">
+              <button
+                className="cms-confirm-button"
+                disabled={substituteSubmitting}
+                type="button"
+                onClick={() => setSubstituteConfirmOpen(false)}
+              >
+                취소
+              </button>
+              <button
+                className="cms-confirm-button is-primary"
+                disabled={!canSubstitute || substituteSubmitting}
+                type="button"
+                onClick={() => void confirmSubstitute()}
+              >
+                {substituteSubmitting ? "처리 중" : "대체 처리"}
+              </button>
+            </div>
+          </div>
+        </CmsModal>
+      )}
     </section>
   );
 }
@@ -12223,7 +13063,7 @@ function CmsReturnReviewPage({
 
       {!detailMode && (
         <>
-          <div className="cms-kpis compact3">
+          <CmsKpiGrid columns={3}>
             <CmsKpi
               label="확인 필요"
               value={`${openRecords.length}`}
@@ -12237,21 +13077,14 @@ function CmsReturnReviewPage({
               unit="건"
               tone="blue"
             />
-          </div>
+          </CmsKpiGrid>
 
-          <div className="cms-shortage-filter" role="tablist">
-            {filterItems.map((item) => (
-              <button
-                className={listFilter === item.value ? "is-active" : ""}
-                key={item.value}
-                type="button"
-                onClick={() => selectListFilter(item.value)}
-              >
-                <span>{item.label}</span>
-                <b>{item.count}건</b>
-              </button>
-            ))}
-          </div>
+          <CmsSegmentFilter
+            columns={filterItems.length}
+            items={filterItems}
+            value={listFilter}
+            onChange={selectListFilter}
+          />
         </>
       )}
 
@@ -12851,28 +13684,49 @@ function CmsWholesalerPage({
 }
 
 function CmsPrescriptionPage({
+  endDate,
   filter,
   prescriptionId,
+  query,
   records,
+  searchStatus,
   selectedRecord,
   selectedStockId,
+  sortDirection,
+  sortKey,
+  startDate,
   onDeduct,
+  onApplyFilters,
+  onEndDate,
   onFilter,
   onPrescriptionId,
+  onQuery,
   onResolve,
   onSelectRecord,
   onSelectStock,
   onShortageStatus,
+  onSortDirection,
+  onSortKey,
+  onStartDate,
   stocks,
 }: {
+  endDate: string;
   filter: CmsDeductionFilter;
   prescriptionId: string;
+  query: string;
   records: CmsDeductionRecord[];
+  searchStatus: CmsPrescriptionSearchStatus;
   selectedRecord?: CmsDeductionRecord;
   selectedStockId: string;
+  sortDirection: CmsStockSortDirection;
+  sortKey: CmsPrescriptionSortKey;
+  startDate: string;
+  onApplyFilters: () => void;
   onDeduct: () => void;
+  onEndDate: (value: string) => void;
   onFilter: (filter: CmsDeductionFilter) => void;
   onPrescriptionId: (value: string) => void;
+  onQuery: (value: string) => void;
   stocks: StockItem[];
   onResolve: (
     record: CmsDeductionRecord,
@@ -12884,13 +13738,21 @@ function CmsPrescriptionPage({
     record: CmsDeductionRecord,
     shortageStatus: CmsShortageStatus,
   ) => void;
+  onSortDirection: (value: CmsStockSortDirection) => void;
+  onSortKey: (value: CmsPrescriptionSortKey) => void;
+  onStartDate: (value: string) => void;
 }) {
-  const visibleRecords =
+  const filteredRecords =
     filter === "ALL"
       ? records
       : filter === "SHORTAGE_ITEMS"
         ? records.filter((record) => record.shortageQuantity > 0)
         : records.filter((record) => record.status === filter);
+  const visibleRecords = sortCmsDeductionRecords(
+    filteredRecords,
+    sortKey,
+    sortDirection,
+  );
   const failedCount = records.filter(
     (record) => record.status === "FAILED",
   ).length;
@@ -13162,7 +14024,14 @@ function CmsPrescriptionPage({
         ? virtualDrugNameNeedsReview
           ? "is-warning"
           : "is-virtual"
-        : "is-warning";
+      : "is-warning";
+
+  function sortByHeader(nextKey: CmsPrescriptionSortKey) {
+    onSortDirection(
+      nextPrescriptionSortDirection(sortKey, sortDirection, nextKey),
+    );
+    onSortKey(nextKey);
+  }
 
   useEffect(() => {
     if (resolutionChoice === "EXISTING_STOCK" && !selectedStock) {
@@ -13199,7 +14068,7 @@ function CmsPrescriptionPage({
         </button>
       </div> */}
 
-      <div className="cms-kpis compact4 prescription-kpis">
+      <CmsKpiGrid className="prescription-kpis" columns={4}>
         <CmsKpi label="차감 기록" value={`${records.length}`} unit="건" />
         <CmsKpi
           label="자동 차감"
@@ -13219,7 +14088,36 @@ function CmsPrescriptionPage({
           unit="건"
           tone="red"
         />
-      </div>
+      </CmsKpiGrid>
+
+      <form
+        className="cms-prescription-list-controls"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onApplyFilters();
+        }}
+      >
+        <label className="cms-search">
+          <span className="search-icon" />
+          <input
+            placeholder="약품명 · 보험코드 · 처방전 검색"
+            value={query}
+            onChange={(event) => onQuery(event.target.value)}
+          />
+        </label>
+        <CmsDateRangeInline
+          endDate={endDate}
+          startDate={startDate}
+          onEndDate={onEndDate}
+          onStartDate={onStartDate}
+        />
+        <button className="cms-primary cms-toolbar-action" type="submit">
+          적용
+        </button>
+        <span className={`cms-list-search-state is-${searchStatus}`}>
+          {prescriptionSearchStateText(searchStatus)}
+        </span>
+      </form>
 
       <div className="cms-table-card prescription-table-card">
         <div className="cms-toolbar">
@@ -13240,12 +14138,67 @@ function CmsPrescriptionPage({
         <div className="cms-table-scroll">
           <div className="cms-deduction-table">
             <div className="cms-deduction-row cms-th">
-              <span>처방전</span>
-              <span>약품</span>
+              <CmsSortHeader
+                active={sortKey === "createdAt"}
+                direction={sortDirection}
+                label="처방전"
+                title={prescriptionSortAriaLabel(
+                  "처방전",
+                  "createdAt",
+                  sortKey,
+                  sortDirection,
+                )}
+                onClick={() => sortByHeader("createdAt")}
+              />
+              <CmsSortHeader
+                active={sortKey === "drugName"}
+                direction={sortDirection}
+                label="약품"
+                title={prescriptionSortAriaLabel(
+                  "약품",
+                  "drugName",
+                  sortKey,
+                  sortDirection,
+                )}
+                onClick={() => sortByHeader("drugName")}
+              />
               <span>보험코드</span>
-              <span>요청</span>
-              <span>결과</span>
-              <span>상태</span>
+              <CmsSortHeader
+                active={sortKey === "quantity"}
+                direction={sortDirection}
+                label="요청"
+                title={prescriptionSortAriaLabel(
+                  "요청",
+                  "quantity",
+                  sortKey,
+                  sortDirection,
+                )}
+                onClick={() => sortByHeader("quantity")}
+              />
+              <CmsSortHeader
+                active={sortKey === "shortage"}
+                direction={sortDirection}
+                label="결과"
+                title={prescriptionSortAriaLabel(
+                  "결과",
+                  "shortage",
+                  sortKey,
+                  sortDirection,
+                )}
+                onClick={() => sortByHeader("shortage")}
+              />
+              <CmsSortHeader
+                active={sortKey === "status"}
+                direction={sortDirection}
+                label="상태"
+                title={prescriptionSortAriaLabel(
+                  "상태",
+                  "status",
+                  sortKey,
+                  sortDirection,
+                )}
+                onClick={() => sortByHeader("status")}
+              />
             </div>
             {recordPagination.items.map((record) => (
               <button
@@ -13357,42 +14310,56 @@ function CmsPrescriptionPage({
                     주문 진행 상태만 바꾸며 실제 재고 수량은 변경하지 않습니다.
                   </span>
                 </header>
-                <div className="cms-shortage-actions">
-                  <button
-                    className={
-                      selectedRecord.shortageStatus === "OPEN" ||
-                      !selectedRecord.shortageStatus
-                        ? "is-active"
-                        : ""
-                    }
-                    type="button"
-                    onClick={() => onShortageStatus(selectedRecord, "OPEN")}
-                  >
-                    주문 필요
-                  </button>
-                  <button
-                    className={
-                      selectedRecord.shortageStatus === "ORDERED"
-                        ? "is-active"
-                        : ""
-                    }
-                    type="button"
-                    onClick={() => onShortageStatus(selectedRecord, "ORDERED")}
-                  >
-                    주문 완료
-                  </button>
-                  <button
-                    className={
-                      isHoldShortageStatus(selectedRecord.shortageStatus)
-                        ? "is-active"
-                        : ""
-                    }
-                    type="button"
-                    onClick={() => onShortageStatus(selectedRecord, "HOLD")}
-                  >
-                    보류
-                  </button>
-                </div>
+                {selectedRecord.shortageStatus === "SUBSTITUTED" ? (
+                  <div className="cms-substitute-done-card">
+                    <span>대체 약품 처리 완료</span>
+                    <strong>
+                      {selectedRecord.substituteStockName ?? "대체 약품"}
+                    </strong>
+                    <em>
+                      {currency(selectedRecord.substituteQuantity ?? 0)}개 차감
+                    </em>
+                  </div>
+                ) : (
+                  <div className="cms-shortage-actions">
+                    <button
+                      className={
+                        selectedRecord.shortageStatus === "OPEN" ||
+                        !selectedRecord.shortageStatus
+                          ? "is-active"
+                          : ""
+                      }
+                      type="button"
+                      onClick={() => onShortageStatus(selectedRecord, "OPEN")}
+                    >
+                      주문 필요
+                    </button>
+                    <button
+                      className={
+                        selectedRecord.shortageStatus === "ORDERED"
+                          ? "is-active"
+                          : ""
+                      }
+                      type="button"
+                      onClick={() =>
+                        onShortageStatus(selectedRecord, "ORDERED")
+                      }
+                    >
+                      주문 완료
+                    </button>
+                    <button
+                      className={
+                        isHoldShortageStatus(selectedRecord.shortageStatus)
+                          ? "is-active"
+                          : ""
+                      }
+                      type="button"
+                      onClick={() => onShortageStatus(selectedRecord, "HOLD")}
+                    >
+                      보류
+                    </button>
+                  </div>
+                )}
               </section>
             )}
 
@@ -13913,6 +14880,401 @@ function CmsPurchasePage({
         </CmsPanel>
       </div>
     </section>
+  );
+}
+
+type CmsGridStyle = CSSProperties & {
+  [key: `--${string}`]: string | number | undefined;
+};
+
+type CmsGridColumns = {
+  columns?: number;
+  mobileColumns?: number;
+  tabletColumns?: number;
+};
+
+function normalizeGridColumns(value?: number) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+  return Math.max(1, Math.floor(value));
+}
+
+function cmsGridColumnStyle(
+  prefix: "cms-kpi" | "cms-shortage-filter",
+  { columns, mobileColumns, tabletColumns }: CmsGridColumns,
+) {
+  const style: CmsGridStyle = {};
+  const setColumn = (
+    suffix: "columns" | "mobile-columns" | "tablet-columns",
+    value?: number,
+  ) => {
+    const normalized = normalizeGridColumns(value);
+    if (normalized === undefined) return;
+    style[`--${prefix}-${suffix}`] = normalized;
+  };
+
+  setColumn("columns", columns);
+  setColumn("tablet-columns", tabletColumns);
+  setColumn("mobile-columns", mobileColumns);
+
+  return Object.keys(style).length > 0 ? style : undefined;
+}
+
+function CmsKpiGrid({
+  children,
+  className,
+  columns,
+  compact = true,
+  mobileColumns,
+  tabletColumns,
+}: CmsGridColumns & {
+  children: ReactNode;
+  className?: string;
+  compact?: boolean;
+}) {
+  const classes = ["cms-kpis", compact ? "compact" : "", className]
+    .filter(Boolean)
+    .join(" ");
+
+  return (
+    <div
+      className={classes}
+      style={cmsGridColumnStyle("cms-kpi", {
+        columns,
+        mobileColumns,
+        tabletColumns,
+      })}
+    >
+      {children}
+    </div>
+  );
+}
+
+function CmsSegmentFilter<T extends string>({
+  columns,
+  items,
+  mobileColumns,
+  onChange,
+  tabletColumns,
+  value,
+}: CmsGridColumns & {
+  items: Array<{ count: number; label: string; value: T }>;
+  onChange: (value: T) => void;
+  value: T;
+}) {
+  return (
+    <div
+      className="cms-shortage-filter"
+      role="tablist"
+      style={cmsGridColumnStyle("cms-shortage-filter", {
+        columns,
+        mobileColumns,
+        tabletColumns,
+      })}
+    >
+      {items.map((item) => (
+        <button
+          className={value === item.value ? "is-active" : ""}
+          key={item.value}
+          type="button"
+          onClick={() => onChange(item.value)}
+        >
+          <span>{item.label}</span>
+          <b>{item.count}건</b>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function parseDateInputValue(value: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return null;
+
+  const [, year, month, day] = match;
+  const date = new Date(Number(year), Number(month) - 1, Number(day));
+  if (dateInputValue(date) !== value) return null;
+  return date;
+}
+
+function addCalendarDays(date: Date, amount: number) {
+  const nextDate = new Date(date);
+  nextDate.setDate(date.getDate() + amount);
+  return nextDate;
+}
+
+function addCalendarMonths(date: Date, amount: number) {
+  return new Date(date.getFullYear(), date.getMonth() + amount, 1);
+}
+
+function startOfCalendarMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function compareCalendarDates(left: Date, right: Date) {
+  return dateInputValue(left).localeCompare(dateInputValue(right));
+}
+
+function sameCalendarDate(left: Date, right: Date) {
+  return dateInputValue(left) === dateInputValue(right);
+}
+
+function buildCalendarMonthDays(monthDate: Date) {
+  const firstDate = startOfCalendarMonth(monthDate);
+  const firstGridDate = addCalendarDays(firstDate, -firstDate.getDay());
+  return Array.from({ length: 42 }, (_, index) =>
+    addCalendarDays(firstGridDate, index),
+  );
+}
+
+function calendarMonthLabel(date: Date) {
+  return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function shortDateLabel(value: string) {
+  const date = parseDateInputValue(value);
+  if (!date) return value.replace(/-/g, ".");
+
+  const monthDay = `${String(date.getMonth() + 1).padStart(2, "0")}.${String(
+    date.getDate(),
+  ).padStart(2, "0")}`;
+  return date.getFullYear() === new Date().getFullYear()
+    ? monthDay
+    : `${String(date.getFullYear()).slice(2)}.${monthDay}`;
+}
+
+const CMS_CALENDAR_WEEKDAYS = ["일", "월", "화", "수", "목", "금", "토"];
+
+function CmsDateRangeInline({
+  endDate,
+  startDate,
+  onEndDate,
+  onStartDate,
+}: {
+  endDate: string;
+  startDate: string;
+  onEndDate: (value: string) => void;
+  onStartDate: (value: string) => void;
+}) {
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
+  const [selectingEnd, setSelectingEnd] = useState(false);
+  const [popoverStyle, setPopoverStyle] = useState<CSSProperties>();
+  const [draftStartDate, setDraftStartDate] = useState(startDate);
+  const [draftEndDate, setDraftEndDate] = useState(endDate);
+  const start = parseDateInputValue(draftStartDate) ?? new Date();
+  const end = parseDateInputValue(draftEndDate) ?? start;
+  const [visibleMonth, setVisibleMonth] = useState(() =>
+    startOfCalendarMonth(start),
+  );
+
+  useEffect(() => {
+    if (!open) {
+      const nextStart = parseDateInputValue(startDate) ?? new Date();
+      setDraftStartDate(startDate);
+      setDraftEndDate(endDate);
+      setVisibleMonth(startOfCalendarMonth(nextStart));
+    }
+  }, [endDate, open, startDate]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function closeOnOutsidePointer(event: PointerEvent) {
+      if (!pickerRef.current?.contains(event.target as Node)) {
+        setOpen(false);
+        setSelectingEnd(false);
+      }
+    }
+
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () =>
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function updatePopoverPosition() {
+      const triggerRect = triggerRef.current?.getBoundingClientRect();
+      if (!triggerRect) return;
+
+      const viewportPadding = 12;
+      const width = Math.min(620, window.innerWidth - viewportPadding * 2);
+      const left = Math.min(
+        Math.max(viewportPadding, triggerRect.right - width),
+        window.innerWidth - width - viewportPadding,
+      );
+
+      setPopoverStyle({
+        left,
+        top: triggerRect.bottom + 8,
+        width,
+      });
+    }
+
+    updatePopoverPosition();
+    window.addEventListener("resize", updatePopoverPosition);
+    window.addEventListener("scroll", updatePopoverPosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePopoverPosition);
+      window.removeEventListener("scroll", updatePopoverPosition, true);
+    };
+  }, [open]);
+
+  function setRecentWeek() {
+    const range = recentWeekDateRange();
+    setDraftStartDate(range.startDate);
+    setDraftEndDate(range.endDate);
+    onStartDate(range.startDate);
+    onEndDate(range.endDate);
+    setVisibleMonth(startOfCalendarMonth(parseDateInputValue(range.startDate)!));
+    setSelectingEnd(false);
+    setOpen(false);
+  }
+
+  function openPicker() {
+    const nextStart = parseDateInputValue(startDate) ?? new Date();
+    setDraftStartDate(startDate);
+    setDraftEndDate(endDate);
+    setSelectingEnd(false);
+    setVisibleMonth(startOfCalendarMonth(nextStart));
+    setOpen((current) => !current);
+  }
+
+  function updateDateRange(nextStartDate: string, nextEndDate: string) {
+    setDraftStartDate(nextStartDate);
+    setDraftEndDate(nextEndDate);
+    onStartDate(nextStartDate);
+    onEndDate(nextEndDate);
+  }
+
+  function selectDate(date: Date) {
+    const selectedValue = dateInputValue(date);
+    if (!selectingEnd) {
+      updateDateRange(selectedValue, selectedValue);
+      setSelectingEnd(true);
+      return;
+    }
+
+    if (compareCalendarDates(date, start) < 0) {
+      updateDateRange(selectedValue, dateInputValue(start));
+    } else {
+      updateDateRange(draftStartDate, selectedValue);
+    }
+    setSelectingEnd(false);
+    setOpen(false);
+  }
+
+  function renderMonth(monthDate: Date) {
+    const month = startOfCalendarMonth(monthDate);
+    const today = new Date();
+    return (
+      <section className="cms-calendar-month" key={dateInputValue(month)}>
+        <strong>{calendarMonthLabel(month)}</strong>
+        <div className="cms-calendar-weekdays">
+          {CMS_CALENDAR_WEEKDAYS.map((weekday) => (
+            <span key={weekday}>{weekday}</span>
+          ))}
+        </div>
+        <div className="cms-calendar-days">
+          {buildCalendarMonthDays(month).map((date) => {
+            const isOutside = date.getMonth() !== month.getMonth();
+            const isStart = sameCalendarDate(date, start);
+            const isEnd = sameCalendarDate(date, end);
+            const isInRange =
+              compareCalendarDates(date, start) >= 0 &&
+              compareCalendarDates(date, end) <= 0;
+            const isToday = sameCalendarDate(date, today);
+            const className = [
+              "cms-calendar-day",
+              isOutside ? "is-outside" : "",
+              isInRange ? "is-in-range" : "",
+              isStart ? "is-start" : "",
+              isEnd ? "is-end" : "",
+              isToday ? "is-today" : "",
+            ]
+              .filter(Boolean)
+              .join(" ");
+
+            return (
+              <button
+                className={className}
+                key={dateInputValue(date)}
+                type="button"
+                onClick={() => selectDate(date)}
+              >
+                {date.getDate()}
+              </button>
+            );
+          })}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <div className="cms-date-range-inline" ref={pickerRef}>
+      <button
+        ref={triggerRef}
+        className="cms-date-range-trigger"
+        type="button"
+        aria-expanded={open}
+        onClick={openPicker}
+      >
+        <CalendarDays size={15} strokeWidth={2.4} />
+        <span>기간</span>
+        <strong>
+          {shortDateLabel(draftStartDate)} ~ {shortDateLabel(draftEndDate)}
+        </strong>
+      </button>
+      {open && (
+        <div className="cms-date-range-popover" style={popoverStyle}>
+          <div className="cms-date-range-popover-head">
+            <button
+              className="cms-calendar-nav"
+              type="button"
+              aria-label="이전 달"
+              onClick={() =>
+                setVisibleMonth((current) => addCalendarMonths(current, -1))
+              }
+            >
+              ‹
+            </button>
+            <span>{selectingEnd ? "종료일 선택" : "시작일 선택"}</span>
+            <button
+              className="cms-calendar-nav"
+              type="button"
+              aria-label="다음 달"
+              onClick={() =>
+                setVisibleMonth((current) => addCalendarMonths(current, 1))
+              }
+            >
+              ›
+            </button>
+          </div>
+          <div className="cms-calendar-months">
+            {renderMonth(visibleMonth)}
+            {renderMonth(addCalendarMonths(visibleMonth, 1))}
+          </div>
+          <div className="cms-date-range-popover-foot">
+            <button type="button" onClick={setRecentWeek}>
+              최근 7일
+            </button>
+            <button
+              className="is-primary"
+              type="button"
+              onClick={() => {
+                setSelectingEnd(false);
+                setOpen(false);
+              }}
+            >
+              닫기
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
