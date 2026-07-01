@@ -8349,7 +8349,7 @@ function CmsApp({
           setPrescriptionSearchStatus("loading");
           const queryString = prescriptionParams.toString();
           const prescriptionResult = await optionalCmsApiFetch<unknown>(
-            `/prescriptions?${queryString}`,
+            `/prescription-overviews?${queryString}`,
           );
           if (prescriptionResult) {
             setPrescriptionRecords(
