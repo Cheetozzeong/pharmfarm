@@ -137,6 +137,16 @@ Codex sharing helper:
 - Send manifest.csv/columns.csv only if more detail is needed.
 - Avoid sending sample CSV files unless specifically requested.
 
+Prescription trace export:
+
+- debug-export-prescription-trace.bat exports local CSV files for one prescription code.
+- Default target: prescription 202607010027 with insurance codes 629700750 and 657300850.
+- It exports PRESCRIPT_EDB, prsdrug, joined dgmast rows, target master rows, candidate columns, and table hits that contain the prescription or insurance codes.
+- Custom target example: debug-export-prescription-trace.bat 202607010027
+- Output folder: C:\ProgramData\PharmFarmAgent\debug-export\prescription-trace-CODE-YYYYMMDD-HHMMSS
+- Send SEND_TO_CODEX.txt first. If asked, send manifest.csv, candidate_columns.csv, and the non-empty CSV files listed in SEND_TO_CODEX.txt.
+- This may include prescription or patient-related data. Do not upload/share without legal approval.
+
 Controlled-drug trace:
 
 - controlled-drug-reference.csv is extracted from 약품기본정보.pdf printed on 2026-06-26.
