@@ -1402,7 +1402,7 @@ function New-AgentEnvelope {
       pharmacyId = Convert-NullableInt $Config.pharmacyId
       deviceId = $Config.deviceId
       deviceName = $Config.deviceName
-      agentVersion = "1.1.3-ps"
+      agentVersion = "1.1.4-ps"
       batchId = "$Kind-$($eventId.Substring(0, 16))-$Part-$TotalParts"
       capturedAt = $now
       items = $Items
@@ -1627,6 +1627,9 @@ function Get-TodayPrescriptionRows {
   param([object]$Config)
 
   $query = @"
+DECLARE @today8 VARCHAR(8)
+SET @today8 = CONVERT(VARCHAR(8), GETDATE(), 112)
+
 SELECT
   ps_Code,
   ps_Date,
@@ -1637,11 +1640,8 @@ SELECT
 FROM dbo.PRESCRIPT_EDB WITH (NOLOCK)
 WHERE ps_Code IS NOT NULL
   AND (
-    (
-      TRY_CONVERT(datetime2, ps_Date) >= CONVERT(date, GETDATE())
-      AND TRY_CONVERT(datetime2, ps_Date) < DATEADD(day, 1, CONVERT(date, GETDATE()))
-    )
-    OR CONVERT(varchar(8), ps_Date, 112) = CONVERT(varchar(8), GETDATE(), 112)
+    CONVERT(VARCHAR(8), ps_Date, 112) = @today8
+    OR LEFT(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(64), ps_Date), '-', ''), '/', ''), '.', ''), 8) = @today8
   )
 ORDER BY ps_Date ASC, ps_Code ASC
 "@
@@ -1823,7 +1823,7 @@ function New-Payload {
       pharmacyId = Convert-NullableInt $Config.pharmacyId
       deviceId = $Config.deviceId
       deviceName = $Config.deviceName
-      agentVersion = "1.1.3-ps"
+      agentVersion = "1.1.4-ps"
       batchId = "prescription-$($eventId.Substring(0, 16))"
       capturedAt = $now
       source = "EPHARM_DB"
@@ -1875,7 +1875,7 @@ function New-RequestHeaders {
   )
 
   $headers = @{
-    "X-PharmFarm-Agent-Version" = "1.1.3-ps"
+    "X-PharmFarm-Agent-Version" = "1.1.4-ps"
     "X-PharmFarm-Device-Id" = $Config.deviceId
   }
 

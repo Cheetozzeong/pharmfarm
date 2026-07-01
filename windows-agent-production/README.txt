@@ -100,6 +100,7 @@ Today prescription overwrite test:
 
 - Use this only before changing shortage/order/manual resolution statuses for the test prescriptions.
 - The agent queries today's eP_ERROR_LOG.dbo.PRESCRIPT_EDB rows and their eP_PHARM.dbo.prsdrug lines.
+- The today-row query avoids TRY_CONVERT so it can run on older EPharm SQL Server versions.
 - The payload uses syncMode=TODAY_OVERWRITE and overwriteExisting=true.
 - The server must upsert by prescriptionCode + lineNo and replace the stored prescription lines before running stock deduction again.
 - Run from the tray menu, or run resync-today-prescriptions.bat from the extracted package.
