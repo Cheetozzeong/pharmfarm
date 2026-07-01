@@ -708,6 +708,38 @@ function formatVideoInputLabel(device: VideoInputDevice, index: number) {
   return device.label || `카메라 ${index + 1}`;
 }
 
+function invertCanvasImage(canvas: HTMLCanvasElement) {
+  const context = canvas.getContext("2d", { willReadFrequently: true });
+  if (!context) return false;
+
+  const imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+  const pixels = imageData.data;
+  for (let index = 0; index < pixels.length; index += 4) {
+    pixels[index] = 255 - pixels[index];
+    pixels[index + 1] = 255 - pixels[index + 1];
+    pixels[index + 2] = 255 - pixels[index + 2];
+  }
+  context.putImageData(imageData, 0, 0);
+  return true;
+}
+
+function decodeFromCanvasWithInvertedFallback(
+  reader: WebScannerReader,
+  canvas: HTMLCanvasElement,
+) {
+  try {
+    return reader.decodeFromCanvas(canvas).getText();
+  } catch {
+    if (!invertCanvasImage(canvas)) return "";
+  }
+
+  try {
+    return reader.decodeFromCanvas(canvas).getText();
+  } catch {
+    return "";
+  }
+}
+
 function getGuidedScanSourceRect(
   video: HTMLVideoElement,
   guideElement: HTMLElement | null,
@@ -868,15 +900,11 @@ async function startGuidedWebScanner({
       sourceRect.height,
     );
 
-    try {
-      const value = reader.decodeFromCanvas(cropCanvas).getText();
-      if (value) {
-        onResult(value);
-        scheduleScan(successDelay);
-        return;
-      }
-    } catch {
-      // No code in the guided area yet.
+    const value = decodeFromCanvasWithInvertedFallback(reader, cropCanvas);
+    if (value) {
+      onResult(value);
+      scheduleScan(successDelay);
+      return;
     }
 
     scheduleScan(scanDelay);
@@ -1923,6 +1951,11 @@ function getLowConfidenceSnReason(qr: QrFields) {
   if (!sn) return "";
 
   const comparableSn = sn.replace(/[^0-9A-Za-z]/g, "");
+  const comparableLot = qr.lot.trim().replace(/[^0-9A-Za-z]/g, "");
+  if (comparableLot && comparableSn === comparableLot) {
+    return `SN이 LOT(${qr.lot})와 같게 인식되었습니다.`;
+  }
+
   if (
     comparableSn.length > 0 &&
     comparableSn.length < minimumReliableSnLength
@@ -2003,110 +2036,168 @@ function parsePlainPcQr(raw: string) {
   };
 }
 
+type CompactGs1Ai = "01" | "17" | "10" | "21";
+type CompactGs1Fields = Partial<Record<CompactGs1Ai, string>>;
+type CompactGs1Parse = {
+  fields: CompactGs1Fields;
+  order: CompactGs1Ai[];
+  startIndex: number;
+};
+
+const compactGs1FixedLengths: Partial<Record<CompactGs1Ai, number>> = {
+  "01": 14,
+  "17": 6,
+};
+const compactGs1VariableMaxLengths: Partial<Record<CompactGs1Ai, number>> = {
+  "10": 20,
+  "21": 20,
+};
+
 function parseCompactGs1(raw: string) {
   const compact = raw
     .replace(/^\][A-Za-z0-9]{2}/, "")
     .replace(/\u001d/g, "\x1d")
     .replace(/[ \n\r\t]+/g, "");
+  const candidates = compactGs1StartIndexes(compact).flatMap((startIndex) =>
+    parseCompactGs1Tokens(
+      compact,
+      startIndex,
+      {},
+      [],
+      new Set<CompactGs1Ai>(),
+    ).map((parse) => ({ ...parse, startIndex })),
+  );
+  const best = candidates.sort(
+    (left, right) =>
+      compactGs1ParseScore(right) - compactGs1ParseScore(left),
+  )[0];
 
-  const pcIndex = findFixedGs1Ai(compact, "01", 0, 14);
-  const pcEnd = pcIndex >= 0 ? pcIndex + 16 : 0;
-  const expIndex = findFixedGs1Ai(compact, "17", pcEnd, 6);
-  const expEnd = expIndex >= 0 ? expIndex + 8 : pcEnd;
-  const lot = readVariableGs1Ai(compact, "10", expEnd, {
-    stopAtVariableAis: ["21"],
-  });
-  const sn = readVariableGs1Ai(compact, "21", expEnd, {
-    stopAtFixedAis: false,
-    stopAtVariableAis: [],
-  });
+  if (!best) return null;
+
   const result = {
-    pc: pcIndex >= 0 ? compact.slice(pcIndex + 2, pcIndex + 16) : "",
-    sn,
-    lot,
-    exp: expIndex >= 0 ? compact.slice(expIndex + 2, expIndex + 8) : "",
+    pc: best.fields["01"] ?? "",
+    sn: best.fields["21"] ?? "",
+    lot: best.fields["10"] ?? "",
+    exp: best.fields["17"] ?? "",
   };
 
-  return result.pc || result.sn || result.lot || result.exp ? result : null;
+  return result.pc ? result : null;
 }
 
-function findFixedGs1Ai(
-  raw: string,
-  ai: string,
-  start: number,
-  valueLength: number,
-) {
-  for (
-    let index = Math.max(0, start);
-    index <= raw.length - valueLength - 2;
-    index += 1
-  ) {
-    if (raw.slice(index, index + 2) !== ai) continue;
+function compactGs1StartIndexes(raw: string) {
+  const indexes: number[] = [];
 
-    const value = raw.slice(index + 2, index + 2 + valueLength);
-    if (/^\d+$/.test(value)) return index;
+  for (let index = 0; index < raw.length - 1; index += 1) {
+    if (!readCompactGs1Ai(raw, index)) continue;
+    indexes.push(index);
   }
 
-  return -1;
+  return [...new Set(indexes)];
 }
 
-function readVariableGs1Ai(
+function parseCompactGs1Tokens(
   raw: string,
-  ai: string,
-  start: number,
-  options: {
-    stopAtFixedAis?: boolean;
-    stopAtVariableAis?: string[];
-  } = {},
-) {
-  const index = raw.indexOf(ai, Math.max(0, start));
-  if (index < 0) return "";
+  index: number,
+  fields: CompactGs1Fields,
+  order: CompactGs1Ai[],
+  seen: Set<CompactGs1Ai>,
+): Array<Omit<CompactGs1Parse, "startIndex">> {
+  const tokenIndex = skipCompactGs1Separators(raw, index);
+  if (tokenIndex >= raw.length) {
+    return [{ fields, order }];
+  }
 
-  const valueStart = index + 2;
+  const ai = readCompactGs1Ai(raw, tokenIndex);
+  if (!ai || seen.has(ai)) return [];
+
+  const fixedLength = compactGs1FixedLengths[ai];
+  if (fixedLength) {
+    const valueStart = tokenIndex + 2;
+    const valueEnd = valueStart + fixedLength;
+    const value = raw.slice(valueStart, valueEnd);
+    if (value.length !== fixedLength || !/^\d+$/.test(value)) return [];
+
+    return parseCompactGs1Tokens(
+      raw,
+      valueEnd,
+      { ...fields, [ai]: value },
+      [...order, ai],
+      new Set([...seen, ai]),
+    );
+  }
+
+  const maxLength = compactGs1VariableMaxLengths[ai];
+  if (!maxLength) return [];
+
+  const valueStart = tokenIndex + 2;
   const separatorIndex = raw.indexOf("\x1d", valueStart);
-  const nextAiIndex =
+  const valueEndCandidates =
     separatorIndex >= 0
-      ? separatorIndex
-      : findNextGs1Ai(raw, valueStart, options);
-  const valueEnd = nextAiIndex >= 0 ? nextAiIndex : raw.length;
+      ? [separatorIndex]
+      : compactGs1VariableEndCandidates(raw, valueStart, maxLength, seen);
 
-  return raw.slice(valueStart, valueEnd).replace(/\x1d/g, "").trim();
+  return valueEndCandidates.flatMap((valueEnd) => {
+    const value = raw.slice(valueStart, valueEnd).replace(/\x1d/g, "").trim();
+    if (!value || value.length > maxLength) return [];
+
+    const nextIndex = valueEnd === separatorIndex ? valueEnd + 1 : valueEnd;
+    return parseCompactGs1Tokens(
+      raw,
+      nextIndex,
+      { ...fields, [ai]: value },
+      [...order, ai],
+      new Set([...seen, ai]),
+    );
+  });
 }
 
-function findNextGs1Ai(
+function compactGs1VariableEndCandidates(
   raw: string,
-  start: number,
-  {
-    stopAtFixedAis = true,
-    stopAtVariableAis = ["10", "21"],
-  }: {
-    stopAtFixedAis?: boolean;
-    stopAtVariableAis?: string[];
-  } = {},
+  valueStart: number,
+  maxLength: number,
+  seen: Set<CompactGs1Ai>,
 ) {
-  for (let index = start + 1; index < raw.length - 1; index += 1) {
-    const ai = raw.slice(index, index + 2);
+  const maxEnd = Math.min(raw.length, valueStart + maxLength);
+  const candidates = new Set<number>();
+  if (raw.length <= maxEnd) candidates.add(raw.length);
 
-    if (
-      stopAtFixedAis &&
-      ai === "01" &&
-      /^\d{14}/.test(raw.slice(index + 2, index + 16))
-    ) {
-      return index;
-    }
-    if (
-      stopAtFixedAis &&
-      ai === "17" &&
-      /^\d{6}/.test(raw.slice(index + 2, index + 8))
-    ) {
-      return index;
-    }
-    if (stopAtVariableAis.includes(ai)) {
-      return index;
-    }
+  for (let index = valueStart + 1; index <= maxEnd - 2; index += 1) {
+    const ai = readCompactGs1Ai(raw, index);
+    if (ai && !seen.has(ai)) candidates.add(index);
   }
 
-  return -1;
+  return [...candidates].sort((left, right) => left - right);
+}
+
+function skipCompactGs1Separators(raw: string, index: number) {
+  let nextIndex = index;
+  while (raw[nextIndex] === "\x1d") nextIndex += 1;
+  return nextIndex;
+}
+
+function readCompactGs1Ai(raw: string, index: number): CompactGs1Ai | null {
+  const ai = raw.slice(index, index + 2);
+  return ai === "01" || ai === "17" || ai === "10" || ai === "21" ? ai : null;
+}
+
+function compactGs1ParseScore(parse: CompactGs1Parse) {
+  let score = 0;
+  if (parse.fields["01"]) score += 100;
+  if (parse.fields["17"]) score += 30;
+  if (parse.fields["10"]) score += 30;
+  if (parse.fields["21"]) score += 30;
+  score += parse.order.length * 5;
+  score -= parse.startIndex;
+
+  if (
+    parse.fields["10"] &&
+    parse.fields["21"] &&
+    parse.fields["10"] === parse.fields["21"]
+  ) {
+    score -= 80;
+  }
+
+  return score;
 }
 
 function parseTextQr(raw: string) {
@@ -7639,29 +7730,26 @@ function CmsApp({
   const selectedWholesaler =
     wholesalers.find((wholesaler) => wholesaler.id === selectedWholesalerId) ??
     wholesalers[0];
-  const filteredDeductionRecords = useMemo(
-    () => {
-      const filtered =
-        deductionFilter === "ALL"
+  const filteredDeductionRecords = useMemo(() => {
+    const filtered =
+      deductionFilter === "ALL"
         ? deductionRecords
         : deductionFilter === "SHORTAGE_ITEMS"
           ? deductionRecords.filter((record) => record.shortageQuantity > 0)
           : deductionRecords.filter(
               (record) => record.status === deductionFilter,
             );
-      return sortCmsDeductionRecords(
-        filtered,
-        prescriptionSortKey,
-        prescriptionSortDirection,
-      );
-    },
-    [
-      deductionFilter,
-      deductionRecords,
-      prescriptionSortDirection,
+    return sortCmsDeductionRecords(
+      filtered,
       prescriptionSortKey,
-    ],
-  );
+      prescriptionSortDirection,
+    );
+  }, [
+    deductionFilter,
+    deductionRecords,
+    prescriptionSortDirection,
+    prescriptionSortKey,
+  ]);
   const selectedDeduction =
     filteredDeductionRecords.find(
       (record) => record.id === selectedDeductionId,
@@ -7676,11 +7764,13 @@ function CmsApp({
     [deductionRecords, shortageSortDirection, shortageSortKey],
   );
   const activeShortageId = shortageRouteId || selectedShortageId;
-  const selectedShortage =
-    shortageRecords.find((record) => record.id === activeShortageId);
+  const selectedShortage = shortageRecords.find(
+    (record) => record.id === activeShortageId,
+  );
   const activeReturnReviewId = returnReviewRouteId || selectedReturnReviewId;
-  const selectedReturnReview =
-    returnReviews.find((record) => record.id === activeReturnReviewId);
+  const selectedReturnReview = returnReviews.find(
+    (record) => record.id === activeReturnReviewId,
+  );
   const hasCmsSession = hasStoredAuthTokens();
   const effectiveSidebarCollapsed = sidebarCollapsed && !compactCmsNav;
 
@@ -7982,7 +8072,8 @@ function CmsApp({
             sortBy: shortageSortKey,
             sortDirection: shortageSortDirection,
           });
-          if (shortageStartDate) shortageParams.set("startDate", shortageStartDate);
+          if (shortageStartDate)
+            shortageParams.set("startDate", shortageStartDate);
           if (shortageEndDate) shortageParams.set("endDate", shortageEndDate);
           if (trimmed) shortageParams.set("keyword", trimmed);
           setShortageSearchStatus("loading");
@@ -10455,8 +10546,8 @@ function CmsDashboard({
   const shortageRecords = deductionRecords.filter(
     (record) => record.shortageQuantity > 0,
   );
-  const activeShortageRecords = shortageRecords.filter(
-    (record) => isActiveShortageStatus(record.shortageStatus),
+  const activeShortageRecords = shortageRecords.filter((record) =>
+    isActiveShortageStatus(record.shortageStatus),
   );
   const failedPrescriptionRecords = deductionRecords.filter(
     (record) => record.status === "FAILED" || record.status === "PENDING",
@@ -12070,8 +12161,9 @@ function CmsInventoryShortagePage({
   const [substituteStatus, setSubstituteStatus] = useState<
     "idle" | "short" | "loading" | "done" | "error"
   >("idle");
-  const [substituteMessage, setSubstituteMessage] =
-    useState("약품명 또는 보험코드를 입력해 주세요.");
+  const [substituteMessage, setSubstituteMessage] = useState(
+    "약품명 또는 보험코드를 입력해 주세요.",
+  );
   const [substituteSubmitting, setSubstituteSubmitting] = useState(false);
   const orderNeededRecords = records.filter((record) =>
     isOpenShortageStatus(record.shortageStatus),
@@ -12093,10 +12185,10 @@ function CmsInventoryShortagePage({
     listFilter === "SUBSTITUTED"
       ? substitutedRecords
       : listFilter === "HOLD"
-      ? holdRecords
-      : listFilter === "ORDERED"
-        ? orderedRecords
-        : orderNeededRecords;
+        ? holdRecords
+        : listFilter === "ORDERED"
+          ? orderedRecords
+          : orderNeededRecords;
   const visibleRecords = sortCmsDeductionRecords(
     filteredRecords,
     sortKey,
@@ -12128,10 +12220,10 @@ function CmsInventoryShortagePage({
     listFilter === "SUBSTITUTED"
       ? "대체 약품으로 처리된 초과 처방 내역이 없습니다."
       : listFilter === "HOLD"
-      ? "보류된 초과 처방 내역이 없습니다."
-      : listFilter === "ORDERED"
-        ? "주문 완료된 초과 처방 내역이 없습니다."
-        : "주문 필요한 초과 처방 내역이 없습니다.";
+        ? "보류된 초과 처방 내역이 없습니다."
+        : listFilter === "ORDERED"
+          ? "주문 완료된 초과 처방 내역이 없습니다."
+          : "주문 필요한 초과 처방 내역이 없습니다.";
   const selectedSubstituteStock = substituteStocks.find(
     (stock) => stock.id === selectedSubstituteStockId,
   );
@@ -12180,9 +12272,7 @@ function CmsInventoryShortagePage({
         sortDirection: "asc",
       });
       const response = await apiFetch<unknown>(`/stocks?${params}`);
-      const results = arrayPayload(response)
-        .map(normalizeStock)
-        .slice(0, 20);
+      const results = arrayPayload(response).map(normalizeStock).slice(0, 20);
       setSubstituteStocks(results);
       setSelectedSubstituteStockId((current) =>
         results.some((stock) => stock.id === current)
@@ -12328,9 +12418,9 @@ function CmsInventoryShortagePage({
             <button className="cms-primary cms-toolbar-action" type="submit">
               적용
             </button>
-            <span className={`cms-list-search-state is-${searchStatus}`}>
+            {/* <span className={`cms-list-search-state is-${searchStatus}`}>
               {prescriptionSearchStateText(searchStatus)}
-            </span>
+            </span> */}
           </form>
 
           <CmsSegmentFilter
@@ -12464,172 +12554,182 @@ function CmsInventoryShortagePage({
               />
             )}
             <aside className="cms-shortage-detail-card">
-          {!activeRecord ? (
-            <p className="cms-empty">선택된 초과 처방 항목이 없습니다.</p>
-          ) : (
-            <>
-              <div className="cms-shortage-detail-head">
-                {!detailMode && (
-                  <button
-                    className="cms-sheet-close-inline"
-                    type="button"
-                    onClick={onBack}
-                  >
-                    닫기
-                  </button>
-                )}
-                <span
-                  className={`cms-badge ${shortageStatusBadgeClass(activeRecord.shortageStatus)}`}
-                >
-                  {shortageStatusText(activeRecord.shortageStatus)}
-                </span>
-                <strong>{activeRecord.drugName}</strong>
-                <em>
-                  {activeRecord.createdAt} · {activeRecord.prescriptionCode}
-                </em>
-              </div>
-              <div className="cms-prescription-paper">
-                <div className="cms-prescription-paper-head">
-                  <div>
-                    <span>처방전</span>
-                    <strong>{activeRecord.prescriptionCode}</strong>
-                  </div>
-                  <b>{activeRecord.lineNo}번 항목</b>
-                </div>
-                <div className="cms-prescription-paper-meta">
-                  <span>
-                    처방일시
-                    <b>{activeDetail?.capturedAt ?? activeRecord.createdAt}</b>
-                  </span>
-                  <span>
-                    보험코드
-                    <b>{activeRecord.insuranceCode}</b>
-                  </span>
-                </div>
-                <div className="cms-prescription-quantity-strip">
-                  <div>
-                    <span>처방 수량</span>
-                    <strong>{activeRecord.totalQuantity}개</strong>
-                  </div>
-                  <div>
-                    <span>실제 차감</span>
-                    <strong>{activeRecord.deductedQuantity}개</strong>
-                  </div>
-                  <div className="is-shortage">
-                    <span>부족 수량</span>
-                    <strong>{activeRecord.shortageQuantity}개</strong>
-                  </div>
-                  <div>
-                    <span>화면상 재고</span>
-                    <strong>
-                      {activeRecord.displayAfter ??
-                        -activeRecord.shortageQuantity}
-                      개
-                    </strong>
-                  </div>
-                </div>
-              </div>
-              {activeRecord.shortageStatus === "SUBSTITUTED" ? (
-                <div className="cms-substitute-done-card">
-                  <span>대체 약품 처리 완료</span>
-                  <strong>
-                    {activeRecord.substituteStockName ?? "대체 약품"}
-                  </strong>
-                  <em>
-                    {currency(activeRecord.substituteQuantity ?? 0)}개 차감
-                    {activeRecord.substituteProcessedAt
-                      ? ` · ${activeRecord.substituteProcessedAt}`
-                      : ""}
-                  </em>
-                </div>
+              {!activeRecord ? (
+                <p className="cms-empty">선택된 초과 처방 항목이 없습니다.</p>
               ) : (
-                <div className="cms-shortage-actions">
-                  <button
-                    className={
-                      activeRecord.shortageStatus === "OPEN" ||
-                      !activeRecord.shortageStatus
-                        ? "is-active"
-                        : ""
-                    }
-                    type="button"
-                    onClick={() => onShortageStatus(activeRecord, "OPEN")}
-                  >
-                    주문 필요
-                  </button>
-                  <button
-                    className={
-                      activeRecord.shortageStatus === "ORDERED"
-                        ? "is-active"
-                        : ""
-                    }
-                    type="button"
-                    onClick={() => onShortageStatus(activeRecord, "ORDERED")}
-                  >
-                    주문 완료
-                  </button>
-                  <button
-                    className={
-                      isHoldShortageStatus(activeRecord.shortageStatus)
-                        ? "is-active"
-                        : ""
-                    }
-                    type="button"
-                    onClick={() => onShortageStatus(activeRecord, "HOLD")}
-                  >
-                    보류
-                  </button>
-                  <button
-                    className="is-substitute"
-                    type="button"
-                    onClick={() => openSubstituteModal(activeRecord)}
-                  >
-                    대체 약품 처리
-                  </button>
-                </div>
-              )}
-              <div className="cms-divider" />
-              <div className="cms-prescription-full-paper">
-                <div className="cms-prescription-summary">
-                  <strong>전체 처방 내용</strong>
-                  <span>
-                    {detailLoading
-                      ? "상세 불러오는 중"
-                      : `${activeDetail?.drugCount ?? activeDetail?.drugs.length ?? 1}개 약품`}
-                  </span>
-                </div>
-                <div className="cms-prescription-line-list">
-                  {(activeDetail?.drugs ?? []).map((drug, index) => {
-                    const isTarget = drug.lineNo === activeRecord.lineNo;
-
-                    return (
-                      <div
-                        className={isTarget ? "is-target" : ""}
-                        key={`${drug.lineNo}-${drug.insuranceCode}-${drug.drugName}`}
+                <>
+                  <div className="cms-shortage-detail-head">
+                    {!detailMode && (
+                      <button
+                        className="cms-sheet-close-inline"
+                        type="button"
+                        onClick={onBack}
                       >
-                        <div className="cms-prescription-line-index">
-                          <span>처방 품목</span>
-                          <strong>{String(index + 1).padStart(2, "0")}</strong>
-                        </div>
-                        <div className="cms-prescription-line-main">
-                          <strong>{drug.drugName}</strong>
-                          <span>{drug.insuranceCode || "보험코드 없음"}</span>
-                        </div>
-                        <div className="cms-prescription-line-qty">
-                          <span>수량</span>
-                          <b>{drug.totalQuantity}개</b>
-                        </div>
-                        {isTarget && <em>초과 처방</em>}
-                      </div>
-                    );
-                  })}
-                  {!detailLoading &&
-                    (activeDetail?.drugs.length ?? 0) === 0 && (
-                      <p className="cms-empty">처방전 품목 정보가 없습니다.</p>
+                        닫기
+                      </button>
                     )}
-                </div>
-              </div>
-            </>
-          )}
+                    <span
+                      className={`cms-badge ${shortageStatusBadgeClass(activeRecord.shortageStatus)}`}
+                    >
+                      {shortageStatusText(activeRecord.shortageStatus)}
+                    </span>
+                    <strong>{activeRecord.drugName}</strong>
+                    <em>
+                      {activeRecord.createdAt} · {activeRecord.prescriptionCode}
+                    </em>
+                  </div>
+                  <div className="cms-prescription-paper">
+                    <div className="cms-prescription-paper-head">
+                      <div>
+                        <span>처방전</span>
+                        <strong>{activeRecord.prescriptionCode}</strong>
+                      </div>
+                      <b>{activeRecord.lineNo}번 항목</b>
+                    </div>
+                    <div className="cms-prescription-paper-meta">
+                      <span>
+                        처방일시
+                        <b>
+                          {activeDetail?.capturedAt ?? activeRecord.createdAt}
+                        </b>
+                      </span>
+                      <span>
+                        보험코드
+                        <b>{activeRecord.insuranceCode}</b>
+                      </span>
+                    </div>
+                    <div className="cms-prescription-quantity-strip">
+                      <div>
+                        <span>처방 수량</span>
+                        <strong>{activeRecord.totalQuantity}개</strong>
+                      </div>
+                      <div>
+                        <span>실제 차감</span>
+                        <strong>{activeRecord.deductedQuantity}개</strong>
+                      </div>
+                      <div className="is-shortage">
+                        <span>부족 수량</span>
+                        <strong>{activeRecord.shortageQuantity}개</strong>
+                      </div>
+                      <div>
+                        <span>화면상 재고</span>
+                        <strong>
+                          {activeRecord.displayAfter ??
+                            -activeRecord.shortageQuantity}
+                          개
+                        </strong>
+                      </div>
+                    </div>
+                  </div>
+                  {activeRecord.shortageStatus === "SUBSTITUTED" ? (
+                    <div className="cms-substitute-done-card">
+                      <span>대체 약품 처리 완료</span>
+                      <strong>
+                        {activeRecord.substituteStockName ?? "대체 약품"}
+                      </strong>
+                      <em>
+                        {currency(activeRecord.substituteQuantity ?? 0)}개 차감
+                        {activeRecord.substituteProcessedAt
+                          ? ` · ${activeRecord.substituteProcessedAt}`
+                          : ""}
+                      </em>
+                    </div>
+                  ) : (
+                    <div className="cms-shortage-actions">
+                      <button
+                        className={
+                          activeRecord.shortageStatus === "OPEN" ||
+                          !activeRecord.shortageStatus
+                            ? "is-active"
+                            : ""
+                        }
+                        type="button"
+                        onClick={() => onShortageStatus(activeRecord, "OPEN")}
+                      >
+                        주문 필요
+                      </button>
+                      <button
+                        className={
+                          activeRecord.shortageStatus === "ORDERED"
+                            ? "is-active"
+                            : ""
+                        }
+                        type="button"
+                        onClick={() =>
+                          onShortageStatus(activeRecord, "ORDERED")
+                        }
+                      >
+                        주문 완료
+                      </button>
+                      <button
+                        className={
+                          isHoldShortageStatus(activeRecord.shortageStatus)
+                            ? "is-active"
+                            : ""
+                        }
+                        type="button"
+                        onClick={() => onShortageStatus(activeRecord, "HOLD")}
+                      >
+                        보류
+                      </button>
+                      <button
+                        className="is-substitute"
+                        type="button"
+                        onClick={() => openSubstituteModal(activeRecord)}
+                      >
+                        대체 약품 처리
+                      </button>
+                    </div>
+                  )}
+                  <div className="cms-divider" />
+                  <div className="cms-prescription-full-paper">
+                    <div className="cms-prescription-summary">
+                      <strong>전체 처방 내용</strong>
+                      <span>
+                        {detailLoading
+                          ? "상세 불러오는 중"
+                          : `${activeDetail?.drugCount ?? activeDetail?.drugs.length ?? 1}개 약품`}
+                      </span>
+                    </div>
+                    <div className="cms-prescription-line-list">
+                      {(activeDetail?.drugs ?? []).map((drug, index) => {
+                        const isTarget = drug.lineNo === activeRecord.lineNo;
+
+                        return (
+                          <div
+                            className={isTarget ? "is-target" : ""}
+                            key={`${drug.lineNo}-${drug.insuranceCode}-${drug.drugName}`}
+                          >
+                            <div className="cms-prescription-line-index">
+                              <span>처방 품목</span>
+                              <strong>
+                                {String(index + 1).padStart(2, "0")}
+                              </strong>
+                            </div>
+                            <div className="cms-prescription-line-main">
+                              <strong>{drug.drugName}</strong>
+                              <span>
+                                {drug.insuranceCode || "보험코드 없음"}
+                              </span>
+                            </div>
+                            <div className="cms-prescription-line-qty">
+                              <span>수량</span>
+                              <b>{drug.totalQuantity}개</b>
+                            </div>
+                            {isTarget && <em>초과 처방</em>}
+                          </div>
+                        );
+                      })}
+                      {!detailLoading &&
+                        (activeDetail?.drugs.length ?? 0) === 0 && (
+                          <p className="cms-empty">
+                            처방전 품목 정보가 없습니다.
+                          </p>
+                        )}
+                    </div>
+                  </div>
+                </>
+              )}
             </aside>
           </>
         )}
@@ -12658,8 +12758,8 @@ function CmsInventoryShortagePage({
                     <span>선택한 대체 약품</span>
                     <strong>{selectedSubstituteStock.name}</strong>
                     <em>
-                      {selectedSubstituteStock.insuranceCode || "보험코드 없음"} ·
-                      보유 {currency(selectedSubstituteStock.quantity)}개
+                      {selectedSubstituteStock.insuranceCode || "보험코드 없음"}{" "}
+                      · 보유 {currency(selectedSubstituteStock.quantity)}개
                     </em>
                   </div>
                   <button
@@ -12787,9 +12887,10 @@ function CmsInventoryShortagePage({
                   <b>보유 {currency(stock.quantity)}개</b>
                 </button>
               ))}
-              {substituteStatus !== "loading" && substituteStocks.length === 0 && (
-                <p className="cms-empty">검색 후 대체할 재고를 선택하세요.</p>
-              )}
+              {substituteStatus !== "loading" &&
+                substituteStocks.length === 0 && (
+                  <p className="cms-empty">검색 후 대체할 재고를 선택하세요.</p>
+                )}
             </div>
           </div>
         </CmsModal>
@@ -13163,48 +13264,48 @@ function CmsReturnReviewPage({
               />
             )}
             <aside className="cms-shortage-detail-card">
-          {!activeRecord ? (
-            <p className="cms-empty">선택된 반품 확인 항목이 없습니다.</p>
-          ) : (
-            <>
-              <div className="cms-shortage-detail-head">
-                {!detailMode && (
-                  <button
-                    className="cms-sheet-close-inline"
-                    type="button"
-                    onClick={onBack}
-                  >
-                    닫기
-                  </button>
-                )}
-                <span className="cms-badge missing">
-                  {returnReviewStatusText(activeRecord.status)}
-                </span>
-                <strong>{activeRecord.drugName}</strong>
-                <em>{activeRecord.createdAt}</em>
-              </div>
-              <div className="cms-prescription-paper">
-                <div className="cms-prescription-paper-head">
-                  <div>
-                    <span>스캔 코드</span>
-                    <strong>{activeRecord.pc}</strong>
+              {!activeRecord ? (
+                <p className="cms-empty">선택된 반품 확인 항목이 없습니다.</p>
+              ) : (
+                <>
+                  <div className="cms-shortage-detail-head">
+                    {!detailMode && (
+                      <button
+                        className="cms-sheet-close-inline"
+                        type="button"
+                        onClick={onBack}
+                      >
+                        닫기
+                      </button>
+                    )}
+                    <span className="cms-badge missing">
+                      {returnReviewStatusText(activeRecord.status)}
+                    </span>
+                    <strong>{activeRecord.drugName}</strong>
+                    <em>{activeRecord.createdAt}</em>
                   </div>
-                  <b>{activeRecord.sn || "SN 없음"}</b>
-                </div>
-                <div className="cms-prescription-paper-meta">
-                  <span>
-                    보험코드
-                    <b>{activeRecord.insuranceCode || "없음"}</b>
-                  </span>
-                  <span>
-                    LOT / EXP
-                    <b>
-                      {activeRecord.lot || "LOT 없음"} ·{" "}
-                      {activeRecord.exp || "EXP 없음"}
-                    </b>
-                  </span>
-                </div>
-                {/* <div className="cms-prescription-quantity-strip">
+                  <div className="cms-prescription-paper">
+                    <div className="cms-prescription-paper-head">
+                      <div>
+                        <span>스캔 코드</span>
+                        <strong>{activeRecord.pc}</strong>
+                      </div>
+                      <b>{activeRecord.sn || "SN 없음"}</b>
+                    </div>
+                    <div className="cms-prescription-paper-meta">
+                      <span>
+                        보험코드
+                        <b>{activeRecord.insuranceCode || "없음"}</b>
+                      </span>
+                      <span>
+                        LOT / EXP
+                        <b>
+                          {activeRecord.lot || "LOT 없음"} ·{" "}
+                          {activeRecord.exp || "EXP 없음"}
+                        </b>
+                      </span>
+                    </div>
+                    {/* <div className="cms-prescription-quantity-strip">
                   <div>
                     <span>앱 판단</span>
                     <strong>
@@ -13226,151 +13327,160 @@ function CmsReturnReviewPage({
                     </strong>
                   </div>
                 </div> */}
-              </div>
+                  </div>
 
-              {expectedWholesalers.length > 0 && (
-                <div className="cms-prescription-full-paper cms-expected-wholesalers">
-                  <div className="cms-prescription-summary">
-                    <strong>예상 도매처</strong>
-                    <span>{expectedWholesalers.length}곳</span>
-                  </div>
-                  <div className="cms-wholesaler-card-strip">
-                    {expectedWholesalers.map((wholesaler) => (
-                      <span className="cms-wholesaler-card" key={wholesaler}>
-                        {wholesaler}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {activeRecord.status === "RESOLVED" ? (
-                <div className="cms-prescription-paper">
-                  <div className="cms-prescription-paper-head">
-                    <div>
-                      <span>처리 재고</span>
-                      <strong>{activeRecord.stockName ?? "-"}</strong>
-                    </div>
-                    <b>{activeRecord.returnQuantity}개 반품</b>
-                  </div>
-                  <div className="cms-prescription-paper-meta">
-                    <span>
-                      처리 전<b>{activeRecord.stockBefore ?? 0}개</b>
-                    </span>
-                    <span>
-                      처리 후<b>{activeRecord.stockAfter ?? 0}개</b>
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className="cms-detail-section">
-                    <strong>재고 감소 처리</strong>
-                    <div className="cms-stock-candidate-picker cms-return-stock-picker">
-                      <div className="cms-candidate-hint">
-                        <strong>추천 재고</strong>
-                        <span>보험코드와 약품명 기준으로 먼저 좁혔습니다.</span>
+                  {expectedWholesalers.length > 0 && (
+                    <div className="cms-prescription-full-paper cms-expected-wholesalers">
+                      <div className="cms-prescription-summary">
+                        <strong>예상 도매처</strong>
+                        <span>{expectedWholesalers.length}곳</span>
                       </div>
-                      <div className="cms-stock-candidate-list">
-                        {recommendedStocks.map((stock) => {
-                          const exactCode =
-                            Boolean(activeRecord.insuranceCode) &&
-                            stock.insuranceCode === activeRecord.insuranceCode;
-                          return (
-                            <button
-                              className={`cms-stock-candidate ${
-                                resolveStockId === stock.id ? "is-selected" : ""
-                              }`}
-                              key={stock.id}
-                              type="button"
-                              onClick={() => {
-                                selectReturnStock(stock);
-                              }}
-                            >
-                              <span>
-                                {exactCode ? "보험코드 일치" : "이름 후보"}
-                              </span>
-                              <strong>{stock.name}</strong>
-                              <em>{stock.insuranceCode}</em>
-                              <b>{stock.quantity}개</b>
-                            </button>
-                          );
-                        })}
-                        {recommendedStocks.length === 0 && (
-                          <p className="cms-empty">추천 재고가 없습니다.</p>
-                        )}
-                        <button
-                          className="cms-stock-candidate is-other"
-                          type="button"
-                          onClick={openOtherStockSearch}
-                        >
-                          <span>그 외</span>
-                          <strong>다른 재고에서 찾기</strong>
-                          <em>약품명 또는 보험코드로 검색</em>
-                          <b>검색</b>
-                        </button>
-                      </div>
-
-                      {selectedStock && (
-                        <div className="cms-candidate-hint">
-                          <strong>선택 재고</strong>
-                          <span>
-                            {selectedStock.name} · {selectedStock.quantity}개
+                      <div className="cms-wholesaler-card-strip">
+                        {expectedWholesalers.map((wholesaler) => (
+                          <span
+                            className="cms-wholesaler-card"
+                            key={wholesaler}
+                          >
+                            {wholesaler}
                           </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {activeRecord.status === "RESOLVED" ? (
+                    <div className="cms-prescription-paper">
+                      <div className="cms-prescription-paper-head">
+                        <div>
+                          <span>처리 재고</span>
+                          <strong>{activeRecord.stockName ?? "-"}</strong>
                         </div>
-                      )}
+                        <b>{activeRecord.returnQuantity}개 반품</b>
+                      </div>
+                      <div className="cms-prescription-paper-meta">
+                        <span>
+                          처리 전<b>{activeRecord.stockBefore ?? 0}개</b>
+                        </span>
+                        <span>
+                          처리 후<b>{activeRecord.stockAfter ?? 0}개</b>
+                        </span>
+                      </div>
                     </div>
-                    <label className="cms-field">
-                      <span>반품 수량</span>
-                      <input
-                        min={1}
-                        max={Math.max(1, maxQuantity)}
-                        type="number"
-                        value={resolveQuantity}
-                        onChange={(event) =>
-                          setResolveQuantity(
-                            Math.max(
-                              1,
-                              Math.min(
-                                Math.max(1, maxQuantity),
-                                Number(event.target.value) || 1,
-                              ),
-                            ),
-                          )
-                        }
-                      />
-                    </label>
-                  </div>
-                  <div className="cms-return-action-panel">
-                    <div className="cms-return-status-note">
-                      <span>현재 상태</span>
-                      <strong>
-                        {returnReviewStatusText(activeRecord.status)}
-                      </strong>
-                    </div>
-                    <div className="cms-return-action-buttons">
-                      <button
-                        className="cms-return-action-button is-hold"
-                        disabled={!canHold}
-                        type="button"
-                        onClick={() => setConfirmAction("HOLD")}
-                      >
-                        보류 처리
-                      </button>
-                      <button
-                        className="cms-return-action-button is-primary"
-                        disabled={!canResolve}
-                        type="button"
-                        onClick={() => setConfirmAction("RESOLVE")}
-                      >
-                        선택 재고 감소 처리
-                      </button>
-                    </div>
-                  </div>
+                  ) : (
+                    <>
+                      <div className="cms-detail-section">
+                        <strong>재고 감소 처리</strong>
+                        <div className="cms-stock-candidate-picker cms-return-stock-picker">
+                          <div className="cms-candidate-hint">
+                            <strong>추천 재고</strong>
+                            <span>
+                              보험코드와 약품명 기준으로 먼저 좁혔습니다.
+                            </span>
+                          </div>
+                          <div className="cms-stock-candidate-list">
+                            {recommendedStocks.map((stock) => {
+                              const exactCode =
+                                Boolean(activeRecord.insuranceCode) &&
+                                stock.insuranceCode ===
+                                  activeRecord.insuranceCode;
+                              return (
+                                <button
+                                  className={`cms-stock-candidate ${
+                                    resolveStockId === stock.id
+                                      ? "is-selected"
+                                      : ""
+                                  }`}
+                                  key={stock.id}
+                                  type="button"
+                                  onClick={() => {
+                                    selectReturnStock(stock);
+                                  }}
+                                >
+                                  <span>
+                                    {exactCode ? "보험코드 일치" : "이름 후보"}
+                                  </span>
+                                  <strong>{stock.name}</strong>
+                                  <em>{stock.insuranceCode}</em>
+                                  <b>{stock.quantity}개</b>
+                                </button>
+                              );
+                            })}
+                            {recommendedStocks.length === 0 && (
+                              <p className="cms-empty">추천 재고가 없습니다.</p>
+                            )}
+                            <button
+                              className="cms-stock-candidate is-other"
+                              type="button"
+                              onClick={openOtherStockSearch}
+                            >
+                              <span>그 외</span>
+                              <strong>다른 재고에서 찾기</strong>
+                              <em>약품명 또는 보험코드로 검색</em>
+                              <b>검색</b>
+                            </button>
+                          </div>
+
+                          {selectedStock && (
+                            <div className="cms-candidate-hint">
+                              <strong>선택 재고</strong>
+                              <span>
+                                {selectedStock.name} · {selectedStock.quantity}
+                                개
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                        <label className="cms-field">
+                          <span>반품 수량</span>
+                          <input
+                            min={1}
+                            max={Math.max(1, maxQuantity)}
+                            type="number"
+                            value={resolveQuantity}
+                            onChange={(event) =>
+                              setResolveQuantity(
+                                Math.max(
+                                  1,
+                                  Math.min(
+                                    Math.max(1, maxQuantity),
+                                    Number(event.target.value) || 1,
+                                  ),
+                                ),
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                      <div className="cms-return-action-panel">
+                        <div className="cms-return-status-note">
+                          <span>현재 상태</span>
+                          <strong>
+                            {returnReviewStatusText(activeRecord.status)}
+                          </strong>
+                        </div>
+                        <div className="cms-return-action-buttons">
+                          <button
+                            className="cms-return-action-button is-hold"
+                            disabled={!canHold}
+                            type="button"
+                            onClick={() => setConfirmAction("HOLD")}
+                          >
+                            보류 처리
+                          </button>
+                          <button
+                            className="cms-return-action-button is-primary"
+                            disabled={!canResolve}
+                            type="button"
+                            onClick={() => setConfirmAction("RESOLVE")}
+                          >
+                            선택 재고 감소 처리
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
                 </>
               )}
-            </>
-          )}
             </aside>
           </>
         )}
@@ -14024,7 +14134,7 @@ function CmsPrescriptionPage({
         ? virtualDrugNameNeedsReview
           ? "is-warning"
           : "is-virtual"
-      : "is-warning";
+        : "is-warning";
 
   function sortByHeader(nextKey: CmsPrescriptionSortKey) {
     onSortDirection(
@@ -14114,9 +14224,9 @@ function CmsPrescriptionPage({
         <button className="cms-primary cms-toolbar-action" type="submit">
           적용
         </button>
-        <span className={`cms-list-search-state is-${searchStatus}`}>
+        {/* <span className={`cms-list-search-state is-${searchStatus}`}>
           {prescriptionSearchStateText(searchStatus)}
-        </span>
+        </span> */}
       </form>
 
       <div className="cms-table-card prescription-table-card">
@@ -15128,7 +15238,9 @@ function CmsDateRangeInline({
     setDraftEndDate(range.endDate);
     onStartDate(range.startDate);
     onEndDate(range.endDate);
-    setVisibleMonth(startOfCalendarMonth(parseDateInputValue(range.startDate)!));
+    setVisibleMonth(
+      startOfCalendarMonth(parseDateInputValue(range.startDate)!),
+    );
     setSelectingEnd(false);
     setOpen(false);
   }

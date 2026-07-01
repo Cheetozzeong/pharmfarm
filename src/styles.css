@@ -4377,7 +4377,7 @@ body:has(.cms-shell) {
   border-radius: 12px;
   background: #fff;
   padding: 8px;
-  margin-bottom: 12px;
+  /* margin-bottom: 12px; */
   overflow: visible;
 }
 
