@@ -2355,7 +2355,7 @@ function deductionStatusText(status: CmsDeductionStatus) {
     case "RESOLVED":
       return "처리 완료";
     case "PENDING":
-      return "대기";
+      return "차감 전";
     default:
       return "실패";
   }
@@ -2512,6 +2512,14 @@ function recentWeekDateRange() {
   return {
     endDate: dateInputValue(end),
     startDate: dateInputValue(start),
+  };
+}
+
+function todayDateRange() {
+  const today = dateInputValue(new Date());
+  return {
+    endDate: today,
+    startDate: today,
   };
 }
 
@@ -7854,13 +7862,13 @@ function CmsApp({
   >([]);
   const [returnReviews, setReturnReviews] = useState<CmsReturnReview[]>([]);
   const [deductionFilter, setDeductionFilter] =
-    useState<CmsDeductionFilter>("FAILED");
+    useState<CmsDeductionFilter>("ALL");
   const [prescriptionQuery, setPrescriptionQuery] = useState("");
   const [prescriptionStartDate, setPrescriptionStartDate] = useState(
-    () => recentWeekDateRange().startDate,
+    () => todayDateRange().startDate,
   );
   const [prescriptionEndDate, setPrescriptionEndDate] = useState(
-    () => recentWeekDateRange().endDate,
+    () => todayDateRange().endDate,
   );
   const [prescriptionSortKey, setPrescriptionSortKey] =
     useState<CmsPrescriptionSortKey>("createdAt");
@@ -7941,7 +7949,9 @@ function CmsApp({
         ? prescriptionRecords
         : deductionFilter === "SHORTAGE_ITEMS"
           ? prescriptionRecords.filter((record) => record.shortageQuantity > 0)
-          : prescriptionRecords.filter((record) => record.status === deductionFilter);
+          : prescriptionRecords.filter(
+              (record) => record.status === deductionFilter,
+            );
     return sortCmsPrescriptionRecords(
       filtered,
       prescriptionSortKey,
@@ -7953,10 +7963,9 @@ function CmsApp({
     prescriptionSortDirection,
     prescriptionSortKey,
   ]);
-  const selectedPrescription =
-    filteredPrescriptionRecords.find(
-      (record) => record.id === selectedPrescriptionId,
-    ) ?? filteredPrescriptionRecords[0];
+  const selectedPrescription = filteredPrescriptionRecords.find(
+    (record) => record.id === selectedPrescriptionId,
+  );
   const shortageRecords = useMemo(
     () =>
       sortCmsDeductionRecords(
@@ -8024,11 +8033,12 @@ function CmsApp({
       return;
     }
     if (
+      selectedPrescriptionId &&
       !filteredPrescriptionRecords.some(
         (record) => record.id === selectedPrescriptionId,
       )
     ) {
-      setSelectedPrescriptionId(filteredPrescriptionRecords[0].id);
+      setSelectedPrescriptionId("");
     }
   }, [filteredPrescriptionRecords, selectedPrescriptionId]);
 
@@ -9528,17 +9538,7 @@ function CmsApp({
               onEndDate={setPrescriptionEndDate}
               onFilter={(nextFilter) => {
                 setDeductionFilter(nextFilter);
-                const nextRecord =
-                  nextFilter === "ALL"
-                    ? prescriptionRecords[0]
-                    : nextFilter === "SHORTAGE_ITEMS"
-                      ? prescriptionRecords.find(
-                          (record) => record.shortageQuantity > 0,
-                        )
-                      : prescriptionRecords.find(
-                          (record) => record.status === nextFilter,
-                        );
-                setSelectedPrescriptionId(nextRecord?.id ?? "");
+                setSelectedPrescriptionId("");
               }}
               onQuery={setPrescriptionQuery}
               onSelectPrescription={setSelectedPrescriptionId}
@@ -9982,6 +9982,51 @@ function cmsPrescriptionLineResultClass(drug: CmsPrescriptionDrugLine) {
   }
   if (drug.deductionStatus === "RESOLVED") return "is-target";
   return "";
+}
+
+function cmsPrescriptionLineRowClassName(
+  drug: CmsPrescriptionDrugLine,
+  extraClasses: string[] = [],
+) {
+  const substitutionRole = drug.substitutionRole ?? "NONE";
+  return [
+    ...extraClasses,
+    hasCmsPrescriptionSubstitution(substitutionRole) ? "has-substitution" : "",
+    substitutionRole === "ORIGINAL" ? "is-substitution-original" : "",
+    substitutionRole === "SUBSTITUTE" ? "is-substitution-replacement" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+}
+
+function CmsPrescriptionLineQuantity({
+  drug,
+  label = "처방 / 차감",
+}: {
+  drug: CmsPrescriptionDrugLine;
+  label?: string;
+}) {
+  const isSubstitutionOriginal = drug.substitutionRole === "ORIGINAL";
+  return (
+    <div className="cms-prescription-line-qty">
+      <span>{label}</span>
+      {isSubstitutionOriginal ? (
+        <b className="is-substitution-original-qty">
+          <span className="cms-line-struck">
+            {currency(drug.totalQuantity)}개
+          </span>
+          <span className="cms-effective-qty">0개</span>
+        </b>
+      ) : (
+        <b>
+          {currency(drug.totalQuantity)} / {currency(drug.deductedQuantity)}개
+        </b>
+      )}
+      {drug.shortageQuantity > 0 && (
+        <em>부족 {currency(drug.shortageQuantity)}개</em>
+      )}
+    </div>
+  );
 }
 
 function normalizeOptionalShortageStatus(raw: unknown) {
@@ -13398,12 +13443,9 @@ function CmsInventoryShortagePage({
 
                         return (
                           <div
-                            className={[
+                            className={cmsPrescriptionLineRowClassName(drug, [
                               isTarget ? "is-target" : "",
-                              hasSubstitution ? "has-substitution" : "",
-                            ]
-                              .filter(Boolean)
-                              .join(" ")}
+                            ])}
                             key={`${drug.lineNo}-${drug.insuranceCode}-${drug.drugName}`}
                           >
                             <div className="cms-prescription-line-index">
@@ -13418,13 +13460,11 @@ function CmsInventoryShortagePage({
                                 {drug.insuranceCode || "보험코드 없음"}
                               </span>
                             </div>
-                            <div className="cms-prescription-line-qty">
-                              <span>수량</span>
-                              <b>{drug.totalQuantity}개</b>
-                            </div>
+                            <CmsPrescriptionLineQuantity drug={drug} />
                             {(hasSubstitution ||
                               isTarget ||
-                              drug.deductionStatus) && (
+                              drug.deductionStatus ||
+                              drug.shortageQuantity > 0) && (
                               <div className="cms-prescription-line-tags">
                                 {hasSubstitution && (
                                   <span
@@ -13433,11 +13473,6 @@ function CmsInventoryShortagePage({
                                     {cmsPrescriptionSubstitutionLabel(
                                       substitutionRole,
                                     )}
-                                  </span>
-                                )}
-                                {isTarget && (
-                                  <span className="cms-prescription-line-tag is-target">
-                                    초과 처방
                                   </span>
                                 )}
                                 <span
@@ -14580,7 +14615,7 @@ function CmsPrescriptionSummaryPage({
     selectedPrescription &&
     visibleRecords.some((record) => record.id === selectedPrescription.id)
       ? selectedPrescription
-      : visibleRecords[0];
+      : undefined;
   const deductedCount = prescriptions.filter(
     (record) => record.status === "DEDUCTED",
   ).length;
@@ -14656,267 +14691,244 @@ function CmsPrescriptionSummaryPage({
         <button className="cms-primary cms-toolbar-action" type="submit">
           적용
         </button>
-        <span className={`cms-list-search-state is-${searchStatus}`}>
-          {prescriptionSearchStateText(searchStatus)}
-        </span>
       </form>
 
-      <div className="cms-prescription-overview-layout">
-        <div className="cms-table-card prescription-table-card">
-          <div className="cms-toolbar">
-            <div className="cms-pills prescription-filters">
-              {filterItems.map(([value, label, count]) => (
-                <button
-                  className={filter === value ? "is-active" : ""}
-                  key={value}
-                  type="button"
-                  onClick={() => onFilter(value)}
-                >
-                  {label}
-                  <b>{count}</b>
-                </button>
-              ))}
-            </div>
+      <div className="cms-table-card prescription-table-card">
+        <div className="cms-toolbar">
+          <div className="cms-pills prescription-filters">
+            {filterItems.map(([value, label, count]) => (
+              <button
+                className={filter === value ? "is-active" : ""}
+                key={value}
+                type="button"
+                onClick={() => onFilter(value)}
+              >
+                {label}
+                <b>{count}</b>
+              </button>
+            ))}
           </div>
-          <div className="cms-table-scroll">
-            <div className="cms-prescription-summary-table">
-              <div className="cms-prescription-summary-row cms-th">
-                <CmsSortHeader
-                  active={sortKey === "createdAt"}
-                  direction={sortDirection}
-                  label="처방전"
-                  title={prescriptionSortAriaLabel(
-                    "처방전",
-                    "createdAt",
-                    sortKey,
-                    sortDirection,
-                  )}
-                  onClick={() => sortByHeader("createdAt")}
-                />
-                <CmsSortHeader
-                  active={sortKey === "drugName"}
-                  direction={sortDirection}
-                  label="대표 약품"
-                  title={prescriptionSortAriaLabel(
-                    "대표 약품",
-                    "drugName",
-                    sortKey,
-                    sortDirection,
-                  )}
-                  onClick={() => sortByHeader("drugName")}
-                />
-                <CmsSortHeader
-                  active={sortKey === "quantity"}
-                  direction={sortDirection}
-                  label="수량"
-                  title={prescriptionSortAriaLabel(
-                    "수량",
-                    "quantity",
-                    sortKey,
-                    sortDirection,
-                  )}
-                  onClick={() => sortByHeader("quantity")}
-                />
-                <CmsSortHeader
-                  active={sortKey === "shortage"}
-                  direction={sortDirection}
-                  label="부족"
-                  title={prescriptionSortAriaLabel(
-                    "부족",
-                    "shortage",
-                    sortKey,
-                    sortDirection,
-                  )}
-                  onClick={() => sortByHeader("shortage")}
-                />
-                <CmsSortHeader
-                  active={sortKey === "status"}
-                  direction={sortDirection}
-                  label="상태"
-                  title={prescriptionSortAriaLabel(
-                    "상태",
-                    "status",
-                    sortKey,
-                    sortDirection,
-                  )}
-                  onClick={() => sortByHeader("status")}
-                />
-              </div>
-              {pagination.items.map((record) => (
-                <button
-                  className={`cms-prescription-summary-row ${
-                    activePrescription?.id === record.id ? "is-selected" : ""
-                  }`}
-                  key={record.id}
-                  type="button"
-                  onClick={() => onSelectPrescription(record.id)}
-                >
-                  <span>
-                    {record.prescriptionCode}
-                    <em>{record.capturedAt}</em>
-                  </span>
-                  <strong>
-                    {record.primaryDrugName}
-                    <em>
-                      {record.drugCount}개 품목
-                      {record.substitutionReplacementCount > 0
-                        ? ` · 대체 ${record.substitutionReplacementCount}건`
-                        : ""}
-                    </em>
-                  </strong>
-                  <b>
-                    {currency(record.deductedQuantity)}/
-                    {currency(record.totalQuantity)}개
-                  </b>
-                  <b
-                    className={
-                      record.shortageQuantity > 0 ? "is-shortage" : ""
-                    }
-                  >
-                    {currency(record.shortageQuantity)}개
-                  </b>
-                  <span
-                    className={`cms-badge ${deductionStatusClass(record.status)}`}
-                  >
-                    {deductionStatusText(record.status)}
-                  </span>
-                </button>
-              ))}
-              {visibleRecords.length === 0 && (
-                <p className="cms-empty table-empty">
-                  표시할 처방전이 없습니다.
-                </p>
-              )}
-            </div>
-          </div>
-          <CmsPagination {...pagination} />
         </div>
-
-        <aside className="cms-prescription-overview-detail">
-          {!activePrescription ? (
-            <p className="cms-empty">선택된 처방전이 없습니다.</p>
-          ) : (
-            <>
-              <div className="cms-prescription-paper">
-                <div className="cms-prescription-paper-head">
-                  <div>
-                    <span>처방전</span>
-                    <strong>{activePrescription.prescriptionCode}</strong>
-                  </div>
-                  <b>{deductionStatusText(activePrescription.status)}</b>
-                </div>
-                <div className="cms-prescription-paper-meta">
-                  <span>
-                    처방일시<b>{activePrescription.capturedAt}</b>
-                  </span>
-                  <span>
-                    품목<b>{activePrescription.drugCount}개</b>
-                  </span>
-                </div>
-                <div className="cms-prescription-quantity-strip">
-                  <div>
-                    <span>차감 대상</span>
-                    <strong>
-                      {currency(activePrescription.totalQuantity)}개
-                    </strong>
-                  </div>
-                  <div>
-                    <span>실제 차감</span>
-                    <strong>
-                      {currency(activePrescription.deductedQuantity)}개
-                    </strong>
-                  </div>
-                  <div
-                    className={
-                      activePrescription.shortageQuantity > 0
-                        ? "is-shortage"
-                        : ""
-                    }
-                  >
-                    <span>부족 수량</span>
-                    <strong>
-                      {currency(activePrescription.shortageQuantity)}개
-                    </strong>
-                  </div>
-                  <div>
-                    <span>대체 처방</span>
-                    <strong>
-                      {activePrescription.substitutionReplacementCount}건
-                    </strong>
-                  </div>
-                </div>
-              </div>
-
-              <div className="cms-prescription-full-paper">
-                <div className="cms-prescription-summary">
-                  <strong>처방 상세 row</strong>
-                  <span>{activePrescription.drugs.length}개 품목</span>
-                </div>
-                <div className="cms-prescription-line-list">
-                  {activePrescription.drugs.map((drug, index) => {
-                    const substitutionRole = drug.substitutionRole ?? "NONE";
-                    const hasSubstitution =
-                      hasCmsPrescriptionSubstitution(substitutionRole);
-                    const resultLabel = cmsPrescriptionLineResultLabel(drug);
-
-                    return (
-                      <div
-                        className={[
-                          hasSubstitution ? "has-substitution" : "",
-                          drug.shortageQuantity > 0 ? "is-target" : "",
-                        ]
-                          .filter(Boolean)
-                          .join(" ")}
-                        key={`${drug.lineNo}-${drug.insuranceCode}-${drug.drugName}`}
-                      >
-                        <div className="cms-prescription-line-index">
-                          <span>처방 품목</span>
-                          <strong>{String(index + 1).padStart(2, "0")}</strong>
-                        </div>
-                        <div className="cms-prescription-line-main">
-                          <strong>{drug.drugName}</strong>
-                          <span>{drug.insuranceCode || "보험코드 없음"}</span>
-                        </div>
-                        <div className="cms-prescription-line-qty">
-                          <span>처방 / 차감</span>
-                          <b>
-                            {currency(drug.totalQuantity)} /{" "}
-                            {currency(drug.deductedQuantity)}개
-                          </b>
-                          {drug.shortageQuantity > 0 && (
-                            <em>부족 {currency(drug.shortageQuantity)}개</em>
-                          )}
-                        </div>
-                        <div className="cms-prescription-line-tags">
-                          {hasSubstitution && (
-                            <span
-                              className={`cms-prescription-line-tag ${cmsPrescriptionSubstitutionClass(substitutionRole)}`}
-                            >
-                              {cmsPrescriptionSubstitutionLabel(
-                                substitutionRole,
-                              )}
-                            </span>
-                          )}
-                          <span
-                            className={`cms-prescription-line-tag ${cmsPrescriptionLineResultClass(drug)}`}
-                          >
-                            {resultLabel}
-                          </span>
-                          {drug.stockName && (
-                            <span className="cms-prescription-line-tag is-target">
-                              {drug.stockName}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
-            </>
-          )}
-        </aside>
+        <div className="cms-table-scroll">
+          <div className="cms-prescription-summary-table">
+            <div className="cms-prescription-summary-row cms-th">
+              <CmsSortHeader
+                active={sortKey === "drugName"}
+                direction={sortDirection}
+                label="대표 약품"
+                title={prescriptionSortAriaLabel(
+                  "대표 약품",
+                  "drugName",
+                  sortKey,
+                  sortDirection,
+                )}
+                onClick={() => sortByHeader("drugName")}
+              />
+              <CmsSortHeader
+                active={sortKey === "createdAt"}
+                direction={sortDirection}
+                label="처방일시"
+                title={prescriptionSortAriaLabel(
+                  "처방일시",
+                  "createdAt",
+                  sortKey,
+                  sortDirection,
+                )}
+                onClick={() => sortByHeader("createdAt")}
+              />
+              <span>품목</span>
+              <CmsSortHeader
+                active={sortKey === "quantity"}
+                direction={sortDirection}
+                label="차감"
+                title={prescriptionSortAriaLabel(
+                  "차감",
+                  "quantity",
+                  sortKey,
+                  sortDirection,
+                )}
+                onClick={() => sortByHeader("quantity")}
+              />
+              <CmsSortHeader
+                active={sortKey === "shortage"}
+                direction={sortDirection}
+                label="부족"
+                title={prescriptionSortAriaLabel(
+                  "부족",
+                  "shortage",
+                  sortKey,
+                  sortDirection,
+                )}
+                onClick={() => sortByHeader("shortage")}
+              />
+              <CmsSortHeader
+                active={sortKey === "status"}
+                direction={sortDirection}
+                label="상태"
+                title={prescriptionSortAriaLabel(
+                  "상태",
+                  "status",
+                  sortKey,
+                  sortDirection,
+                )}
+                onClick={() => sortByHeader("status")}
+              />
+            </div>
+            {pagination.items.map((record) => (
+              <button
+                className={`cms-prescription-summary-row ${
+                  activePrescription?.id === record.id ? "is-selected" : ""
+                }`}
+                key={record.id}
+                type="button"
+                onClick={() => onSelectPrescription(record.id)}
+              >
+                <strong>
+                  {record.primaryDrugName}
+                  <em>{record.prescriptionCode}</em>
+                </strong>
+                <span>
+                  {record.capturedAt}
+                  <em>{record.source || "처방 데이터"}</em>
+                </span>
+                <span>
+                  {record.drugCount}개 품목
+                  <em>
+                    {record.substitutionReplacementCount > 0
+                      ? `대체 ${record.substitutionReplacementCount}건`
+                      : "대체 없음"}
+                  </em>
+                </span>
+                <b>
+                  {currency(record.deductedQuantity)}/
+                  {currency(record.totalQuantity)}개
+                </b>
+                <b className={record.shortageQuantity > 0 ? "is-shortage" : ""}>
+                  {currency(record.shortageQuantity)}개
+                </b>
+                <span
+                  className={`cms-badge ${deductionStatusClass(record.status)}`}
+                >
+                  {deductionStatusText(record.status)}
+                </span>
+              </button>
+            ))}
+            {visibleRecords.length === 0 && (
+              <p className="cms-empty table-empty">표시할 처방전이 없습니다.</p>
+            )}
+          </div>
+        </div>
+        <CmsPagination {...pagination} />
       </div>
+
+      {activePrescription && (
+        <CmsSheet
+          title={activePrescription.primaryDrugName}
+          subtitle={`${activePrescription.capturedAt} · ${activePrescription.prescriptionCode}`}
+          onClose={() => onSelectPrescription("")}
+        >
+          <div className="cms-sheet-body cms-prescription-detail-sheet-body">
+            <div className="cms-prescription-paper">
+              <div className="cms-prescription-paper-head">
+                <div>
+                  <span>대표 약품</span>
+                  <strong>{activePrescription.primaryDrugName}</strong>
+                </div>
+                <b>{deductionStatusText(activePrescription.status)}</b>
+              </div>
+              <div className="cms-prescription-paper-meta">
+                <span>
+                  처방일시<b>{activePrescription.capturedAt}</b>
+                </span>
+                <span>
+                  품목<b>{activePrescription.drugCount}개</b>
+                </span>
+                <span>
+                  처방전<b>{activePrescription.prescriptionCode}</b>
+                </span>
+              </div>
+              <div className="cms-prescription-quantity-strip">
+                <div>
+                  <span>차감 대상</span>
+                  <strong>
+                    {currency(activePrescription.totalQuantity)}개
+                  </strong>
+                </div>
+                <div>
+                  <span>실제 차감</span>
+                  <strong>
+                    {currency(activePrescription.deductedQuantity)}개
+                  </strong>
+                </div>
+                <div
+                  className={
+                    activePrescription.shortageQuantity > 0 ? "is-shortage" : ""
+                  }
+                >
+                  <span>부족 수량</span>
+                  <strong>
+                    {currency(activePrescription.shortageQuantity)}개
+                  </strong>
+                </div>
+                <div>
+                  <span>대체 처방</span>
+                  <strong>
+                    {activePrescription.substitutionReplacementCount}건
+                  </strong>
+                </div>
+              </div>
+            </div>
+
+            <div className="cms-prescription-full-paper">
+              <div className="cms-prescription-summary">
+                <strong>처방 상세 row</strong>
+                <span>{activePrescription.drugs.length}개 품목</span>
+              </div>
+              <div className="cms-prescription-line-list">
+                {activePrescription.drugs.map((drug, index) => {
+                  const substitutionRole = drug.substitutionRole ?? "NONE";
+                  const hasSubstitution =
+                    hasCmsPrescriptionSubstitution(substitutionRole);
+                  const resultLabel = cmsPrescriptionLineResultLabel(drug);
+
+                  return (
+                    <div
+                      className={cmsPrescriptionLineRowClassName(drug, [
+                        drug.shortageQuantity > 0 ? "is-target" : "",
+                      ])}
+                      key={`${drug.lineNo}-${drug.insuranceCode}-${drug.drugName}`}
+                    >
+                      <div className="cms-prescription-line-index">
+                        <span>처방 품목</span>
+                        <strong>{String(index + 1).padStart(2, "0")}</strong>
+                      </div>
+                      <div className="cms-prescription-line-main">
+                        <strong>{drug.drugName}</strong>
+                        <span>{drug.insuranceCode || "보험코드 없음"}</span>
+                      </div>
+                      <CmsPrescriptionLineQuantity drug={drug} />
+                      <div className="cms-prescription-line-tags">
+                        {hasSubstitution && (
+                          <span
+                            className={`cms-prescription-line-tag ${cmsPrescriptionSubstitutionClass(substitutionRole)}`}
+                          >
+                            {cmsPrescriptionSubstitutionLabel(substitutionRole)}
+                          </span>
+                        )}
+                        <span
+                          className={`cms-prescription-line-tag ${cmsPrescriptionLineResultClass(drug)}`}
+                        >
+                          {resultLabel}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </CmsSheet>
+      )}
     </section>
   );
 }

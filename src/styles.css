@@ -5400,8 +5400,18 @@ body:has(.cms-shell) {
 }
 
 .prescription-table-card {
-  align-self: start;
   width: 100%;
+}
+
+.cms-prescription-page .prescription-table-card {
+  flex: 1 1 0;
+  align-self: stretch;
+  min-height: 0;
+}
+
+.cms-prescription-page .prescription-table-card .cms-table-scroll {
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 .cms-deduction-table {
@@ -6501,7 +6511,7 @@ body:has(.cms-shell) {
 
 .cms-prescription-paper-meta {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -6628,7 +6638,7 @@ body:has(.cms-shell) {
 
 .cms-prescription-line-list > div {
   display: grid;
-  grid-template-columns: 72px minmax(0, 1fr) 62px auto;
+  grid-template-columns: 72px minmax(0, 1fr) 96px auto;
   align-items: center;
   gap: 12px;
   min-width: 0;
@@ -6643,6 +6653,12 @@ body:has(.cms-shell) {
 .cms-prescription-line-list > div.is-target {
   background:
     linear-gradient(90deg, rgba(202, 57, 42, 0.08), rgba(202, 57, 42, 0)), #fff;
+}
+
+.cms-prescription-line-list > div.is-substitution-original {
+  background:
+    linear-gradient(90deg, rgba(71, 85, 105, 0.08), rgba(71, 85, 105, 0)),
+    #fff;
 }
 
 .cms-prescription-line-index {
@@ -6683,6 +6699,7 @@ body:has(.cms-shell) {
 }
 
 .cms-prescription-line-main strong {
+  position: relative;
   display: block;
   overflow: hidden;
   color: var(--ink);
@@ -6690,6 +6707,29 @@ body:has(.cms-shell) {
   font-weight: 950;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cms-prescription-line-list
+  > div.is-substitution-original
+  .cms-prescription-line-main
+  strong {
+  color: #7b8794;
+}
+
+.cms-prescription-line-list
+  > div.is-substitution-original
+  .cms-prescription-line-main
+  strong::after,
+.cms-line-struck::after {
+  position: absolute;
+  right: 0;
+  left: 0;
+  top: 50%;
+  height: 2px;
+  border-radius: 999px;
+  background: currentColor;
+  content: "";
+  transform: translateY(-50%);
 }
 
 .cms-prescription-line-main span {
@@ -6707,6 +6747,22 @@ body:has(.cms-shell) {
   font-size: 13px;
   font-weight: 950;
   text-align: right;
+}
+
+.cms-prescription-line-qty b.is-substitution-original-qty {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 7px;
+}
+
+.cms-line-struck {
+  position: relative;
+  color: #7b8794;
+}
+
+.cms-effective-qty {
+  color: var(--ink);
 }
 
 .cms-prescription-line-qty em {
@@ -6754,22 +6810,15 @@ body:has(.cms-shell) {
   color: var(--red);
 }
 
-.cms-prescription-overview-layout {
-  display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(360px, 0.85fr);
-  gap: 14px;
-  align-items: start;
-}
-
 .cms-prescription-summary-table {
-  min-width: 900px;
+  min-width: 980px;
 }
 
 .cms-prescription-summary-row {
   display: grid;
   width: 100%;
   min-height: 62px;
-  grid-template-columns: 156px minmax(240px, 1fr) 112px 82px 96px;
+  grid-template-columns: minmax(260px, 1.25fr) 156px 118px 112px 82px 96px;
   align-items: center;
   gap: 14px;
   border-bottom: 1px solid #f4f5f6;
@@ -6835,13 +6884,14 @@ body:has(.cms-shell) {
   white-space: nowrap;
 }
 
-.cms-prescription-overview-detail {
+.cms-prescription-page .cms-sheet {
+  width: min(760px, calc(100vw - 32px));
+}
+
+.cms-prescription-detail-sheet-body {
   display: grid;
+  align-content: start;
   gap: 14px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: #fff;
-  padding: 16px;
 }
 
 .cms-stock-candidate-picker {
