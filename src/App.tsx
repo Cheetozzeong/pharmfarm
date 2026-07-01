@@ -2515,6 +2515,91 @@ function recentWeekDateRange() {
   };
 }
 
+function dateRangeFromDates(start: Date, end: Date) {
+  return {
+    endDate: dateInputValue(end),
+    startDate: dateInputValue(start),
+  };
+}
+
+function startOfDateWeek(date: Date) {
+  return addCalendarDays(date, -date.getDay());
+}
+
+function endOfDateWeek(date: Date) {
+  return addCalendarDays(startOfDateWeek(date), 6);
+}
+
+function startOfDateMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth(), 1);
+}
+
+function endOfDateMonth(date: Date) {
+  return new Date(date.getFullYear(), date.getMonth() + 1, 0);
+}
+
+function startOfDateQuarter(date: Date) {
+  const firstQuarterMonth = Math.floor(date.getMonth() / 3) * 3;
+  return new Date(date.getFullYear(), firstQuarterMonth, 1);
+}
+
+function endOfDateQuarter(date: Date) {
+  const start = startOfDateQuarter(date);
+  return new Date(start.getFullYear(), start.getMonth() + 3, 0);
+}
+
+function cmsDateRangePresets() {
+  const today = new Date();
+  const previousWeek = addCalendarDays(today, -7);
+  const previousMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  const previousQuarter = new Date(
+    startOfDateQuarter(today).getFullYear(),
+    startOfDateQuarter(today).getMonth() - 3,
+    1,
+  );
+
+  return [
+    { label: "오늘", ...dateRangeFromDates(today, today) },
+    {
+      label: "이번주",
+      ...dateRangeFromDates(startOfDateWeek(today), endOfDateWeek(today)),
+    },
+    {
+      label: "저번주",
+      ...dateRangeFromDates(
+        startOfDateWeek(previousWeek),
+        endOfDateWeek(previousWeek),
+      ),
+    },
+    {
+      label: "이번달",
+      ...dateRangeFromDates(startOfDateMonth(today), endOfDateMonth(today)),
+    },
+    {
+      label: "저번달",
+      ...dateRangeFromDates(
+        startOfDateMonth(previousMonth),
+        endOfDateMonth(previousMonth),
+      ),
+    },
+    { label: "최근 7일", ...recentWeekDateRange() },
+    {
+      label: "이번분기",
+      ...dateRangeFromDates(
+        startOfDateQuarter(today),
+        endOfDateQuarter(today),
+      ),
+    },
+    {
+      label: "저번분기",
+      ...dateRangeFromDates(
+        startOfDateQuarter(previousQuarter),
+        endOfDateQuarter(previousQuarter),
+      ),
+    },
+  ];
+}
+
 function currency(value: number) {
   return new Intl.NumberFormat("ko-KR").format(finiteNumber(value));
 }
@@ -2848,6 +2933,38 @@ function sortCmsDeductionRecords(
 
     if (compared !== 0) return compared * direction;
     return right.id.localeCompare(left.id);
+  });
+}
+
+function sortCmsPrescriptionRecords(
+  records: CmsPrescriptionRecord[],
+  sortKey: CmsPrescriptionSortKey,
+  sortDirection: CmsStockSortDirection,
+) {
+  const direction = sortDirection === "asc" ? 1 : -1;
+
+  return [...records].sort((left, right) => {
+    let compared = 0;
+    if (sortKey === "drugName") {
+      compared = left.primaryDrugName.localeCompare(
+        right.primaryDrugName,
+        "ko",
+      );
+    } else if (sortKey === "quantity") {
+      compared = left.totalQuantity - right.totalQuantity;
+    } else if (sortKey === "shortage") {
+      compared = left.shortageQuantity - right.shortageQuantity;
+    } else if (sortKey === "status") {
+      compared = deductionStatusText(left.status).localeCompare(
+        deductionStatusText(right.status),
+        "ko",
+      );
+    } else {
+      compared = left.createdAt.localeCompare(right.createdAt);
+    }
+
+    if (compared !== 0) return compared * direction;
+    return left.prescriptionCode.localeCompare(right.prescriptionCode);
   });
 }
 
@@ -7080,6 +7197,21 @@ type CmsPrescriptionDrugLine = {
   pdExrow?: number;
   pdElement?: string;
   memo: string;
+  deductionId?: string;
+  deductionStatus?: CmsDeductionStatus;
+  deductedQuantity: number;
+  shortageQuantity: number;
+  shortageStatus?: CmsShortageStatus;
+  failureReason?: string;
+  stockId?: string;
+  stockName?: string;
+  stockBefore?: number;
+  stockAfter?: number;
+  substituteStockId?: string;
+  substituteStockName?: string;
+  substituteInsuranceCode?: string;
+  substituteQuantity?: number;
+  substituteProcessedAt?: string;
 };
 
 type CmsShortageDetail = {
@@ -7089,6 +7221,29 @@ type CmsShortageDetail = {
   prescriptionGroupLabel: string;
   source: string;
   drugCount: number;
+  capturedAt: string;
+  createdAt: string;
+  drugs: CmsPrescriptionDrugLine[];
+};
+
+type CmsPrescriptionRecord = {
+  id: string;
+  prescriptionCode: string;
+  prescriptionGroupLabel: string;
+  source: string;
+  drugCount: number;
+  deductibleLineCount: number;
+  deductedLineCount: number;
+  failedLineCount: number;
+  shortageLineCount: number;
+  substitutionOriginalCount: number;
+  substitutionReplacementCount: number;
+  totalQuantity: number;
+  deductedQuantity: number;
+  shortageQuantity: number;
+  status: CmsDeductionStatus;
+  primaryDrugName: string;
+  primaryInsuranceCode: string;
   capturedAt: string;
   createdAt: string;
   drugs: CmsPrescriptionDrugLine[];
@@ -7694,6 +7849,9 @@ function CmsApp({
   const [deductionRecords, setDeductionRecords] = useState<
     CmsDeductionRecord[]
   >([]);
+  const [prescriptionRecords, setPrescriptionRecords] = useState<
+    CmsPrescriptionRecord[]
+  >([]);
   const [returnReviews, setReturnReviews] = useState<CmsReturnReview[]>([]);
   const [deductionFilter, setDeductionFilter] =
     useState<CmsDeductionFilter>("FAILED");
@@ -7725,6 +7883,7 @@ function CmsApp({
     useState<CmsPrescriptionSearchStatus>("idle");
   const [selectedMasterId, setSelectedMasterId] = useState("");
   const [selectedDeductionId, setSelectedDeductionId] = useState("");
+  const [selectedPrescriptionId, setSelectedPrescriptionId] = useState("");
   const [selectedShortageId, setSelectedShortageId] = useState("");
   const [selectedReturnReviewId, setSelectedReturnReviewId] = useState("");
   const [selectedShortageDetail, setSelectedShortageDetail] =
@@ -7776,6 +7935,28 @@ function CmsApp({
     filteredDeductionRecords.find(
       (record) => record.id === selectedDeductionId,
     ) ?? filteredDeductionRecords[0];
+  const filteredPrescriptionRecords = useMemo(() => {
+    const filtered =
+      deductionFilter === "ALL"
+        ? prescriptionRecords
+        : deductionFilter === "SHORTAGE_ITEMS"
+          ? prescriptionRecords.filter((record) => record.shortageQuantity > 0)
+          : prescriptionRecords.filter((record) => record.status === deductionFilter);
+    return sortCmsPrescriptionRecords(
+      filtered,
+      prescriptionSortKey,
+      prescriptionSortDirection,
+    );
+  }, [
+    deductionFilter,
+    prescriptionRecords,
+    prescriptionSortDirection,
+    prescriptionSortKey,
+  ]);
+  const selectedPrescription =
+    filteredPrescriptionRecords.find(
+      (record) => record.id === selectedPrescriptionId,
+    ) ?? filteredPrescriptionRecords[0];
   const shortageRecords = useMemo(
     () =>
       sortCmsDeductionRecords(
@@ -7836,6 +8017,20 @@ function CmsApp({
       setSelectedDeductionId(filteredDeductionRecords[0].id);
     }
   }, [filteredDeductionRecords, selectedDeductionId]);
+
+  useEffect(() => {
+    if (filteredPrescriptionRecords.length === 0) {
+      if (selectedPrescriptionId) setSelectedPrescriptionId("");
+      return;
+    }
+    if (
+      !filteredPrescriptionRecords.some(
+        (record) => record.id === selectedPrescriptionId,
+      )
+    ) {
+      setSelectedPrescriptionId(filteredPrescriptionRecords[0].id);
+    }
+  }, [filteredPrescriptionRecords, selectedPrescriptionId]);
 
   useEffect(() => {
     if (shortageRecords.length === 0) {
@@ -7957,6 +8152,11 @@ function CmsApp({
     );
     setDeductionRecords((current) =>
       current.length > 0 ? current : demoDeductionRecords,
+    );
+    setPrescriptionRecords((current) =>
+      current.length > 0
+        ? current
+        : createPrescriptionRecordsFromDeductions(demoDeductionRecords),
     );
   }, []);
 
@@ -8148,27 +8348,40 @@ function CmsApp({
           if (trimmed) prescriptionParams.set("keyword", trimmed);
           setPrescriptionSearchStatus("loading");
           const queryString = prescriptionParams.toString();
-          const [deductionResult, shortageResult] = await Promise.allSettled([
-            apiFetch<unknown>(`/prescription-deductions?${queryString}`),
-            optionalCmsApiFetch<unknown>(
-              `/prescription-shortages?${queryString}`,
-            ),
-          ]);
-          throwRejected([deductionResult, shortageResult]);
+          const prescriptionResult = await optionalCmsApiFetch<unknown>(
+            `/prescriptions?${queryString}`,
+          );
+          if (prescriptionResult) {
+            setPrescriptionRecords(
+              prescriptionPayload(prescriptionResult).map(
+                normalizeCmsPrescriptionRecord,
+              ),
+            );
+          } else {
+            const [deductionResult, shortageResult] = await Promise.allSettled([
+              apiFetch<unknown>(`/prescription-deductions?${queryString}`),
+              optionalCmsApiFetch<unknown>(
+                `/prescription-shortages?${queryString}`,
+              ),
+            ]);
+            throwRejected([deductionResult, shortageResult]);
 
-          const deductions =
-            deductionResult.status === "fulfilled"
-              ? deductionPayload(deductionResult.value).map(
-                  normalizeCmsDeduction,
-                )
-              : [];
-          const shortages =
-            shortageResult.status === "fulfilled" && shortageResult.value
-              ? deductionPayload(shortageResult.value).map(
-                  normalizeCmsDeduction,
-                )
-              : [];
-          setDeductionRecords(mergeDeductionRecords(deductions, shortages));
+            const deductions =
+              deductionResult.status === "fulfilled"
+                ? deductionPayload(deductionResult.value).map(
+                    normalizeCmsDeduction,
+                  )
+                : [];
+            const shortages =
+              shortageResult.status === "fulfilled" && shortageResult.value
+                ? deductionPayload(shortageResult.value).map(
+                    normalizeCmsDeduction,
+                  )
+                : [];
+            const merged = mergeDeductionRecords(deductions, shortages);
+            setDeductionRecords(merged);
+            setPrescriptionRecords(createPrescriptionRecordsFromDeductions(merged));
+          }
           setPrescriptionSearchStatus("done");
         }
       } else if (targetPage === "purchase") {
@@ -9301,42 +9514,34 @@ function CmsApp({
             />
           )}
           {visiblePage === "prescriptions" && (
-            <CmsPrescriptionPage
+            <CmsPrescriptionSummaryPage
               endDate={prescriptionEndDate}
               filter={deductionFilter}
-              prescriptionId={prescriptionId}
+              prescriptions={prescriptionRecords}
               query={prescriptionQuery}
-              records={deductionRecords}
               searchStatus={prescriptionSearchStatus}
-              selectedRecord={selectedDeduction}
-              selectedStockId={selectedStockId}
+              selectedPrescription={selectedPrescription}
               sortDirection={prescriptionSortDirection}
               sortKey={prescriptionSortKey}
               startDate={prescriptionStartDate}
-              stocks={stocks}
               onApplyFilters={() => void refreshCms()}
-              onDeduct={deductPrescriptionStock}
               onEndDate={setPrescriptionEndDate}
               onFilter={(nextFilter) => {
                 setDeductionFilter(nextFilter);
                 const nextRecord =
                   nextFilter === "ALL"
-                    ? deductionRecords[0]
+                    ? prescriptionRecords[0]
                     : nextFilter === "SHORTAGE_ITEMS"
-                      ? deductionRecords.find(
+                      ? prescriptionRecords.find(
                           (record) => record.shortageQuantity > 0,
                         )
-                      : deductionRecords.find(
+                      : prescriptionRecords.find(
                           (record) => record.status === nextFilter,
                         );
-                setSelectedDeductionId(nextRecord?.id ?? "");
+                setSelectedPrescriptionId(nextRecord?.id ?? "");
               }}
-              onPrescriptionId={setPrescriptionId}
               onQuery={setPrescriptionQuery}
-              onResolve={resolveDeduction}
-              onSelectRecord={setSelectedDeductionId}
-              onSelectStock={setSelectedStockId}
-              onShortageStatus={updateShortageStatus}
+              onSelectPrescription={setSelectedPrescriptionId}
               onSortDirection={setPrescriptionSortDirection}
               onSortKey={setPrescriptionSortKey}
               onStartDate={setPrescriptionStartDate}
@@ -9745,20 +9950,73 @@ function hasCmsPrescriptionSubstitution(role: CmsPrescriptionSubstitutionRole) {
   return role === "ORIGINAL" || role === "SUBSTITUTE";
 }
 
+function cmsPrescriptionLineResultLabel(drug: CmsPrescriptionDrugLine) {
+  if (drug.substitutionRole === "ORIGINAL") {
+    return "대체 처방으로 인한 미차감";
+  }
+  if (drug.substitutionRole === "SUBSTITUTE") {
+    if (drug.shortageQuantity > 0) return "대체 처방 초과";
+    if (drug.deductionStatus === "FAILED") return "대체 처방 차감 실패";
+    if (drug.deductedQuantity > 0) return "대체 처방 차감";
+    return "대체 처방";
+  }
+  if (drug.shortageQuantity > 0) return "초과 처방";
+  if (drug.deductionStatus === "FAILED") return "차감 실패";
+  if (drug.deductionStatus === "RESOLVED") return "처리 완료";
+  if (drug.deductionStatus === "PARTIAL_DEDUCTED") return "부분 차감";
+  if (drug.deductedQuantity > 0 || drug.deductionStatus === "DEDUCTED") {
+    return "자동 차감";
+  }
+  return "차감 대기";
+}
+
+function cmsPrescriptionLineResultClass(drug: CmsPrescriptionDrugLine) {
+  if (drug.substitutionRole === "ORIGINAL") return "is-substitution-original";
+  if (drug.substitutionRole === "SUBSTITUTE") {
+    return drug.shortageQuantity > 0 || drug.deductionStatus === "FAILED"
+      ? "is-warning"
+      : "is-substitution-replacement";
+  }
+  if (drug.shortageQuantity > 0 || drug.deductionStatus === "FAILED") {
+    return "is-warning";
+  }
+  if (drug.deductionStatus === "RESOLVED") return "is-target";
+  return "";
+}
+
+function normalizeOptionalShortageStatus(raw: unknown) {
+  const status = String(raw ?? "").toUpperCase();
+  return [
+    "OPEN",
+    "ORDERED",
+    "HOLD",
+    "SUBSTITUTED",
+    "RESOLVED",
+    "IGNORED",
+  ].includes(status)
+    ? (status as CmsShortageStatus)
+    : undefined;
+}
+
+function normalizeCmsDeductionStatus(raw: unknown): CmsDeductionStatus {
+  const status = String(raw ?? "FAILED").toUpperCase();
+  return status === "DEDUCTED" ||
+    status === "PARTIAL_DEDUCTED" ||
+    status === "SHORTAGE" ||
+    status === "RESOLVED" ||
+    status === "PENDING"
+    ? status
+    : "FAILED";
+}
+
 function normalizeCmsDeduction(
   raw: unknown,
   index: number,
 ): CmsDeductionRecord {
   const item = asRecord(raw);
-  const rawStatus = String(item.status ?? item.deductionStatus ?? "FAILED");
-  const status: CmsDeductionStatus =
-    rawStatus === "DEDUCTED" ||
-    rawStatus === "PARTIAL_DEDUCTED" ||
-    rawStatus === "SHORTAGE" ||
-    rawStatus === "RESOLVED" ||
-    rawStatus === "PENDING"
-      ? rawStatus
-      : "FAILED";
+  const status = normalizeCmsDeductionStatus(
+    item.status ?? item.deductionStatus,
+  );
   const rawResolution = String(item.resolutionType ?? item.resolution ?? "");
   const resolutionType = [
     "VIRTUAL_DRUG",
@@ -9901,6 +10159,13 @@ function normalizeCmsPrescriptionDrugLine(
   raw: unknown,
 ): CmsPrescriptionDrugLine {
   const item = asRecord(raw);
+  const deduction = asRecord(item.deduction);
+  const rawDeductionStatus =
+    item.deductionStatus ?? item.status ?? deduction.status;
+  const deductionStatus =
+    rawDeductionStatus === undefined || rawDeductionStatus === null
+      ? undefined
+      : normalizeCmsDeductionStatus(rawDeductionStatus);
   const pdExtype = optionalFiniteNumber(
     item.pdExtype ?? item.pd_extype ?? item.substitutionType,
   );
@@ -9946,6 +10211,76 @@ function normalizeCmsPrescriptionDrugLine(
     pdExrow,
     pdElement,
     memo: String(item.memo ?? ""),
+    deductionId:
+      item.deductionId === undefined &&
+      item.id === undefined &&
+      deduction.id === undefined
+        ? undefined
+        : String(item.deductionId ?? deduction.id ?? item.id),
+    deductionStatus,
+    deductedQuantity: finiteNumber(
+      item.deductedQuantity ?? deduction.deductedQuantity,
+    ),
+    shortageQuantity: finiteNumber(
+      item.shortageQuantity ?? deduction.shortageQuantity,
+    ),
+    shortageStatus: normalizeOptionalShortageStatus(
+      item.shortageStatus ?? deduction.shortageStatus,
+    ),
+    failureReason: optionalText(
+      item.failureReason ?? item.reason ?? deduction.failureReason,
+    ),
+    stockId:
+      item.stockId === undefined && deduction.stockId === undefined
+        ? undefined
+        : String(item.stockId ?? deduction.stockId),
+    stockName: optionalText(item.stockName ?? deduction.stockName),
+    stockBefore:
+      item.stockBeforeQuantity === undefined &&
+      item.stockBefore === undefined &&
+      deduction.stockBeforeQuantity === undefined
+        ? undefined
+        : optionalFiniteNumber(
+            item.stockBeforeQuantity ??
+              item.stockBefore ??
+              deduction.stockBeforeQuantity,
+          ),
+    stockAfter:
+      item.stockAfterQuantity === undefined &&
+      item.stockAfter === undefined &&
+      deduction.stockAfterQuantity === undefined
+        ? undefined
+        : optionalFiniteNumber(
+            item.stockAfterQuantity ??
+              item.stockAfter ??
+              deduction.stockAfterQuantity,
+          ),
+    substituteStockId:
+      item.substituteStockId === undefined &&
+      deduction.substituteStockId === undefined
+        ? undefined
+        : String(item.substituteStockId ?? deduction.substituteStockId),
+    substituteStockName: optionalText(
+      item.substituteStockName ?? deduction.substituteStockName,
+    ),
+    substituteInsuranceCode: optionalText(
+      item.substituteInsuranceCode ?? deduction.substituteInsuranceCode,
+    ),
+    substituteQuantity:
+      item.substituteQuantity === undefined &&
+      deduction.substituteQuantity === undefined
+        ? undefined
+        : optionalFiniteNumber(
+            item.substituteQuantity ?? deduction.substituteQuantity,
+          ),
+    substituteProcessedAt:
+      item.substituteProcessedAt === undefined &&
+      deduction.substituteProcessedAt === undefined
+        ? undefined
+        : formatTransactionAt(
+            item.substituteProcessedAt ?? deduction.substituteProcessedAt,
+            "-",
+          ),
   };
 }
 
@@ -9988,10 +10323,216 @@ function normalizeCmsShortageDetail(
               pdExtype: fallback.pdExtype,
               pdExrow: fallback.pdExrow,
               pdElement: fallback.pdElement,
+              deductionId: fallback.id,
+              deductionStatus: fallback.status,
+              deductedQuantity: fallback.deductedQuantity,
+              shortageQuantity: fallback.shortageQuantity,
+              shortageStatus: fallback.shortageStatus,
+              failureReason: fallback.reason,
+              stockId: fallback.stockId,
+              stockName: fallback.stockName,
+              stockBefore: fallback.stockBefore,
+              stockAfter: fallback.stockAfter,
+              substituteStockId: fallback.substituteStockId,
+              substituteStockName: fallback.substituteStockName,
+              substituteInsuranceCode: fallback.substituteInsuranceCode,
+              substituteQuantity: fallback.substituteQuantity,
+              substituteProcessedAt: fallback.substituteProcessedAt,
               memo: "",
             },
           ],
   };
+}
+
+function prescriptionPayload(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  const item = asRecord(raw);
+  for (const key of [
+    "prescriptions",
+    "prescriptionSummaries",
+    "results",
+    "content",
+    "items",
+    "data",
+  ]) {
+    const value = item[key];
+    if (Array.isArray(value)) return value;
+  }
+
+  const payload = unwrapObjectPayload(raw);
+  if (payload !== item) {
+    const nestedPayload = prescriptionPayload(payload);
+    if (nestedPayload.length > 0) return nestedPayload;
+  }
+
+  return [];
+}
+
+function normalizeCmsPrescriptionRecord(
+  raw: unknown,
+  index: number,
+): CmsPrescriptionRecord {
+  const item = unwrapObjectPayload(raw);
+  const drugs = firstArrayPayload(item, ["drugs", "lines", "items"]).map(
+    normalizeCmsPrescriptionDrugLine,
+  );
+  const status = normalizeCmsDeductionStatus(item.status);
+  const firstDeductibleDrug =
+    drugs.find((drug) => drug.substitutionRole !== "ORIGINAL") ?? drugs[0];
+  const substitutionOriginalCount =
+    optionalFiniteNumber(item.substitutionOriginalCount) ??
+    drugs.filter((drug) => drug.substitutionRole === "ORIGINAL").length;
+  const substitutionReplacementCount =
+    optionalFiniteNumber(item.substitutionReplacementCount) ??
+    drugs.filter((drug) => drug.substitutionRole === "SUBSTITUTE").length;
+  const totalQuantity =
+    optionalFiniteNumber(item.totalQuantity) ??
+    drugs
+      .filter((drug) => drug.substitutionRole !== "ORIGINAL")
+      .reduce((sum, drug) => sum + finiteNumber(drug.totalQuantity), 0);
+  const deductedQuantity =
+    optionalFiniteNumber(item.deductedQuantity) ??
+    drugs.reduce((sum, drug) => sum + finiteNumber(drug.deductedQuantity), 0);
+  const shortageQuantity =
+    optionalFiniteNumber(item.shortageQuantity) ??
+    drugs.reduce((sum, drug) => sum + finiteNumber(drug.shortageQuantity), 0);
+
+  return {
+    id: String(item.id ?? item.prescriptionId ?? item.prescriptionCode ?? index),
+    prescriptionCode: String(item.prescriptionCode ?? "-"),
+    prescriptionGroupLabel: String(item.prescriptionGroupLabel ?? "-"),
+    source: String(item.source ?? "-"),
+    drugCount: finiteNumber(item.drugCount, drugs.length),
+    deductibleLineCount:
+      optionalFiniteNumber(item.deductibleLineCount) ??
+      drugs.filter((drug) => drug.substitutionRole !== "ORIGINAL").length,
+    deductedLineCount:
+      optionalFiniteNumber(item.deductedLineCount) ??
+      drugs.filter((drug) => drug.deductedQuantity > 0).length,
+    failedLineCount:
+      optionalFiniteNumber(item.failedLineCount) ??
+      drugs.filter((drug) => drug.deductionStatus === "FAILED").length,
+    shortageLineCount:
+      optionalFiniteNumber(item.shortageLineCount) ??
+      drugs.filter((drug) => drug.shortageQuantity > 0).length,
+    substitutionOriginalCount,
+    substitutionReplacementCount,
+    totalQuantity,
+    deductedQuantity,
+    shortageQuantity,
+    status,
+    primaryDrugName: String(
+      item.primaryDrugName ?? firstDeductibleDrug?.drugName ?? "처방 약품",
+    ),
+    primaryInsuranceCode: String(
+      item.primaryInsuranceCode ??
+        firstDeductibleDrug?.insuranceCode ??
+        "보험코드 없음",
+    ),
+    capturedAt: formatApiDateTime(item.capturedAt ?? item.createdAt),
+    createdAt: formatApiDateTime(item.createdAt ?? item.capturedAt),
+    drugs,
+  };
+}
+
+function createPrescriptionRecordsFromDeductions(
+  records: CmsDeductionRecord[],
+): CmsPrescriptionRecord[] {
+  const grouped = new Map<string, CmsDeductionRecord[]>();
+  records.forEach((record) => {
+    const key = record.prescriptionCode || record.id;
+    grouped.set(key, [...(grouped.get(key) ?? []), record]);
+  });
+
+  return [...grouped.entries()].map(([prescriptionCode, items], index) => {
+    const sortedItems = [...items].sort((left, right) => left.lineNo - right.lineNo);
+    const drugs: CmsPrescriptionDrugLine[] = sortedItems.map((record) => ({
+      lineNo: record.lineNo,
+      insuranceCode: record.insuranceCode,
+      drugName: record.drugName,
+      quantityPerDose: 0,
+      dailyFrequency: 0,
+      medicationDays: 0,
+      totalQuantity: record.totalQuantity,
+      substitutionRole: record.substitutionRole,
+      pdExtype: record.pdExtype,
+      pdExrow: record.pdExrow,
+      pdElement: record.pdElement,
+      memo: record.memo ?? "",
+      deductionId: record.id,
+      deductionStatus: record.status,
+      deductedQuantity: record.deductedQuantity,
+      shortageQuantity: record.shortageQuantity,
+      shortageStatus: record.shortageStatus,
+      failureReason: record.reason,
+      stockId: record.stockId,
+      stockName: record.stockName,
+      stockBefore: record.stockBefore,
+      stockAfter: record.stockAfter,
+      substituteStockId: record.substituteStockId,
+      substituteStockName: record.substituteStockName,
+      substituteInsuranceCode: record.substituteInsuranceCode,
+      substituteQuantity: record.substituteQuantity,
+      substituteProcessedAt: record.substituteProcessedAt,
+    }));
+    const firstItem = sortedItems[0];
+    const shortageQuantity = sortedItems.reduce(
+      (sum, record) => sum + record.shortageQuantity,
+      0,
+    );
+    const failedLineCount = sortedItems.filter(
+      (record) => record.status === "FAILED",
+    ).length;
+    const status: CmsDeductionStatus =
+      shortageQuantity > 0
+        ? "SHORTAGE"
+        : failedLineCount > 0
+          ? "FAILED"
+          : sortedItems.every((record) => record.status === "DEDUCTED")
+            ? "DEDUCTED"
+            : "PARTIAL_DEDUCTED";
+
+    return {
+      id: prescriptionCode || String(index),
+      prescriptionCode,
+      prescriptionGroupLabel: "-",
+      source: "-",
+      drugCount: drugs.length,
+      deductibleLineCount: drugs.filter(
+        (drug) => drug.substitutionRole !== "ORIGINAL",
+      ).length,
+      deductedLineCount: sortedItems.filter(
+        (record) => record.deductedQuantity > 0,
+      ).length,
+      failedLineCount,
+      shortageLineCount: sortedItems.filter(
+        (record) => record.shortageQuantity > 0,
+      ).length,
+      substitutionOriginalCount: drugs.filter(
+        (drug) => drug.substitutionRole === "ORIGINAL",
+      ).length,
+      substitutionReplacementCount: drugs.filter(
+        (drug) => drug.substitutionRole === "SUBSTITUTE",
+      ).length,
+      totalQuantity: sortedItems.reduce(
+        (sum, record) =>
+          sum +
+          (record.substitutionRole === "ORIGINAL" ? 0 : record.totalQuantity),
+        0,
+      ),
+      deductedQuantity: sortedItems.reduce(
+        (sum, record) => sum + record.deductedQuantity,
+        0,
+      ),
+      shortageQuantity,
+      status,
+      primaryDrugName: firstItem?.drugName ?? "처방 약품",
+      primaryInsuranceCode: firstItem?.insuranceCode ?? "보험코드 없음",
+      capturedAt: firstItem?.createdAt ?? "-",
+      createdAt: firstItem?.createdAt ?? "-",
+      drugs,
+    };
+  });
 }
 
 function createFallbackShortageDetail(
@@ -12852,6 +13393,8 @@ function CmsInventoryShortagePage({
                           drug.substitutionRole ?? "NONE";
                         const hasSubstitution =
                           hasCmsPrescriptionSubstitution(substitutionRole);
+                        const lineResultLabel =
+                          cmsPrescriptionLineResultLabel(drug);
 
                         return (
                           <div
@@ -12879,7 +13422,9 @@ function CmsInventoryShortagePage({
                               <span>수량</span>
                               <b>{drug.totalQuantity}개</b>
                             </div>
-                            {(hasSubstitution || isTarget) && (
+                            {(hasSubstitution ||
+                              isTarget ||
+                              drug.deductionStatus) && (
                               <div className="cms-prescription-line-tags">
                                 {hasSubstitution && (
                                   <span
@@ -12895,6 +13440,11 @@ function CmsInventoryShortagePage({
                                     초과 처방
                                   </span>
                                 )}
+                                <span
+                                  className={`cms-prescription-line-tag ${cmsPrescriptionLineResultClass(drug)}`}
+                                >
+                                  {lineResultLabel}
+                                </span>
                               </div>
                             )}
                           </div>
@@ -13969,6 +14519,404 @@ function CmsWholesalerPage({
           </form>
         </CmsSheet>
       )}
+    </section>
+  );
+}
+
+function CmsPrescriptionSummaryPage({
+  endDate,
+  filter,
+  prescriptions,
+  query,
+  searchStatus,
+  selectedPrescription,
+  sortDirection,
+  sortKey,
+  startDate,
+  onApplyFilters,
+  onEndDate,
+  onFilter,
+  onQuery,
+  onSelectPrescription,
+  onSortDirection,
+  onSortKey,
+  onStartDate,
+}: {
+  endDate: string;
+  filter: CmsDeductionFilter;
+  prescriptions: CmsPrescriptionRecord[];
+  query: string;
+  searchStatus: CmsPrescriptionSearchStatus;
+  selectedPrescription?: CmsPrescriptionRecord;
+  sortDirection: CmsStockSortDirection;
+  sortKey: CmsPrescriptionSortKey;
+  startDate: string;
+  onApplyFilters: () => void;
+  onEndDate: (value: string) => void;
+  onFilter: (filter: CmsDeductionFilter) => void;
+  onQuery: (value: string) => void;
+  onSelectPrescription: (id: string) => void;
+  onSortDirection: (value: CmsStockSortDirection) => void;
+  onSortKey: (value: CmsPrescriptionSortKey) => void;
+  onStartDate: (value: string) => void;
+}) {
+  const filteredRecords =
+    filter === "ALL"
+      ? prescriptions
+      : filter === "SHORTAGE_ITEMS"
+        ? prescriptions.filter((record) => record.shortageQuantity > 0)
+        : prescriptions.filter((record) => record.status === filter);
+  const visibleRecords = sortCmsPrescriptionRecords(
+    filteredRecords,
+    sortKey,
+    sortDirection,
+  );
+  const pagination = usePagination(
+    visibleRecords,
+    CMS_PAGE_SIZES.prescriptions,
+    `${filter}|${visibleRecords.length}`,
+  );
+  const activePrescription =
+    selectedPrescription &&
+    visibleRecords.some((record) => record.id === selectedPrescription.id)
+      ? selectedPrescription
+      : visibleRecords[0];
+  const deductedCount = prescriptions.filter(
+    (record) => record.status === "DEDUCTED",
+  ).length;
+  const failedCount = prescriptions.filter(
+    (record) => record.status === "FAILED",
+  ).length;
+  const shortageCount = prescriptions.filter(
+    (record) => record.shortageQuantity > 0,
+  ).length;
+  const substitutionCount = prescriptions.reduce(
+    (sum, record) => sum + record.substitutionReplacementCount,
+    0,
+  );
+  const filterItems: Array<[CmsDeductionFilter, string, number]> = [
+    ["ALL", "전체", prescriptions.length],
+    ["SHORTAGE_ITEMS", "초과 처방", shortageCount],
+    ["FAILED", "실패", failedCount],
+    ["DEDUCTED", "자동 차감", deductedCount],
+  ];
+
+  function sortByHeader(nextKey: CmsPrescriptionSortKey) {
+    onSortDirection(
+      nextPrescriptionSortDirection(sortKey, sortDirection, nextKey),
+    );
+    onSortKey(nextKey);
+  }
+
+  return (
+    <section className="cms-content cms-list-page cms-prescription-page">
+      <CmsKpiGrid className="prescription-kpis" columns={4}>
+        <CmsKpi label="처방전" value={`${prescriptions.length}`} unit="건" />
+        <CmsKpi
+          label="자동 차감"
+          value={`${deductedCount}`}
+          unit="건"
+          tone="blue"
+        />
+        <CmsKpi
+          label="초과 처방"
+          value={`${shortageCount}`}
+          unit="건"
+          tone="red"
+        />
+        <CmsKpi
+          label="대체 처방"
+          value={`${substitutionCount}`}
+          unit="건"
+          tone="blue"
+        />
+      </CmsKpiGrid>
+
+      <form
+        className="cms-prescription-list-controls"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onApplyFilters();
+        }}
+      >
+        <label className="cms-search">
+          <span className="search-icon" />
+          <input
+            placeholder="약품명 · 보험코드 · 처방전 검색"
+            value={query}
+            onChange={(event) => onQuery(event.target.value)}
+          />
+        </label>
+        <CmsDateRangeInline
+          endDate={endDate}
+          startDate={startDate}
+          onEndDate={onEndDate}
+          onStartDate={onStartDate}
+        />
+        <button className="cms-primary cms-toolbar-action" type="submit">
+          적용
+        </button>
+        <span className={`cms-list-search-state is-${searchStatus}`}>
+          {prescriptionSearchStateText(searchStatus)}
+        </span>
+      </form>
+
+      <div className="cms-prescription-overview-layout">
+        <div className="cms-table-card prescription-table-card">
+          <div className="cms-toolbar">
+            <div className="cms-pills prescription-filters">
+              {filterItems.map(([value, label, count]) => (
+                <button
+                  className={filter === value ? "is-active" : ""}
+                  key={value}
+                  type="button"
+                  onClick={() => onFilter(value)}
+                >
+                  {label}
+                  <b>{count}</b>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="cms-table-scroll">
+            <div className="cms-prescription-summary-table">
+              <div className="cms-prescription-summary-row cms-th">
+                <CmsSortHeader
+                  active={sortKey === "createdAt"}
+                  direction={sortDirection}
+                  label="처방전"
+                  title={prescriptionSortAriaLabel(
+                    "처방전",
+                    "createdAt",
+                    sortKey,
+                    sortDirection,
+                  )}
+                  onClick={() => sortByHeader("createdAt")}
+                />
+                <CmsSortHeader
+                  active={sortKey === "drugName"}
+                  direction={sortDirection}
+                  label="대표 약품"
+                  title={prescriptionSortAriaLabel(
+                    "대표 약품",
+                    "drugName",
+                    sortKey,
+                    sortDirection,
+                  )}
+                  onClick={() => sortByHeader("drugName")}
+                />
+                <CmsSortHeader
+                  active={sortKey === "quantity"}
+                  direction={sortDirection}
+                  label="수량"
+                  title={prescriptionSortAriaLabel(
+                    "수량",
+                    "quantity",
+                    sortKey,
+                    sortDirection,
+                  )}
+                  onClick={() => sortByHeader("quantity")}
+                />
+                <CmsSortHeader
+                  active={sortKey === "shortage"}
+                  direction={sortDirection}
+                  label="부족"
+                  title={prescriptionSortAriaLabel(
+                    "부족",
+                    "shortage",
+                    sortKey,
+                    sortDirection,
+                  )}
+                  onClick={() => sortByHeader("shortage")}
+                />
+                <CmsSortHeader
+                  active={sortKey === "status"}
+                  direction={sortDirection}
+                  label="상태"
+                  title={prescriptionSortAriaLabel(
+                    "상태",
+                    "status",
+                    sortKey,
+                    sortDirection,
+                  )}
+                  onClick={() => sortByHeader("status")}
+                />
+              </div>
+              {pagination.items.map((record) => (
+                <button
+                  className={`cms-prescription-summary-row ${
+                    activePrescription?.id === record.id ? "is-selected" : ""
+                  }`}
+                  key={record.id}
+                  type="button"
+                  onClick={() => onSelectPrescription(record.id)}
+                >
+                  <span>
+                    {record.prescriptionCode}
+                    <em>{record.capturedAt}</em>
+                  </span>
+                  <strong>
+                    {record.primaryDrugName}
+                    <em>
+                      {record.drugCount}개 품목
+                      {record.substitutionReplacementCount > 0
+                        ? ` · 대체 ${record.substitutionReplacementCount}건`
+                        : ""}
+                    </em>
+                  </strong>
+                  <b>
+                    {currency(record.deductedQuantity)}/
+                    {currency(record.totalQuantity)}개
+                  </b>
+                  <b
+                    className={
+                      record.shortageQuantity > 0 ? "is-shortage" : ""
+                    }
+                  >
+                    {currency(record.shortageQuantity)}개
+                  </b>
+                  <span
+                    className={`cms-badge ${deductionStatusClass(record.status)}`}
+                  >
+                    {deductionStatusText(record.status)}
+                  </span>
+                </button>
+              ))}
+              {visibleRecords.length === 0 && (
+                <p className="cms-empty table-empty">
+                  표시할 처방전이 없습니다.
+                </p>
+              )}
+            </div>
+          </div>
+          <CmsPagination {...pagination} />
+        </div>
+
+        <aside className="cms-prescription-overview-detail">
+          {!activePrescription ? (
+            <p className="cms-empty">선택된 처방전이 없습니다.</p>
+          ) : (
+            <>
+              <div className="cms-prescription-paper">
+                <div className="cms-prescription-paper-head">
+                  <div>
+                    <span>처방전</span>
+                    <strong>{activePrescription.prescriptionCode}</strong>
+                  </div>
+                  <b>{deductionStatusText(activePrescription.status)}</b>
+                </div>
+                <div className="cms-prescription-paper-meta">
+                  <span>
+                    처방일시<b>{activePrescription.capturedAt}</b>
+                  </span>
+                  <span>
+                    품목<b>{activePrescription.drugCount}개</b>
+                  </span>
+                </div>
+                <div className="cms-prescription-quantity-strip">
+                  <div>
+                    <span>차감 대상</span>
+                    <strong>
+                      {currency(activePrescription.totalQuantity)}개
+                    </strong>
+                  </div>
+                  <div>
+                    <span>실제 차감</span>
+                    <strong>
+                      {currency(activePrescription.deductedQuantity)}개
+                    </strong>
+                  </div>
+                  <div
+                    className={
+                      activePrescription.shortageQuantity > 0
+                        ? "is-shortage"
+                        : ""
+                    }
+                  >
+                    <span>부족 수량</span>
+                    <strong>
+                      {currency(activePrescription.shortageQuantity)}개
+                    </strong>
+                  </div>
+                  <div>
+                    <span>대체 처방</span>
+                    <strong>
+                      {activePrescription.substitutionReplacementCount}건
+                    </strong>
+                  </div>
+                </div>
+              </div>
+
+              <div className="cms-prescription-full-paper">
+                <div className="cms-prescription-summary">
+                  <strong>처방 상세 row</strong>
+                  <span>{activePrescription.drugs.length}개 품목</span>
+                </div>
+                <div className="cms-prescription-line-list">
+                  {activePrescription.drugs.map((drug, index) => {
+                    const substitutionRole = drug.substitutionRole ?? "NONE";
+                    const hasSubstitution =
+                      hasCmsPrescriptionSubstitution(substitutionRole);
+                    const resultLabel = cmsPrescriptionLineResultLabel(drug);
+
+                    return (
+                      <div
+                        className={[
+                          hasSubstitution ? "has-substitution" : "",
+                          drug.shortageQuantity > 0 ? "is-target" : "",
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                        key={`${drug.lineNo}-${drug.insuranceCode}-${drug.drugName}`}
+                      >
+                        <div className="cms-prescription-line-index">
+                          <span>처방 품목</span>
+                          <strong>{String(index + 1).padStart(2, "0")}</strong>
+                        </div>
+                        <div className="cms-prescription-line-main">
+                          <strong>{drug.drugName}</strong>
+                          <span>{drug.insuranceCode || "보험코드 없음"}</span>
+                        </div>
+                        <div className="cms-prescription-line-qty">
+                          <span>처방 / 차감</span>
+                          <b>
+                            {currency(drug.totalQuantity)} /{" "}
+                            {currency(drug.deductedQuantity)}개
+                          </b>
+                          {drug.shortageQuantity > 0 && (
+                            <em>부족 {currency(drug.shortageQuantity)}개</em>
+                          )}
+                        </div>
+                        <div className="cms-prescription-line-tags">
+                          {hasSubstitution && (
+                            <span
+                              className={`cms-prescription-line-tag ${cmsPrescriptionSubstitutionClass(substitutionRole)}`}
+                            >
+                              {cmsPrescriptionSubstitutionLabel(
+                                substitutionRole,
+                              )}
+                            </span>
+                          )}
+                          <span
+                            className={`cms-prescription-line-tag ${cmsPrescriptionLineResultClass(drug)}`}
+                          >
+                            {resultLabel}
+                          </span>
+                          {drug.stockName && (
+                            <span className="cms-prescription-line-tag is-target">
+                              {drug.stockName}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </>
+          )}
+        </aside>
+      </div>
     </section>
   );
 }
@@ -15412,8 +16360,7 @@ function CmsDateRangeInline({
     };
   }, [open]);
 
-  function setRecentWeek() {
-    const range = recentWeekDateRange();
+  function applyPreset(range: { endDate: string; startDate: string }) {
     setDraftStartDate(range.startDate);
     setDraftEndDate(range.endDate);
     onStartDate(range.startDate);
@@ -15522,6 +16469,18 @@ function CmsDateRangeInline({
       </button>
       {open && (
         <div className="cms-date-range-popover" style={popoverStyle}>
+          <div className="cms-date-range-presets">
+            {cmsDateRangePresets().map((preset) => (
+              <button
+                className="cms-date-range-preset"
+                key={preset.label}
+                type="button"
+                onClick={() => applyPreset(preset)}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
           <div className="cms-date-range-popover-head">
             <button
               className="cms-calendar-nav"
@@ -15550,9 +16509,6 @@ function CmsDateRangeInline({
             {renderMonth(addCalendarMonths(visibleMonth, 1))}
           </div>
           <div className="cms-date-range-popover-foot">
-            <button type="button" onClick={setRecentWeek}>
-              최근 7일
-            </button>
             <button
               className="is-primary"
               type="button"

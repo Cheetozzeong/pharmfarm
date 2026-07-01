@@ -4,8 +4,8 @@ set "PS_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
 if exist "%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe" set "PS_EXE=%SystemRoot%\Sysnative\WindowsPowerShell\v1.0\powershell.exe"
 if not exist "%PS_EXE%" goto POWERSHELL_NOT_FOUND
 
-set "AGENT_PS=%ProgramData%\PharmFarmAgent\PharmFarm-Agent.ps1"
-if not exist "%AGENT_PS%" set "AGENT_PS=%~dp0PharmFarm-Agent.ps1"
+set "AGENT_PS=%~dp0PharmFarm-Agent.ps1"
+if not exist "%AGENT_PS%" set "AGENT_PS=%ProgramData%\PharmFarmAgent\PharmFarm-Agent.ps1"
 if not exist "%AGENT_PS%" goto AGENT_NOT_FOUND
 
 "%PS_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%AGENT_PS%" -Console -ResyncTodayPrescriptions

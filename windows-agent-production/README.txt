@@ -83,6 +83,7 @@ Updating an installed agent:
 - Downloading/extracting a new zip does not update the running tray agent by itself.
 - Run install-pharmfarm-agent.bat again, or copy PharmFarm-Agent.ps1 into C:\ProgramData\PharmFarmAgent.
 - The startup log should show the bundled agent version. If the version is old, the tray is still using the old ProgramData copy.
+- resync-today-prescriptions.bat runs the bundled PharmFarm-Agent.ps1 first, so it can test a freshly extracted package before reinstalling.
 
 If data does not arrive:
 
@@ -110,6 +111,7 @@ Today prescription overwrite test:
 - The payload uses syncMode=TODAY_OVERWRITE and overwriteExisting=true.
 - The server must upsert by prescriptionCode + lineNo and replace the stored prescription lines before running stock deduction again.
 - Run from the tray menu, or run resync-today-prescriptions.bat from the extracted package.
+- The tray menu uses the installed ProgramData copy. The extracted resync-today-prescriptions.bat uses the extracted package copy first.
 
 Bootstrap sync:
 
