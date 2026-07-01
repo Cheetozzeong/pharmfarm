@@ -78,6 +78,12 @@ Recommended operation:
 7. Finish setup.
 8. Check the web prescription list after scanning/registering a QR in EPharm.
 
+Updating an installed agent:
+
+- Downloading/extracting a new zip does not update the running tray agent by itself.
+- Run install-pharmfarm-agent.bat again, or copy PharmFarm-Agent.ps1 into C:\ProgramData\PharmFarmAgent.
+- The startup log should show the bundled agent version. If the version is old, the tray is still using the old ProgramData copy.
+
 If data does not arrive:
 
 1. Run run-agent-console.bat.

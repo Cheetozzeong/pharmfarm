@@ -25,6 +25,7 @@ $SeenHashes = @{}
 $ControlledDrugReferenceCache = $null
 $Initialized = $false
 $LastReferenceSyncAt = $null
+$AgentVersion = "1.1.5-ps"
 
 function Ensure-Directory {
   param([string]$Path)
@@ -1402,7 +1403,7 @@ function New-AgentEnvelope {
       pharmacyId = Convert-NullableInt $Config.pharmacyId
       deviceId = $Config.deviceId
       deviceName = $Config.deviceName
-      agentVersion = "1.1.4-ps"
+      agentVersion = $AgentVersion
       batchId = "$Kind-$($eventId.Substring(0, 16))-$Part-$TotalParts"
       capturedAt = $now
       items = $Items
@@ -1823,7 +1824,7 @@ function New-Payload {
       pharmacyId = Convert-NullableInt $Config.pharmacyId
       deviceId = $Config.deviceId
       deviceName = $Config.deviceName
-      agentVersion = "1.1.4-ps"
+      agentVersion = $AgentVersion
       batchId = "prescription-$($eventId.Substring(0, 16))"
       capturedAt = $now
       source = "EPHARM_DB"
@@ -1875,7 +1876,7 @@ function New-RequestHeaders {
   )
 
   $headers = @{
-    "X-PharmFarm-Agent-Version" = "1.1.4-ps"
+    "X-PharmFarm-Agent-Version" = $AgentVersion
     "X-PharmFarm-Device-Id" = $Config.deviceId
   }
 
@@ -2165,7 +2166,7 @@ try {
     exit 1
   }
 
-  Write-AgentLog "PharmFarm Agent started api=$($config.apiBase) sql=$($config.sqlServer) interval=${intervalSeconds}s pharmacyId=$($config.pharmacyId) deviceId=$($config.deviceId) includeRawQr=$($config.includeRawQrText) secretConfigured=$(![string]::IsNullOrWhiteSpace($config.agentSecret)) resyncTodayPrescriptions=$ResyncTodayPrescriptions"
+  Write-AgentLog "PharmFarm Agent started version=$AgentVersion api=$($config.apiBase) sql=$($config.sqlServer) interval=${intervalSeconds}s pharmacyId=$($config.pharmacyId) deviceId=$($config.deviceId) includeRawQr=$($config.includeRawQrText) secretConfigured=$(![string]::IsNullOrWhiteSpace($config.agentSecret)) resyncTodayPrescriptions=$ResyncTodayPrescriptions"
 
   if ($ResyncTodayPrescriptions) {
     Queue-TodayPrescriptionOverwrite $config
