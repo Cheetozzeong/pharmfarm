@@ -21,11 +21,11 @@ $BootstrapStateFile = Join-Path $InstallRoot "bootstrap.state.json"
 $ControlledDrugReferenceFile = Join-Path $InstallRoot "controlled-drug-reference.csv"
 $SyncStateDir = Join-Path $InstallRoot "sync-state"
 $LogFile = Join-Path $LogDir ("agent-{0}.log" -f (Get-Date -Format "yyyyMMdd"))
-$SeenHashes = @{}
 $ControlledDrugReferenceCache = $null
 $Initialized = $false
 $LastReferenceSyncAt = $null
-$AgentVersion = "1.1.5-ps"
+$LastPrescriptionFullScanAt = $null
+$AgentVersion = "1.1.6-ps"
 
 function Ensure-Directory {
   param([string]$Path)
@@ -1609,8 +1609,20 @@ function Invoke-BootstrapSync {
 function Get-RecentPrescriptionRows {
   param([object]$Config)
 
+  $scanRows = 32
+  if ($null -ne $Config -and $null -ne $Config.PSObject.Properties["prescriptionScanRows"]) {
+    try {
+      $scanRows = [int]$Config.prescriptionScanRows
+    } catch {
+      $scanRows = 32
+    }
+  }
+
+  if ($scanRows -lt 8) { $scanRows = 8 }
+  if ($scanRows -gt 500) { $scanRows = 500 }
+
   $query = @"
-SELECT TOP (8)
+SELECT TOP ($scanRows)
   ps_Code,
   ps_Date,
   ps_CnvDef,
@@ -1622,6 +1634,23 @@ ORDER BY ps_Date DESC, ps_Code DESC
 "@
 
   return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_ERROR_LOG" -Query $query -TimeoutSeconds 8
+}
+
+function Get-PrescriptionFullScanIntervalMinutes {
+  param([object]$Config)
+
+  $minutes = 5
+  if ($null -ne $Config -and $null -ne $Config.PSObject.Properties["prescriptionFullScanIntervalMinutes"]) {
+    try {
+      $minutes = [int]$Config.prescriptionFullScanIntervalMinutes
+    } catch {
+      $minutes = 5
+    }
+  }
+
+  if ($minutes -lt 0) { $minutes = 0 }
+  if ($minutes -gt 1440) { $minutes = 1440 }
+  return $minutes
 }
 
 function Get-TodayPrescriptionRows {
@@ -1720,6 +1749,69 @@ ORDER BY pd_no
       return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_PHARM" -Query $fallback -TimeoutSeconds 10
     }
   }
+}
+
+function Get-PrescriptionSyncKey {
+  param([string]$PrescriptionCode)
+
+  $code = Convert-AgentText $PrescriptionCode
+  if ([string]::IsNullOrWhiteSpace($code)) {
+    return ""
+  }
+
+  return "rx_" + (Get-Sha256Hex $code)
+}
+
+function Get-PrescriptionSnapshotHash {
+  param(
+    [object]$QrRow,
+    [object[]]$DrugRows
+  )
+
+  $prescriptionCode = Convert-AgentText $QrRow.ps_Code
+  $barcode = Convert-AgentText $QrRow.ps_edbBarcode
+  $prescriptionRefHash = ""
+  $barcodeHash = ""
+  $drugItems = New-Object System.Collections.Generic.List[object]
+
+  if (![string]::IsNullOrWhiteSpace($prescriptionCode)) {
+    $prescriptionRefHash = Get-Sha256Hex $prescriptionCode
+  }
+
+  if (![string]::IsNullOrWhiteSpace($barcode)) {
+    $barcodeHash = Get-Sha256Hex $barcode
+  }
+
+  foreach ($drug in $DrugRows) {
+    $substitutionType = Convert-NullableInt $drug.pd_extype
+    if ($null -eq $substitutionType) { $substitutionType = 0 }
+
+    [void]$drugItems.Add([ordered]@{
+      pd_no = Convert-NullableInt $drug.pd_no
+      pd_iscode = Convert-AgentText $drug.pd_iscode
+      drug_name = Convert-AgentText $drug.drug_name
+      pd_dose = Convert-NullableDouble $drug.pd_dose
+      pd_dnum = Convert-NullableInt $drug.pd_dnum
+      pd_dday = Convert-NullableInt $drug.pd_dday
+      pd_amount = Convert-NullableDouble $drug.pd_amount
+      pd_extype = $substitutionType
+      pd_exrow = Convert-NullableInt $drug.pd_exrow
+      pd_element = Convert-AgentText $drug.pd_element
+    })
+  }
+
+  $snapshot = [ordered]@{
+    prescriptionRefHash = $prescriptionRefHash
+    ps_Date = Convert-AgentText $QrRow.ps_Date
+    ps_CnvDef = Convert-AgentText $QrRow.ps_CnvDef
+    ps_edbBarcodeHash = $barcodeHash
+    ps_Mcode = Convert-AgentText $QrRow.ps_Mcode
+    ps_Mcodetype = Convert-AgentText $QrRow.ps_Mcodetype
+    drugs = $drugItems.ToArray()
+  }
+
+  $json = $snapshot | ConvertTo-Json -Depth 20 -Compress
+  return Get-Sha256Hex $json
 }
 
 function New-Payload {
@@ -2038,6 +2130,7 @@ function Queue-TodayPrescriptionOverwrite {
   param([object]$Config)
 
   $requestId = [Guid]::NewGuid().ToString("N")
+  $prescriptionHashes = Read-SyncHashes "prescription-live"
   $queued = 0
   $skipped = 0
 
@@ -2062,6 +2155,10 @@ function Queue-TodayPrescriptionOverwrite {
       }
 
       $envelope = New-Payload -Config $Config -QrRow $row -DrugRows $drugRows -SyncMode "TODAY_OVERWRITE" -OverwriteExisting $true -ResyncRequestId $requestId
+      $syncKey = Get-PrescriptionSyncKey $code
+      if (![string]::IsNullOrWhiteSpace($syncKey)) {
+        $prescriptionHashes[$syncKey] = Get-PrescriptionSnapshotHash -QrRow $row -DrugRows $drugRows
+      }
 
       if (Save-QueueItem $envelope) {
         $queued += 1
@@ -2069,6 +2166,7 @@ function Queue-TodayPrescriptionOverwrite {
       }
     }
 
+    Write-SyncHashes -Kind "prescription-live" -Hashes $prescriptionHashes
     Flush-Queue $Config
     Write-State -Config $Config -Status "OK" -Message "today prescription overwrite queued=$queued skipped=$skipped"
     Write-AgentLog "today prescription overwrite complete queued=$queued skipped=$skipped requestId=$requestId"
@@ -2083,62 +2181,113 @@ function Watch-Once {
   param([object]$Config)
 
   try {
-    $rows = @(Convert-DataTableRows (Get-RecentPrescriptionRows $Config))
+    $fullScanIntervalMinutes = Get-PrescriptionFullScanIntervalMinutes $Config
+    $runFullPrescriptionScan = $false
+    if ($fullScanIntervalMinutes -gt 0) {
+      if ($null -eq $script:LastPrescriptionFullScanAt -or ((Get-Date) - $script:LastPrescriptionFullScanAt).TotalMinutes -ge $fullScanIntervalMinutes) {
+        $runFullPrescriptionScan = $true
+      }
+    }
+
+    $scanMode = "recent"
+    if ($runFullPrescriptionScan) {
+      $rows = @(Convert-DataTableRows (Get-TodayPrescriptionRows $Config))
+      $scanMode = "today"
+    } else {
+      $rows = @(Convert-DataTableRows (Get-RecentPrescriptionRows $Config))
+    }
+
+    $prescriptionStatePath = Get-SyncStatePath "prescription-live"
+    $hasPrescriptionState = Test-Path -LiteralPath $prescriptionStatePath
+    $prescriptionHashes = Read-SyncHashes "prescription-live"
+    $freshBaseline = (!$script:Initialized -and !$hasPrescriptionState)
     $latest = if ($rows.Count -gt 0) { $rows[0] } else { $null }
     if ($null -ne $latest) {
       $latestCode = if ($latest.ps_Code) { $latest.ps_Code.ToString() } else { "" }
       $latestDate = if ($latest.ps_Date) { $latest.ps_Date.ToString() } else { "" }
       $latestBarcodeLen = if ($latest.ps_edbBarcode) { $latest.ps_edbBarcode.ToString().Length } else { 0 }
       $latestHash = if (![string]::IsNullOrWhiteSpace($latestCode)) { (Get-Sha256Hex $latestCode).Substring(0, 12) } else { "" }
-      Write-AgentLog "watch scan rows=$($rows.Count) initialized=$script:Initialized latestHash=$latestHash latestDate=$latestDate latestBarcodeLen=$latestBarcodeLen includeRawQr=$($Config.includeRawQrText)"
+      Write-AgentLog "watch scan mode=$scanMode rows=$($rows.Count) initialized=$script:Initialized freshBaseline=$freshBaseline tracked=$($prescriptionHashes.Count) latestHash=$latestHash latestDate=$latestDate latestBarcodeLen=$latestBarcodeLen includeRawQr=$($Config.includeRawQrText)"
     } else {
-      Write-AgentLog "watch scan rows=0 initialized=$script:Initialized includeRawQr=$($Config.includeRawQrText)" "WARN"
+      Write-AgentLog "watch scan mode=$scanMode rows=0 initialized=$script:Initialized freshBaseline=$freshBaseline tracked=$($prescriptionHashes.Count) includeRawQr=$($Config.includeRawQrText)" "WARN"
     }
 
-    if (!$script:Initialized) {
-      foreach ($row in $rows) {
-        $code = if ($row.ps_Code) { $row.ps_Code.ToString() } else { "" }
-        $barcode = if ($row.ps_edbBarcode) { $row.ps_edbBarcode.ToString() } else { "" }
-        $script:SeenHashes[(Get-Sha256Hex "$code.$barcode")] = $true
-      }
-
-      $script:Initialized = $true
-      Write-AgentLog "baseline rows=$($rows.Count)"
-      Write-State -Config $Config -Status "OK" -Message "baseline complete"
-      return
-    }
+    $queued = 0
+    $newRows = 0
+    $updatedRows = 0
+    $unchanged = 0
+    $pending = 0
+    $baselined = 0
+    $skipped = 0
 
     foreach ($row in $rows) {
       $code = if ($row.ps_Code) { $row.ps_Code.ToString() } else { "" }
-      $barcode = if ($row.ps_edbBarcode) { $row.ps_edbBarcode.ToString() } else { "" }
 
       if ([string]::IsNullOrWhiteSpace($code)) {
+        $skipped += 1
         continue
       }
 
-      $seenKey = Get-Sha256Hex "$code.$barcode"
-
-      if ($script:SeenHashes.ContainsKey($seenKey)) {
-        continue
-      }
+      $syncKey = Get-PrescriptionSyncKey $code
 
       $drugRows = @(Convert-DataTableRows (Get-PrescriptionDrugs -Config $Config -PrescriptionCode $code))
 
       if ($drugRows.Count -eq 0) {
         Write-AgentLog "pending prescription=$((Get-Sha256Hex $code).Substring(0, 12)) drugs=0 willRetry=true" "WARN"
+        $pending += 1
         continue
       }
 
-      $script:SeenHashes[$seenKey] = $true
-      $envelope = New-Payload -Config $Config -QrRow $row -DrugRows $drugRows
+      $snapshotHash = Get-PrescriptionSnapshotHash -QrRow $row -DrugRows $drugRows
+      $hasPreviousSnapshot = $prescriptionHashes.ContainsKey($syncKey)
+
+      if ($freshBaseline) {
+        $prescriptionHashes[$syncKey] = $snapshotHash
+        $baselined += 1
+        continue
+      }
+
+      if ($hasPreviousSnapshot -and $prescriptionHashes[$syncKey] -eq $snapshotHash) {
+        $unchanged += 1
+        continue
+      }
+
+      $syncMode = "LIVE"
+      $overwriteExisting = $false
+      $changeKind = "new"
+
+      if ($hasPreviousSnapshot) {
+        $overwriteExisting = $true
+        $changeKind = "updated"
+        $updatedRows += 1
+      } else {
+        $newRows += 1
+      }
+
+      $envelope = New-Payload -Config $Config -QrRow $row -DrugRows $drugRows -SyncMode $syncMode -OverwriteExisting $overwriteExisting
 
       if (Save-QueueItem $envelope) {
-        Write-AgentLog "queued event=$($envelope.eventId) drugs=$($drugRows.Count)"
+        $queued += 1
+        Write-AgentLog "queued prescription $changeKind event=$($envelope.eventId) drugs=$($drugRows.Count) overwriteExisting=$overwriteExisting"
       }
+
+      $prescriptionHashes[$syncKey] = $snapshotHash
+    }
+
+    Write-SyncHashes -Kind "prescription-live" -Hashes $prescriptionHashes
+    $script:Initialized = $true
+    if ($runFullPrescriptionScan) {
+      $script:LastPrescriptionFullScanAt = Get-Date
+    }
+
+    if ($freshBaseline) {
+      Write-AgentLog "baseline prescription snapshots mode=$scanMode rows=$($rows.Count) baselined=$baselined pending=$pending skipped=$skipped"
+      Write-State -Config $Config -Status "OK" -Message "baseline complete prescriptions=$baselined pending=$pending"
+      return
     }
 
     Flush-Queue $Config
-    Write-State -Config $Config -Status "OK" -Message "watch loop complete"
+    Write-State -Config $Config -Status "OK" -Message "watch loop complete mode=$scanMode queued=$queued new=$newRows updated=$updatedRows unchanged=$unchanged pending=$pending"
   } catch {
     Write-AgentLog "watch error $($_.Exception.Message)" "ERROR"
     Write-State -Config $Config -Status "ERROR" -Message $_.Exception.Message

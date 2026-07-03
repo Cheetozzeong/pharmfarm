@@ -41,7 +41,7 @@ Runtime folders:
   sent        Successfully sent events
   dead-letter Payload errors that should not be retried
   logs        Daily log files
-  sync-state  Local row hashes used to send only changed reference rows
+  sync-state  Local row hashes used to send only changed reference rows and changed prescription snapshots
 
 Default SQL Server:
 
@@ -66,6 +66,10 @@ Prescription substitution rows:
 - pd_extype=2 means the actual replacement line that was dispensed.
 - The server should preserve both lines for prescription detail display, but only pd_extype=0 or pd_extype=2 rows should affect stock deduction.
 - If an older local DB does not expose pd_extype/pd_exrow/pd_element, the agent sends the prescription line as a normal row.
+- Live prescription watching stores a local snapshot hash per prescription in sync-state\prescription-live.hashes.json.
+- If an already-seen prescription's PRESCRIPT_EDB/prsdrug snapshot changes later, the agent sends it again with syncMode=LIVE and overwriteExisting=true so the server can replace the stored prescription lines.
+- The recent prescription watch window defaults to 32 rows. Add prescriptionScanRows to agent.config.json to adjust it; values are clamped between 8 and 500.
+- The agent also rescans all of today's prescriptions every 5 minutes by default. Set prescriptionFullScanIntervalMinutes to 0 to disable it, or 1-1440 to adjust the interval.
 
 Recommended operation:
 
@@ -110,6 +114,7 @@ Today prescription overwrite test:
 - The today-row query avoids TRY_CONVERT so it can run on older EPharm SQL Server versions.
 - The payload uses syncMode=TODAY_OVERWRITE and overwriteExisting=true.
 - The server must upsert by prescriptionCode + lineNo and replace the stored prescription lines before running stock deduction again.
+- The local live prescription snapshot state is also updated after this resend.
 - Run from the tray menu, or run resync-today-prescriptions.bat from the extracted package.
 - The tray menu uses the installed ProgramData copy. The extracted resync-today-prescriptions.bat uses the extracted package copy first.
 
