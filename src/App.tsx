@@ -2404,7 +2404,7 @@ function isOpenShortageStatus(status?: CmsShortageStatus) {
 }
 
 function isActiveShortageStatus(status?: CmsShortageStatus) {
-  return isOpenShortageStatus(status) || status === "ORDERED";
+  return isOpenShortageStatus(status);
 }
 
 function shortageStatusBadgeClass(status?: CmsShortageStatus) {
@@ -11814,7 +11814,10 @@ function createFallbackDashboardData({
   syncJobs: CmsSyncJob[];
 }): CmsDashboardData {
   const failedDeductions = deductionRecords.filter(
-    (record) => record.status === "FAILED" || record.shortageQuantity > 0,
+    (record) =>
+      record.status === "FAILED" ||
+      (record.shortageQuantity > 0 &&
+        isActiveShortageStatus(record.shortageStatus)),
   ).length;
   const controlledStockCount = stocks.filter(
     (stock) => stock.controlledDrug.controlled,
