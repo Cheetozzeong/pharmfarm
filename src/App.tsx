@@ -7074,7 +7074,12 @@ type CmsPurchaseHistory = {
 
 type CmsSyncJob = {
   id: string;
-  status: "RUNNING" | "SUCCESS" | "AUTH_FAILED" | "PARTIAL_AUTH_FAILED";
+  status:
+    | "RUNNING"
+    | "SUCCESS"
+    | "FAILED"
+    | "AUTH_FAILED"
+    | "PARTIAL_AUTH_FAILED";
   startDate: string;
   endDate: string;
   lastSuccessPage: number;
@@ -9963,6 +9968,24 @@ function normalizeCmsPurchase(raw: unknown, index: number): CmsPurchaseHistory {
 function normalizeCmsSyncJob(raw: unknown, index: number): CmsSyncJob {
   const item = raw as Record<string, unknown>;
   const status = String(item.status ?? "SUCCESS") as CmsSyncJob["status"];
+  const stage = optionalText(item.currentStage ?? item.current_stage);
+  const responsePreview = optionalText(
+    item.responsePreview ?? item.response_preview,
+  );
+  const message = optionalText(
+    item.message ??
+      item.errorMessage ??
+      item.error_message ??
+      item.failureReason ??
+      item.failure_reason,
+  );
+  const detailMessage = [
+    message || status,
+    stage ? `단계 ${stage}` : "",
+    responsePreview ? `응답 ${responsePreview}` : "",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return {
     id: String(item.id ?? item.jobId ?? index),
     status,
@@ -9970,7 +9993,7 @@ function normalizeCmsSyncJob(raw: unknown, index: number): CmsSyncJob {
     endDate: String(item.endDate ?? "-"),
     lastSuccessPage: Number(item.lastSuccessPage ?? item.currentPage ?? 0),
     totalPages: Number(item.totalPages ?? item.lastPage ?? 0),
-    message: userFacingConnectionMessage(item.message ?? status),
+    message: userFacingConnectionMessage(detailMessage),
   };
 }
 
