@@ -28,7 +28,7 @@ Files:
    It sends overwriteExisting=true so the server can replace already imported prescription lines.
 
 6. uninstall-pharmfarm-agent.bat
-   Removes the Scheduled Task.
+   Removes the Scheduled Task and Startup fallback shortcuts.
    Runtime queue/log files remain in ProgramData for recovery/audit.
 
 Runtime path:
@@ -88,6 +88,13 @@ Updating an installed agent:
 - Run install-pharmfarm-agent.bat again, or copy PharmFarm-Agent.ps1 into C:\ProgramData\PharmFarmAgent.
 - The startup log should show the bundled agent version. If the version is old, the tray is still using the old ProgramData copy.
 - resync-today-prescriptions.bat runs the bundled PharmFarm-Agent.ps1 first, so it can test a freshly extracted package before reinstalling.
+
+Task Scheduler registration fallback:
+
+- The installer first checks that the Windows Task Scheduler service is running.
+- If PowerShell scheduled-task registration fails, the installer retries with schtasks.exe.
+- If Task Scheduler still fails, the installer creates Startup folder shortcuts and starts the agent/tray immediately, so the PC does not need to reboot just to begin running.
+- In that fallback mode, the agent starts when the current Windows user logs in.
 
 If data does not arrive:
 
