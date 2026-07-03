@@ -13,6 +13,8 @@ import {
   CalendarDays,
   ChevronDown,
   CircleHelp,
+  Copy,
+  ExternalLink,
   Focus,
   HardDriveDownload,
   PanelLeftClose,
@@ -7548,6 +7550,169 @@ const demoDeductionRecords: CmsDeductionRecord[] = [
   },
 ];
 
+type KakaoBrowserInfo = {
+  currentUrl: string;
+  isAndroid: boolean;
+  isIos: boolean;
+  isKakao: boolean;
+};
+
+function getKakaoBrowserInfo(): KakaoBrowserInfo {
+  const userAgent = navigator.userAgent || "";
+  return {
+    currentUrl: window.location.href,
+    isAndroid: /Android/i.test(userAgent),
+    isIos: /iPhone|iPad|iPod/i.test(userAgent),
+    isKakao: /KAKAOTALK|KakaoTalk|KAKAOSTORY/i.test(userAgent),
+  };
+}
+
+function buildAndroidExternalIntentUrl(currentUrl: string): string {
+  try {
+    const url = new URL(currentUrl);
+    const scheme = url.protocol.replace(":", "") || "https";
+    const target = `${url.host}${url.pathname}${url.search}`;
+    return `intent://${target}#Intent;scheme=${scheme};package=com.android.chrome;S.browser_fallback_url=${encodeURIComponent(
+      currentUrl,
+    )};end`;
+  } catch {
+    return currentUrl;
+  }
+}
+
+function openExternalBrowser(info: KakaoBrowserInfo) {
+  if (info.isAndroid) {
+    window.location.href = buildAndroidExternalIntentUrl(info.currentUrl);
+    return;
+  }
+
+  window.open(info.currentUrl, "_blank", "noopener,noreferrer");
+}
+
+async function copyTextToClipboard(text: string) {
+  if (navigator.clipboard?.writeText && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  textarea.style.top = "0";
+  document.body.appendChild(textarea);
+  textarea.focus();
+  textarea.select();
+
+  try {
+    const copied = document.execCommand("copy");
+    if (!copied) {
+      throw new Error("copy command failed");
+    }
+  } finally {
+    document.body.removeChild(textarea);
+  }
+}
+
+function KakaoExternalBrowserGate() {
+  const browserInfo = useMemo(() => getKakaoBrowserInfo(), []);
+  const [dismissed, setDismissed] = useState(false);
+  const [copyState, setCopyState] = useState<"idle" | "copied" | "failed">(
+    "idle",
+  );
+
+  useEffect(() => {
+    if (!browserInfo.isKakao || !browserInfo.isAndroid) {
+      return;
+    }
+
+    const attemptKey = `pharmfarm:kakao-external-attempt:${window.location.origin}${window.location.pathname}`;
+    if (sessionStorage.getItem(attemptKey) === "1") {
+      return;
+    }
+
+    sessionStorage.setItem(attemptKey, "1");
+    const timeoutId = window.setTimeout(() => {
+      openExternalBrowser(browserInfo);
+    }, 250);
+    return () => window.clearTimeout(timeoutId);
+  }, [browserInfo]);
+
+  const handleCopy = useCallback(async () => {
+    try {
+      await copyTextToClipboard(browserInfo.currentUrl);
+      setCopyState("copied");
+    } catch {
+      setCopyState("failed");
+    }
+
+    window.setTimeout(() => setCopyState("idle"), 1800);
+  }, [browserInfo.currentUrl]);
+
+  if (!browserInfo.isKakao || dismissed) {
+    return null;
+  }
+
+  const openLabel = browserInfo.isIos
+    ? "Safari로 열기"
+    : "기본 브라우저로 열기";
+  const copyLabel =
+    copyState === "copied"
+      ? "복사 완료"
+      : copyState === "failed"
+        ? "복사 실패"
+        : "주소 복사";
+
+  return (
+    <div className="external-browser-gate" role="dialog" aria-modal="true">
+      <div className="external-browser-card">
+        <button
+          type="button"
+          className="external-browser-close"
+          aria-label="현재 브라우저에서 계속 보기"
+          onClick={() => setDismissed(true)}
+        >
+          <X size={18} />
+        </button>
+        <div className="external-browser-mark">
+          <ExternalLink size={22} />
+        </div>
+        <h1>기본 브라우저에서 열어주세요</h1>
+        <p>
+          카카오톡 브라우저에서는 카메라, 다운로드, 로그인 동작이 제한될 수
+          있어 새 브라우저로 이동합니다.
+        </p>
+        <div className="external-browser-actions">
+          <button
+            type="button"
+            className="external-browser-primary"
+            onClick={() => openExternalBrowser(browserInfo)}
+          >
+            <ExternalLink size={18} />
+            {openLabel}
+          </button>
+          <button
+            type="button"
+            className="external-browser-secondary"
+            onClick={handleCopy}
+          >
+            <Copy size={17} />
+            {copyLabel}
+          </button>
+        </div>
+        <button
+          type="button"
+          className="external-browser-continue"
+          onClick={() => setDismissed(true)}
+        >
+          현재 창에서 계속 보기
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function App() {
   const [path, setPath] = useState(window.location.pathname);
 
@@ -7563,14 +7728,29 @@ function App() {
   }, []);
 
   if (path.startsWith("/agent")) {
-    return <AgentLanding navigate={navigate} />;
+    return (
+      <>
+        <KakaoExternalBrowserGate />
+        <AgentLanding navigate={navigate} />
+      </>
+    );
   }
 
   if (path.startsWith("/cms")) {
-    return <CmsApp path={path} navigate={navigate} />;
+    return (
+      <>
+        <KakaoExternalBrowserGate />
+        <CmsApp path={path} navigate={navigate} />
+      </>
+    );
   }
 
-  return <MobileApp />;
+  return (
+    <>
+      <KakaoExternalBrowserGate />
+      <MobileApp />
+    </>
+  );
 }
 
 function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
