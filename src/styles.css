@@ -5130,7 +5130,8 @@ body:has(.cms-shell) {
 .cms-field strong,
 .cms-field input,
 .cms-input input,
-.cms-input select {
+.cms-input select,
+.cms-input textarea {
   display: block;
   width: 100%;
   border: 1px solid #e6e9eb;
@@ -5155,13 +5156,20 @@ body:has(.cms-shell) {
 
 .cms-field input,
 .cms-input input,
-.cms-input select {
+.cms-input select,
+.cms-input textarea {
   outline: 0;
 }
 
 .cms-input select {
   min-height: 43px;
   appearance: none;
+}
+
+.cms-input textarea {
+  min-height: 126px;
+  resize: vertical;
+  line-height: 1.45;
 }
 
 .cms-field-grid {
@@ -7368,6 +7376,10 @@ body:has(.cms-shell) {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
+}
+
+.cms-cookie-token-grid .span-2 {
+  grid-column: 1 / -1;
 }
 
 .cms-cookie-preview {
