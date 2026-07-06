@@ -33,6 +33,7 @@ import briefcaseIcon from "../icons/20px/briefcase.svg";
 import fileTextIcon from "../icons/20px/filetext.svg";
 import homeIcon from "../icons/20px/home.svg";
 import pieGraphIcon from "../icons/20px/pieGraph.svg";
+import warningTriangleIcon from "../icons/20px/warning-triangle-filled.svg";
 import viewGridIcon from "../icons/20px/view_grid-filled.svg";
 import viewListIcon from "../icons/20px/view_list-filled.svg";
 import pharmfarmLogo from "../logo_1.png";
@@ -11272,6 +11273,13 @@ function CmsSidebar({
         >)
       : []),
     ["inventory", "재고", "/cms/inventory", barGraphIcon],
+    [
+      "inventory-shortages",
+      "초과 처방",
+      "/cms/inventory/shortages",
+      warningTriangleIcon,
+    ],
+    ["return-reviews", "반품 확인", "/cms/inventory/returns", briefcaseIcon],
     ["prescriptions", "처방전", "/cms/prescriptions", fileTextIcon],
     ...(canAccessPurchase
       ? ([["purchase", "구매 내역", "/cms/purchase", pieGraphIcon]] as Array<
@@ -11280,63 +11288,6 @@ function CmsSidebar({
       : []),
   ];
   const accountDisplay = getCmsAccountDisplay(account);
-  const isInventorySection =
-    page === "inventory" ||
-    page === "inventory-shortages" ||
-    page === "return-reviews";
-  const [inventoryExpanded, setInventoryExpanded] =
-    useState(isInventorySection);
-  const [inventoryFlyoutOpen, setInventoryFlyoutOpen] = useState(false);
-  const inventoryFlyoutCloseTimerRef = useRef<number | null>(null);
-
-  function clearInventoryFlyoutCloseTimer() {
-    if (inventoryFlyoutCloseTimerRef.current === null) return;
-    window.clearTimeout(inventoryFlyoutCloseTimerRef.current);
-    inventoryFlyoutCloseTimerRef.current = null;
-  }
-
-  function openInventoryFlyout() {
-    if (!collapsed) return;
-    clearInventoryFlyoutCloseTimer();
-    setInventoryFlyoutOpen(true);
-  }
-
-  function closeInventoryFlyoutSoon() {
-    if (!collapsed) return;
-    clearInventoryFlyoutCloseTimer();
-    inventoryFlyoutCloseTimerRef.current = window.setTimeout(() => {
-      setInventoryFlyoutOpen(false);
-      inventoryFlyoutCloseTimerRef.current = null;
-    }, 220);
-  }
-
-  useEffect(() => {
-    if (isInventorySection) setInventoryExpanded(true);
-  }, [isInventorySection]);
-
-  useEffect(() => {
-    clearInventoryFlyoutCloseTimer();
-    setInventoryFlyoutOpen(false);
-  }, [collapsed, page]);
-
-  useEffect(() => () => clearInventoryFlyoutCloseTimer(), []);
-
-  const inventorySubItems: Array<[CmsPage, string, string]> = [
-    ["inventory", "재고 목록", "/cms/inventory"],
-    ["inventory-shortages", "초과 처방", "/cms/inventory/shortages"],
-    ["return-reviews", "반품 확인", "/cms/inventory/returns"],
-  ];
-  const showInventorySubnav = collapsed || inventoryExpanded;
-
-  function handleInventoryParentClick() {
-    if (collapsed) {
-      clearInventoryFlyoutCloseTimer();
-      setInventoryFlyoutOpen((current) => !current);
-      return;
-    }
-
-    setInventoryExpanded((current) => !current);
-  }
 
   return (
     <aside className="cms-sidebar">
@@ -11361,82 +11312,18 @@ function CmsSidebar({
         </button>
       </div>
       <nav className="cms-nav">
-        {items.map(([key, label, href, icon]) =>
-          key === "inventory" ? (
-            <div
-              className={`cms-nav-group ${
-                inventoryExpanded ? "is-open" : ""
-              } ${inventoryFlyoutOpen ? "is-flyout-open" : ""}`}
-              key={key}
-              onBlur={(event) => {
-                const nextTarget = event.relatedTarget;
-                if (
-                  !(nextTarget instanceof Node) ||
-                  !event.currentTarget.contains(nextTarget)
-                ) {
-                  closeInventoryFlyoutSoon();
-                }
-              }}
-              onMouseEnter={openInventoryFlyout}
-              onMouseLeave={closeInventoryFlyoutSoon}
-            >
-              <button
-                aria-expanded={
-                  collapsed ? inventoryFlyoutOpen : inventoryExpanded
-                }
-                aria-haspopup={collapsed ? "menu" : undefined}
-                className={`cms-nav-parent ${
-                  isInventorySection ? "is-section-active" : ""
-                }`}
-                type="button"
-                title={label}
-                onClick={handleInventoryParentClick}
-              >
-                <img className="cms-nav-icon" src={icon} alt="" aria-hidden />
-                <span className="cms-nav-label">{label}</span>
-                <ChevronDown
-                  className="cms-nav-caret"
-                  size={15}
-                  strokeWidth={2.6}
-                />
-              </button>
-              {showInventorySubnav && (
-                <div
-                  className="cms-subnav"
-                  aria-label="재고 하위 메뉴"
-                  onMouseEnter={openInventoryFlyout}
-                >
-                  {inventorySubItems.map(([subKey, subLabel, subHref]) => (
-                    <button
-                      className={page === subKey ? "is-active" : ""}
-                      key={subKey}
-                      type="button"
-                      title={subLabel}
-                      onClick={() => {
-                        clearInventoryFlyoutCloseTimer();
-                        setInventoryFlyoutOpen(false);
-                        navigate(subHref);
-                      }}
-                    >
-                      <span className="cms-nav-label">{subLabel}</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          ) : (
-            <button
-              key={key}
-              className={page === key ? "is-active" : ""}
-              type="button"
-              title={label}
-              onClick={() => navigate(href)}
-            >
-              <img className="cms-nav-icon" src={icon} alt="" aria-hidden />
-              <span className="cms-nav-label">{label}</span>
-            </button>
-          ),
-        )}
+        {items.map(([key, label, href, icon]) => (
+          <button
+            key={key}
+            className={page === key ? "is-active" : ""}
+            type="button"
+            title={label}
+            onClick={() => navigate(href)}
+          >
+            <img className="cms-nav-icon" src={icon} alt="" aria-hidden />
+            <span className="cms-nav-label">{label}</span>
+          </button>
+        ))}
       </nav>
       <div className="cms-account">
         <span>{accountDisplay.initial}</span>
@@ -11464,8 +11351,8 @@ function CmsHeader({
     import: "기준 데이터 Import",
     signup: "계정 생성",
     inventory: "재고",
-    "inventory-shortages": "재고 · 초과 처방",
-    "return-reviews": "재고 · 반품 확인",
+    "inventory-shortages": "초과 처방",
+    "return-reviews": "반품 확인",
     wholesaler: "도매처 관리",
     prescriptions: "처방전",
     purchase: "구매 내역",
