@@ -2664,8 +2664,25 @@ function userFacingConnectionMessage(value: unknown) {
     .replace(/쿠키/g, "연결 정보");
 }
 
+function extractCookieTokenValue(
+  value: string,
+  key: "sessionid" | "csrftoken",
+) {
+  const normalized = value.replace(/^Cookie:\s*/i, "").trim();
+  const pair = normalized
+    .split(";")
+    .map((item) => item.trim())
+    .find((item) => item.toLowerCase().startsWith(`${key}=`));
+
+  if (pair) return pair.slice(pair.indexOf("=") + 1).trim();
+  return normalized.replace(new RegExp(`^${key}\\s*=\\s*`, "i"), "").trim();
+}
+
 function buildBaropharmCookie(draft: BaropharmCookieDraft) {
-  return draft.cookie.replace(/^Cookie:\s*/i, "").trim();
+  const sessionId = extractCookieTokenValue(draft.sessionId, "sessionid");
+  const csrfToken = extractCookieTokenValue(draft.csrfToken, "csrftoken");
+  if (!sessionId || !csrfToken) return "";
+  return `sessionid=${sessionId}; csrftoken=${csrfToken};`;
 }
 
 function normalizeInsuranceCode(value: string | undefined) {
@@ -7054,7 +7071,8 @@ type CmsCookieState = {
 
 type BaropharmCookieDraft = {
   pharmacyId: string;
-  cookie: string;
+  sessionId: string;
+  csrfToken: string;
 };
 
 type CmsPurchaseHistory = {
@@ -8066,7 +8084,8 @@ function CmsApp({
   const [baropharmCookieDraft, setBaropharmCookieDraft] =
     useState<BaropharmCookieDraft>({
       pharmacyId: authAccount?.pharmacyId ?? "",
-      cookie: "",
+      sessionId: "",
+      csrfToken: "",
     });
   const [syncStartDate, setSyncStartDate] = useState(
     new Date().toISOString().split("T")[0],
@@ -9330,7 +9349,7 @@ function CmsApp({
         method: "POST",
         body: JSON.stringify({ cookie, pharmacyId: Number(pharmacyId) }),
       });
-      setBaropharmCookieDraft({ pharmacyId, cookie: "" });
+      setBaropharmCookieDraft({ pharmacyId, sessionId: "", csrfToken: "" });
       setCookieState({
         registered: true,
         status: "VALID",
@@ -16709,17 +16728,30 @@ function CmsPurchasePage({
                 }
               />
             </label>
-            <label className="cms-input span-2">
-              <span>cookie</span>
-              <textarea
+            <label className="cms-input">
+              <span>sessionid</span>
+              <input
                 autoComplete="off"
-                placeholder="Cookie: sessionid=...; csrftoken=...;"
-                rows={5}
-                value={cookieDraft.cookie}
+                placeholder="sessionid 값만 입력"
+                value={cookieDraft.sessionId}
                 onChange={(event) =>
                   onCookieDraftChange({
                     ...cookieDraft,
-                    cookie: event.target.value,
+                    sessionId: event.target.value,
+                  })
+                }
+              />
+            </label>
+            <label className="cms-input">
+              <span>csrftoken</span>
+              <input
+                autoComplete="off"
+                placeholder="csrftoken 값만 입력"
+                value={cookieDraft.csrfToken}
+                onChange={(event) =>
+                  onCookieDraftChange({
+                    ...cookieDraft,
+                    csrfToken: event.target.value,
                   })
                 }
               />
