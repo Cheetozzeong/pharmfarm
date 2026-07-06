@@ -7976,6 +7976,10 @@ function canAccessBaropharmCookieCms(account?: AuthAccount | null) {
   return account?.role?.toUpperCase() === "ADMIN";
 }
 
+function canAccessPurchaseCms(account?: AuthAccount | null) {
+  return canAccessRootCms(account);
+}
+
 function canViewAmountCms(account?: AuthAccount | null) {
   const role = account?.role?.toUpperCase();
   const accountType = account?.accountType?.toUpperCase();
@@ -8005,12 +8009,14 @@ function isRestrictedCmsPage(page: CmsPage) {
     page === "import" ||
     page === "signup" ||
     page === "wholesaler" ||
-    page === "baropharm-cookie"
+    page === "baropharm-cookie" ||
+    page === "purchase"
   );
 }
 
 function canAccessCmsPage(account: AuthAccount | null | undefined, page: CmsPage) {
   if (page === "baropharm-cookie") return canAccessBaropharmCookieCms(account);
+  if (page === "purchase") return canAccessPurchaseCms(account);
   if (isRestrictedCmsPage(page)) return canAccessMasterDataCms(account);
   return true;
 }
@@ -11252,6 +11258,7 @@ function CmsSidebar({
   page: CmsPage;
 }) {
   const canAccessBaropharmCookie = canAccessBaropharmCookieCms(account);
+  const canAccessPurchase = canAccessPurchaseCms(account);
   const items: Array<[CmsPage, string, string, string]> = [
     ["dashboard", "대시보드", "/cms", homeIcon],
     ...(canAccessMasterData
@@ -11273,7 +11280,11 @@ function CmsSidebar({
       : []),
     ["inventory", "재고", "/cms/inventory", barGraphIcon],
     ["prescriptions", "처방전", "/cms/prescriptions", fileTextIcon],
-    ["purchase", "구매 내역", "/cms/purchase", pieGraphIcon],
+    ...(canAccessPurchase
+      ? ([["purchase", "구매 내역", "/cms/purchase", pieGraphIcon]] as Array<
+          [CmsPage, string, string, string]
+        >)
+      : []),
   ];
   const accountDisplay = getCmsAccountDisplay(account);
   const isInventorySection =
