@@ -10186,6 +10186,10 @@ function isCmsPrescriptionNonDeductibleRole(
   return role === "ORIGINAL" || role === "SURCHARGE";
 }
 
+function isCmsPrescriptionVisibleRole(role: CmsPrescriptionSubstitutionRole) {
+  return role !== "SURCHARGE";
+}
+
 function cmsPrescriptionLineResultLabel(drug: CmsPrescriptionDrugLine) {
   if (drug.substitutionRole === "ORIGINAL") {
     return "대체 처방으로 인한 미차감";
@@ -10578,9 +10582,9 @@ function normalizeCmsShortageDetail(
 ): CmsShortageDetail {
   const item = unwrapObjectPayload(raw);
   const deduction = normalizeCmsDeduction(item.deduction ?? fallback, 0);
-  const drugs = firstArrayPayload(item, ["drugs", "lines", "items"]).map(
-    normalizeCmsPrescriptionDrugLine,
-  );
+  const drugs = firstArrayPayload(item, ["drugs", "lines", "items"])
+    .map(normalizeCmsPrescriptionDrugLine)
+    .filter((drug) => isCmsPrescriptionVisibleRole(drug.substitutionRole));
 
   return {
     deduction: { ...fallback, ...deduction, id: fallback.id },
@@ -10592,7 +10596,7 @@ function normalizeCmsShortageDetail(
     ),
     prescriptionGroupLabel: String(item.prescriptionGroupLabel ?? "-"),
     source: String(item.source ?? "-"),
-    drugCount: finiteNumber(item.drugCount, drugs.length),
+    drugCount: drugs.length > 0 ? drugs.length : finiteNumber(item.drugCount),
     capturedAt: formatApiDateTime(item.capturedAt ?? item.createdAt),
     createdAt: formatApiDateTime(item.createdAt),
     drugs:
@@ -10661,9 +10665,9 @@ function normalizeCmsPrescriptionRecord(
   index: number,
 ): CmsPrescriptionRecord {
   const item = unwrapObjectPayload(raw);
-  const drugs = firstArrayPayload(item, ["drugs", "lines", "items"]).map(
-    normalizeCmsPrescriptionDrugLine,
-  );
+  const drugs = firstArrayPayload(item, ["drugs", "lines", "items"])
+    .map(normalizeCmsPrescriptionDrugLine)
+    .filter((drug) => isCmsPrescriptionVisibleRole(drug.substitutionRole));
   const status = normalizeCmsDeductionStatus(item.status);
   const firstDeductibleDrug =
     drugs.find(
@@ -10694,7 +10698,7 @@ function normalizeCmsPrescriptionRecord(
     prescriptionCode: String(item.prescriptionCode ?? "-"),
     prescriptionGroupLabel: String(item.prescriptionGroupLabel ?? "-"),
     source: String(item.source ?? "-"),
-    drugCount: finiteNumber(item.drugCount, drugs.length),
+    drugCount: drugs.length > 0 ? drugs.length : finiteNumber(item.drugCount),
     deductibleLineCount:
       optionalFiniteNumber(item.deductibleLineCount) ??
       drugs.filter(
@@ -10740,7 +10744,10 @@ function createPrescriptionRecordsFromDeductions(
 
   return [...grouped.entries()].map(([prescriptionCode, items], index) => {
     const sortedItems = [...items].sort((left, right) => left.lineNo - right.lineNo);
-    const drugs: CmsPrescriptionDrugLine[] = sortedItems.map((record) => ({
+    const visibleItems = sortedItems.filter((record) =>
+      isCmsPrescriptionVisibleRole(record.substitutionRole),
+    );
+    const drugs: CmsPrescriptionDrugLine[] = visibleItems.map((record) => ({
       lineNo: record.lineNo,
       insuranceCode: record.insuranceCode,
       drugName: record.drugName,
@@ -10769,20 +10776,22 @@ function createPrescriptionRecordsFromDeductions(
       substituteQuantity: record.substituteQuantity,
       substituteProcessedAt: record.substituteProcessedAt,
     }));
-    const firstItem = sortedItems[0];
-    const shortageQuantity = sortedItems.reduce(
+    const firstItem = visibleItems[0];
+    const shortageQuantity = visibleItems.reduce(
       (sum, record) => sum + record.shortageQuantity,
       0,
     );
-    const failedLineCount = sortedItems.filter(
+    const failedLineCount = visibleItems.filter(
       (record) => record.status === "FAILED",
     ).length;
     const status: CmsDeductionStatus =
-      shortageQuantity > 0
+      visibleItems.length === 0
+        ? "PENDING"
+        : shortageQuantity > 0
         ? "SHORTAGE"
         : failedLineCount > 0
           ? "FAILED"
-          : sortedItems.every((record) => record.status === "DEDUCTED")
+          : visibleItems.every((record) => record.status === "DEDUCTED")
             ? "DEDUCTED"
             : "PARTIAL_DEDUCTED";
 
@@ -10795,11 +10804,11 @@ function createPrescriptionRecordsFromDeductions(
       deductibleLineCount: drugs.filter(
         (drug) => !isCmsPrescriptionNonDeductibleRole(drug.substitutionRole),
       ).length,
-      deductedLineCount: sortedItems.filter(
+      deductedLineCount: visibleItems.filter(
         (record) => record.deductedQuantity > 0,
       ).length,
       failedLineCount,
-      shortageLineCount: sortedItems.filter(
+      shortageLineCount: visibleItems.filter(
         (record) => record.shortageQuantity > 0,
       ).length,
       substitutionOriginalCount: drugs.filter(
@@ -10808,7 +10817,7 @@ function createPrescriptionRecordsFromDeductions(
       substitutionReplacementCount: drugs.filter(
         (drug) => drug.substitutionRole === "SUBSTITUTE",
       ).length,
-      totalQuantity: sortedItems.reduce(
+      totalQuantity: visibleItems.reduce(
         (sum, record) =>
           sum +
           (isCmsPrescriptionNonDeductibleRole(record.substitutionRole)
@@ -10816,7 +10825,7 @@ function createPrescriptionRecordsFromDeductions(
             : record.totalQuantity),
         0,
       ),
-      deductedQuantity: sortedItems.reduce(
+      deductedQuantity: visibleItems.reduce(
         (sum, record) => sum + record.deductedQuantity,
         0,
       ),
