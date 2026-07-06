@@ -7009,7 +7009,6 @@ type CmsPage =
   | "return-reviews"
   | "wholesaler"
   | "prescriptions"
-  | "baropharm-cookie"
   | "purchase";
 
 type CmsMaster = {
@@ -7920,13 +7919,11 @@ function getCmsPage(path: string): CmsPage {
     segment === "signup" ||
     segment === "inventory" ||
     segment === "wholesaler" ||
-    segment === "baropharm" ||
     segment === "dispense" ||
     segment === "prescriptions" ||
     segment === "purchase"
   ) {
     if (segment === "dispense") return "prescriptions";
-    if (segment === "baropharm") return "baropharm-cookie";
     return segment;
   }
   return "dashboard";
@@ -7951,10 +7948,6 @@ function canAccessRootCms(account?: AuthAccount | null) {
 }
 
 function canAccessMasterDataCms(account?: AuthAccount | null) {
-  return canAccessRootCms(account);
-}
-
-function canAccessBaropharmCookieCms(account?: AuthAccount | null) {
   return canAccessRootCms(account);
 }
 
@@ -7991,7 +7984,6 @@ function isRestrictedCmsPage(page: CmsPage) {
     page === "import" ||
     page === "signup" ||
     page === "wholesaler" ||
-    page === "baropharm-cookie" ||
     page === "purchase"
   );
 }
@@ -8000,7 +7992,6 @@ function canAccessCmsPage(
   account: AuthAccount | null | undefined,
   page: CmsPage,
 ) {
-  if (page === "baropharm-cookie") return canAccessBaropharmCookieCms(account);
   if (page === "purchase") return canAccessPurchaseCms(account);
   if (isRestrictedCmsPage(page)) return canAccessMasterDataCms(account);
   return true;
@@ -8647,30 +8638,34 @@ function CmsApp({
           }
           setPrescriptionSearchStatus("done");
         }
-      } else if (targetPage === "baropharm-cookie") {
-        const targetPharmacyId = baropharmCookieDraft.pharmacyId.trim();
-        if (!targetPharmacyId) {
-          setCookieState({
-            registered: false,
-            status: "UNKNOWN",
-            maskedCookie: "",
-            message: "대상 약국 ID를 입력해 주세요.",
-          });
-        } else {
-          const params = new URLSearchParams({
-            pharmacyId: targetPharmacyId,
-          });
-          const response = await apiFetch<unknown>(
-            `/baropharm/cookie?${params}`,
-          );
-          setCookieState(normalizeCmsCookie(response));
-        }
       } else if (targetPage === "purchase") {
+        const targetPharmacyId = baropharmCookieDraft.pharmacyId.trim();
+        const pharmacyParams = targetPharmacyId
+          ? `?${new URLSearchParams({ pharmacyId: targetPharmacyId })}`
+          : "";
+        const cookieRequest = targetPharmacyId
+          ? apiFetch<unknown>(
+              `/baropharm/cookie?${new URLSearchParams({
+                pharmacyId: targetPharmacyId,
+              })}`,
+            )
+          : Promise.resolve({
+              registered: false,
+              status: "UNKNOWN",
+              maskedCookie: "",
+              message: "대상 약국 ID를 입력해 주세요.",
+            });
         const [cookieResult, purchaseResult, syncResult] =
           await Promise.allSettled([
-            apiFetch<unknown>("/baropharm/cookie"),
-            apiFetch<unknown>("/purchase-histories"),
-            apiFetch<unknown>("/purchase-histories/sync-jobs"),
+            cookieRequest,
+            targetPharmacyId
+              ? apiFetch<unknown>(`/purchase-histories${pharmacyParams}`)
+              : Promise.resolve([]),
+            targetPharmacyId
+              ? apiFetch<unknown>(
+                  `/purchase-histories/sync-jobs${pharmacyParams}`,
+                )
+              : Promise.resolve([]),
           ]);
         throwRejected([cookieResult, purchaseResult, syncResult]);
 
@@ -8740,7 +8735,7 @@ function CmsApp({
   }, [visiblePage]);
 
   useEffect(() => {
-    if (visiblePage !== "baropharm-cookie" || !hasStoredAuthTokens()) return;
+    if (visiblePage !== "purchase" || !hasStoredAuthTokens()) return;
 
     const timer = window.setTimeout(() => {
       void refreshCms();
@@ -9300,10 +9295,18 @@ function CmsApp({
   }
 
   async function startPurchaseSync() {
+    const pharmacyId = baropharmCookieDraft.pharmacyId.trim();
+    if (!pharmacyId) {
+      setApiState("connected");
+      setApiMessage("구매내역을 불러올 약국 ID를 입력해 주세요.");
+      return;
+    }
+
     try {
       const response = await apiFetch<unknown>("/purchase-histories/sync", {
         method: "POST",
         body: JSON.stringify({
+          pharmacyId: Number(pharmacyId),
           startDate: syncStartDate,
           endDate: syncEndDate,
         }),
@@ -9342,9 +9345,17 @@ function CmsApp({
   }
 
   async function resumePurchaseSync(jobId: string) {
+    const pharmacyId = baropharmCookieDraft.pharmacyId.trim();
+    if (!pharmacyId) {
+      setApiState("connected");
+      setApiMessage("구매내역을 재개할 약국 ID를 입력해 주세요.");
+      return;
+    }
+
     try {
+      const params = new URLSearchParams({ pharmacyId });
       const response = await apiFetch<unknown>(
-        `/purchase-histories/sync-jobs/${jobId}/resume`,
+        `/purchase-histories/sync-jobs/${jobId}/resume?${params}`,
         { method: "POST" },
       );
       const nextJob = normalizeCmsSyncJob(response, 0);
@@ -9868,21 +9879,16 @@ function CmsApp({
               onStartDate={setPrescriptionStartDate}
             />
           )}
-          {visiblePage === "baropharm-cookie" && (
-            <CmsBaropharmCookiePage
-              cookieDraft={baropharmCookieDraft}
-              cookieState={cookieState}
-              onCookieDraftChange={setBaropharmCookieDraft}
-              onRegisterCookie={registerBaropharmCookie}
-            />
-          )}
           {visiblePage === "purchase" && (
             <CmsPurchasePage
+              cookieDraft={baropharmCookieDraft}
               cookieState={cookieState}
               histories={purchaseHistories}
               syncEndDate={syncEndDate}
               syncJobs={syncJobs}
               syncStartDate={syncStartDate}
+              onCookieDraftChange={setBaropharmCookieDraft}
+              onRegisterCookie={registerBaropharmCookie}
               onResume={resumePurchaseSync}
               onSync={startPurchaseSync}
               onSyncEndDate={setSyncEndDate}
@@ -11240,7 +11246,6 @@ function CmsSidebar({
   onToggleCollapsed: () => void;
   page: CmsPage;
 }) {
-  const canAccessBaropharmCookie = canAccessBaropharmCookieCms(account);
   const canAccessPurchase = canAccessPurchaseCms(account);
   const items: Array<[CmsPage, string, string, string]> = [
     ["dashboard", "대시보드", "/cms", homeIcon],
@@ -11255,11 +11260,6 @@ function CmsSidebar({
       ? ([["signup", "계정 생성", "/cms/signup", fileTextIcon]] as Array<
           [CmsPage, string, string, string]
         >)
-      : []),
-    ...(canAccessBaropharmCookie
-      ? ([
-          ["baropharm-cookie", "바로팜 등록", "/cms/baropharm", pieGraphIcon],
-        ] as Array<[CmsPage, string, string, string]>)
       : []),
     ["inventory", "재고", "/cms/inventory", barGraphIcon],
     ["prescriptions", "처방전", "/cms/prescriptions", fileTextIcon],
@@ -11458,7 +11458,6 @@ function CmsHeader({
     "return-reviews": "재고 · 반품 확인",
     wholesaler: "도매처 관리",
     prescriptions: "처방전",
-    "baropharm-cookie": "바로팜 등록",
     purchase: "구매 내역",
   };
   const subtitles: Record<CmsPage, string> = {
@@ -11471,7 +11470,6 @@ function CmsHeader({
     "return-reviews": "앱에서 확정되지 않은 반품을 확인하고 처리합니다.",
     wholesaler: "약국별 도매처 정보를 관리합니다.",
     prescriptions: "처방전 차감 결과와 수동 처리 항목을 확인합니다.",
-    "baropharm-cookie": "root 계정으로 약국별 바로팜 연결 정보를 등록합니다.",
     purchase: "구매 내역과 주문 기록을 확인합니다.",
   };
   return (
@@ -16637,25 +16635,51 @@ function CmsPrescriptionPage({
   );
 }
 
-function CmsBaropharmCookiePage({
+function CmsPurchasePage({
   cookieDraft,
   cookieState,
+  histories,
+  syncEndDate,
   onCookieDraftChange,
   onRegisterCookie,
+  onResume,
+  onSync,
+  onSyncEndDate,
+  onSyncStartDate,
+  syncJobs,
+  syncStartDate,
 }: {
   cookieDraft: BaropharmCookieDraft;
   cookieState: CmsCookieState;
+  histories: CmsPurchaseHistory[];
+  syncEndDate: string;
+  syncJobs: CmsSyncJob[];
+  syncStartDate: string;
   onCookieDraftChange: (value: BaropharmCookieDraft) => void;
   onRegisterCookie: () => void;
+  onResume: (jobId: string) => void;
+  onSync: () => void;
+  onSyncEndDate: (value: string) => void;
+  onSyncStartDate: (value: string) => void;
 }) {
   const cookiePreview = buildBaropharmCookie(cookieDraft);
   const canRegisterCookie =
     Boolean(cookiePreview) && cookieDraft.pharmacyId.trim().length > 0;
+  const syncJobPagination = usePagination(
+    syncJobs,
+    CMS_PAGE_SIZES.syncJobs,
+    `${syncJobs.length}`,
+  );
+  const historyPagination = usePagination(
+    histories,
+    CMS_PAGE_SIZES.purchaseHistories,
+    `${histories.length}`,
+  );
 
   return (
     <section className="cms-content cms-list-page cms-purchase-page">
       <div className="cms-grid two purchase-top">
-        <CmsPanel title="약국별 연결 정보 등록">
+        <CmsPanel title="구매내역 연결 정보">
           <div
             className={`cms-cookie-state ${
               cookieState.status === "AUTH_FAILED" ? "warning" : ""
@@ -16710,62 +16734,6 @@ function CmsBaropharmCookiePage({
           >
             연결 정보 저장
           </button>
-        </CmsPanel>
-      </div>
-    </section>
-  );
-}
-
-function CmsPurchasePage({
-  cookieState,
-  histories,
-  syncEndDate,
-  onResume,
-  onSync,
-  onSyncEndDate,
-  onSyncStartDate,
-  syncJobs,
-  syncStartDate,
-}: {
-  cookieState: CmsCookieState;
-  histories: CmsPurchaseHistory[];
-  syncEndDate: string;
-  syncJobs: CmsSyncJob[];
-  syncStartDate: string;
-  onResume: (jobId: string) => void;
-  onSync: () => void;
-  onSyncEndDate: (value: string) => void;
-  onSyncStartDate: (value: string) => void;
-}) {
-  const syncJobPagination = usePagination(
-    syncJobs,
-    CMS_PAGE_SIZES.syncJobs,
-    `${syncJobs.length}`,
-  );
-  const historyPagination = usePagination(
-    histories,
-    CMS_PAGE_SIZES.purchaseHistories,
-    `${histories.length}`,
-  );
-
-  return (
-    <section className="cms-content cms-list-page cms-purchase-page">
-      <div className="cms-grid two purchase-top">
-        <CmsPanel title="구매내역 연결 정보">
-          <div
-            className={`cms-cookie-state ${
-              cookieState.status === "AUTH_FAILED" ? "warning" : ""
-            }`}
-          >
-            <strong>
-              {cookieState.registered ? "등록됨" : "미등록"} ·{" "}
-              {purchaseConnectionStatusText(cookieState.status)}
-            </strong>
-            <span>{cookieState.message}</span>
-            {cookieState.maskedCookie && (
-              <em>인증 정보가 저장되어 있습니다.</em>
-            )}
-          </div>
         </CmsPanel>
         <CmsPanel
           title="주문내역 불러오기"
