@@ -7136,7 +7136,11 @@ type CmsShortageStatus =
   | "SUBSTITUTED"
   | "RESOLVED"
   | "IGNORED";
-type CmsPrescriptionSubstitutionRole = "NONE" | "ORIGINAL" | "SUBSTITUTE";
+type CmsPrescriptionSubstitutionRole =
+  | "NONE"
+  | "ORIGINAL"
+  | "SUBSTITUTE"
+  | "SURCHARGE";
 type CmsShortageListFilter = "OPEN" | "ORDERED" | "HOLD" | "SUBSTITUTED";
 type CmsReturnReviewStatus = "OPEN" | "HOLD" | "RESOLVED";
 type CmsReturnReviewFilter = CmsReturnReviewStatus;
@@ -10093,6 +10097,14 @@ function normalizeCmsPrescriptionSubstitutionRole(
       return "ORIGINAL";
     }
 
+    if (
+      roleText.includes("가산") ||
+      roleText.includes("장려") ||
+      roleText.includes("저가")
+    ) {
+      return "SURCHARGE";
+    }
+
     if (roleText.includes("대체 처방") || roleText.includes("대체약")) {
       return "SUBSTITUTE";
     }
@@ -10114,6 +10126,18 @@ function normalizeCmsPrescriptionSubstitutionRole(
 
     if (
       [
+        "SURCHARGE",
+        "ADDITIONAL",
+        "INCENTIVE",
+        "LOW_PRICE_INCENTIVE",
+        "SUBSTITUTION_SURCHARGE",
+      ].includes(normalizedRole)
+    ) {
+      return "SURCHARGE";
+    }
+
+    if (
+      [
         "SUBSTITUTE",
         "REPLACEMENT",
         "AFTER",
@@ -10130,6 +10154,7 @@ function normalizeCmsPrescriptionSubstitutionRole(
 
   if (substitutionType === 1) return "ORIGINAL";
   if (substitutionType === 2) return "SUBSTITUTE";
+  if (substitutionType === 9) return "SURCHARGE";
   return "NONE";
 }
 
@@ -10138,6 +10163,7 @@ function cmsPrescriptionSubstitutionLabel(
 ) {
   if (role === "ORIGINAL") return "대체 전 처방";
   if (role === "SUBSTITUTE") return "대체 처방";
+  if (role === "SURCHARGE") return "저가 대체 가산";
   return "";
 }
 
@@ -10146,16 +10172,26 @@ function cmsPrescriptionSubstitutionClass(
 ) {
   if (role === "ORIGINAL") return "is-substitution-original";
   if (role === "SUBSTITUTE") return "is-substitution-replacement";
+  if (role === "SURCHARGE") return "is-substitution-surcharge";
   return "";
 }
 
 function hasCmsPrescriptionSubstitution(role: CmsPrescriptionSubstitutionRole) {
-  return role === "ORIGINAL" || role === "SUBSTITUTE";
+  return role === "ORIGINAL" || role === "SUBSTITUTE" || role === "SURCHARGE";
+}
+
+function isCmsPrescriptionNonDeductibleRole(
+  role: CmsPrescriptionSubstitutionRole,
+) {
+  return role === "ORIGINAL" || role === "SURCHARGE";
 }
 
 function cmsPrescriptionLineResultLabel(drug: CmsPrescriptionDrugLine) {
   if (drug.substitutionRole === "ORIGINAL") {
     return "대체 처방으로 인한 미차감";
+  }
+  if (drug.substitutionRole === "SURCHARGE") {
+    return "가산 row로 인한 미차감";
   }
   if (drug.substitutionRole === "SUBSTITUTE") {
     if (drug.shortageQuantity > 0) return "대체 처방 초과";
@@ -10175,6 +10211,7 @@ function cmsPrescriptionLineResultLabel(drug: CmsPrescriptionDrugLine) {
 
 function cmsPrescriptionLineResultClass(drug: CmsPrescriptionDrugLine) {
   if (drug.substitutionRole === "ORIGINAL") return "is-substitution-original";
+  if (drug.substitutionRole === "SURCHARGE") return "is-substitution-surcharge";
   if (drug.substitutionRole === "SUBSTITUTE") {
     return drug.shortageQuantity > 0 || drug.deductionStatus === "FAILED"
       ? "is-warning"
@@ -10197,6 +10234,7 @@ function cmsPrescriptionLineRowClassName(
     hasCmsPrescriptionSubstitution(substitutionRole) ? "has-substitution" : "",
     substitutionRole === "ORIGINAL" ? "is-substitution-original" : "",
     substitutionRole === "SUBSTITUTE" ? "is-substitution-replacement" : "",
+    substitutionRole === "SURCHARGE" ? "is-substitution-surcharge" : "",
   ]
     .filter(Boolean)
     .join(" ");
@@ -10209,11 +10247,13 @@ function CmsPrescriptionLineQuantity({
   drug: CmsPrescriptionDrugLine;
   label?: string;
 }) {
-  const isSubstitutionOriginal = drug.substitutionRole === "ORIGINAL";
+  const isNonDeductibleLine = isCmsPrescriptionNonDeductibleRole(
+    drug.substitutionRole,
+  );
   return (
     <div className="cms-prescription-line-qty">
       <span>{label}</span>
-      {isSubstitutionOriginal ? (
+      {isNonDeductibleLine ? (
         <b className="is-substitution-original-qty">
           <span className="cms-line-struck">
             {currency(drug.totalQuantity)}개
@@ -10626,7 +10666,9 @@ function normalizeCmsPrescriptionRecord(
   );
   const status = normalizeCmsDeductionStatus(item.status);
   const firstDeductibleDrug =
-    drugs.find((drug) => drug.substitutionRole !== "ORIGINAL") ?? drugs[0];
+    drugs.find(
+      (drug) => !isCmsPrescriptionNonDeductibleRole(drug.substitutionRole),
+    ) ?? drugs[0];
   const substitutionOriginalCount =
     optionalFiniteNumber(item.substitutionOriginalCount) ??
     drugs.filter((drug) => drug.substitutionRole === "ORIGINAL").length;
@@ -10636,7 +10678,9 @@ function normalizeCmsPrescriptionRecord(
   const totalQuantity =
     optionalFiniteNumber(item.totalQuantity) ??
     drugs
-      .filter((drug) => drug.substitutionRole !== "ORIGINAL")
+      .filter(
+        (drug) => !isCmsPrescriptionNonDeductibleRole(drug.substitutionRole),
+      )
       .reduce((sum, drug) => sum + finiteNumber(drug.totalQuantity), 0);
   const deductedQuantity =
     optionalFiniteNumber(item.deductedQuantity) ??
@@ -10653,7 +10697,9 @@ function normalizeCmsPrescriptionRecord(
     drugCount: finiteNumber(item.drugCount, drugs.length),
     deductibleLineCount:
       optionalFiniteNumber(item.deductibleLineCount) ??
-      drugs.filter((drug) => drug.substitutionRole !== "ORIGINAL").length,
+      drugs.filter(
+        (drug) => !isCmsPrescriptionNonDeductibleRole(drug.substitutionRole),
+      ).length,
     deductedLineCount:
       optionalFiniteNumber(item.deductedLineCount) ??
       drugs.filter((drug) => drug.deductedQuantity > 0).length,
@@ -10747,7 +10793,7 @@ function createPrescriptionRecordsFromDeductions(
       source: "-",
       drugCount: drugs.length,
       deductibleLineCount: drugs.filter(
-        (drug) => drug.substitutionRole !== "ORIGINAL",
+        (drug) => !isCmsPrescriptionNonDeductibleRole(drug.substitutionRole),
       ).length,
       deductedLineCount: sortedItems.filter(
         (record) => record.deductedQuantity > 0,
@@ -10765,7 +10811,9 @@ function createPrescriptionRecordsFromDeductions(
       totalQuantity: sortedItems.reduce(
         (sum, record) =>
           sum +
-          (record.substitutionRole === "ORIGINAL" ? 0 : record.totalQuantity),
+          (isCmsPrescriptionNonDeductibleRole(record.substitutionRole)
+            ? 0
+            : record.totalQuantity),
         0,
       ),
       deductedQuantity: sortedItems.reduce(

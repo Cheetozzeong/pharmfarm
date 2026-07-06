@@ -64,7 +64,8 @@ Prescription substitution rows:
 - EPharm prsdrug.pd_extype is sent with every prescription line when present.
 - pd_extype=1 means the original line that was substituted out.
 - pd_extype=2 means the actual replacement line that was dispensed.
-- The server should preserve both lines for prescription detail display, but only pd_extype=0 or pd_extype=2 rows should affect stock deduction.
+- pd_extype=9 means the low-price substitution surcharge line.
+- The server should preserve all prescription lines for detail display, but only pd_extype=0 or pd_extype=2 rows should affect stock deduction. pd_extype=1 and pd_extype=9 are preserved without stock deduction, failure, or shortage creation.
 - If an older local DB does not expose pd_extype/pd_exrow/pd_element, the agent sends the prescription line as a normal row.
 - Live prescription watching stores a local snapshot hash per prescription in sync-state\prescription-live.hashes.json.
 - If an already-seen prescription's PRESCRIPT_EDB/prsdrug snapshot changes later, the agent sends it again with syncMode=LIVE and overwriteExisting=true so the server can replace the stored prescription lines.

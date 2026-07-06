@@ -128,7 +128,7 @@ PharmFarm 에이전트는 약국 PC에서 기존 약국 프로그램의 로컬 S
 - `QR 원문`은 운영 기본값에서 보내지 않는다.
 - 서버 중복 방지는 `eventId` unique key로 처리한다.
 - 약품명은 서버의 DUR 마스터로 재매칭 가능하므로, 에이전트에서 받은 약품명은 보조값으로만 쓴다.
-- `pd_extype=1`은 대체 전 원처방으로 보존만 하고 재고 차감 대상에서 제외한다. `pd_extype=2`는 실제 대체 조제 행으로 차감 대상이다.
+- `pd_extype=1`은 대체 전 원처방으로 보존만 하고 재고 차감 대상에서 제외한다. `pd_extype=2`는 실제 대체 조제 행으로 차감 대상이다. `pd_extype=9`는 저가 대체조제 가산 row로 보존만 하고 재고 차감, 차감 실패, 초과 처방 생성 대상에서 제외한다.
 - 라이브 감시 중 이미 수집한 처방의 `PRESCRIPT_EDB/prsdrug` 스냅샷이 바뀌면 `syncMode=LIVE`, `overwriteExisting=true`로 다시 보내며 서버는 같은 처방 라인을 교체한다.
 - 테스트용 금일 재수집은 `syncMode=TODAY_OVERWRITE`, `overwriteExisting=true`, `resyncRequestId`를 보내며 서버는 같은 처방 라인을 upsert/replace한다.
 

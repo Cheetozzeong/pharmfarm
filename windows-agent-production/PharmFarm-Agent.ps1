@@ -1854,8 +1854,10 @@ function New-Payload {
     $substitutionRole = switch ($substitutionType) {
       1 { "ORIGINAL" }
       2 { "SUBSTITUTE" }
+      9 { "SURCHARGE" }
       default { "NONE" }
     }
+    $affectsStock = -not ($substitutionType -eq 1 -or $substitutionType -eq 9)
 
     $items.Add([ordered]@{
       prescriptionCode = $prescriptionCode
@@ -1883,7 +1885,9 @@ function New-Payload {
       substitutionRole = $substitutionRole
       isSubstitutionOriginal = ($substitutionType -eq 1)
       isSubstitutionReplacement = ($substitutionType -eq 2)
-      isSubstituted = ($substitutionType -eq 1 -or $substitutionType -eq 2)
+      isSubstitutionSurcharge = ($substitutionType -eq 9)
+      isSubstituted = ($substitutionType -eq 1 -or $substitutionType -eq 2 -or $substitutionType -eq 9)
+      affectsStock = $affectsStock
       substitutionElement = $substitutionElement
       pd_extype = $substitutionType
       pd_exrow = $substitutionRow

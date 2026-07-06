@@ -6661,6 +6661,12 @@ body:has(.cms-shell) {
     #fff;
 }
 
+.cms-prescription-line-list > div.is-substitution-surcharge {
+  background:
+    linear-gradient(90deg, rgba(126, 87, 12, 0.08), rgba(126, 87, 12, 0)),
+    #fff;
+}
+
 .cms-prescription-line-index {
   display: grid;
   justify-items: center;
@@ -6802,6 +6808,12 @@ body:has(.cms-shell) {
   border-color: #b8dfcf;
   background: #edf7f2;
   color: #16794f;
+}
+
+.cms-prescription-line-tag.is-substitution-surcharge {
+  border-color: #e6d399;
+  background: #fff8df;
+  color: #7e570c;
 }
 
 .cms-prescription-line-tag.is-warning {
