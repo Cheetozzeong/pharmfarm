@@ -6322,6 +6322,132 @@ body:has(.cms-shell) {
   grid-template-columns: 132px minmax(220px, 1fr) 170px 70px 96px 86px;
 }
 
+.cms-return-review-filterbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  gap: 10px;
+  align-items: center;
+}
+
+.cms-return-hold-toggle {
+  min-height: 42px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  padding: 0 12px;
+}
+
+.cms-return-hold-toggle span {
+  color: var(--blue);
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.cms-return-history-card {
+  flex: 0 0 min(360px, 42vh);
+}
+
+.cms-return-history-head {
+  display: flex;
+  min-height: 58px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding: 14px 18px;
+}
+
+.cms-return-history-head strong,
+.cms-return-history-head span {
+  display: block;
+}
+
+.cms-return-history-head strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.cms-return-history-head span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.cms-return-history-table {
+  min-width: 1060px;
+}
+
+.cms-return-history-row {
+  display: grid;
+  min-height: 58px;
+  grid-template-columns: 132px minmax(240px, 1fr) 74px 128px 132px 90px 116px;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid #f4f5f6;
+  background: #fff;
+  padding: 0 18px;
+}
+
+.cms-return-history-row span,
+.cms-return-history-row strong,
+.cms-return-history-row b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cms-return-history-row span {
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.cms-return-history-row strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.cms-return-history-row b {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 950;
+  text-align: right;
+}
+
+.cms-return-history-row em {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cms-return-cancel-button {
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid rgba(224, 61, 61, 0.22);
+  border-radius: 8px;
+  background: #fff8f8;
+  color: #a13b35;
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.cms-return-cancel-button:disabled {
+  border-color: var(--line);
+  background: #f4f6f8;
+  color: var(--muted);
+  cursor: not-allowed;
+}
+
 .cms-shortage-row:not(.cms-th) {
   cursor: pointer;
 }

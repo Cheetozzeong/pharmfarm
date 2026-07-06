@@ -2070,8 +2070,7 @@ function parseCompactGs1(raw: string) {
     ).map((parse) => ({ ...parse, startIndex })),
   );
   const best = candidates.sort(
-    (left, right) =>
-      compactGs1ParseScore(right) - compactGs1ParseScore(left),
+    (left, right) => compactGs1ParseScore(right) - compactGs1ParseScore(left),
   )[0];
 
   if (!best) return null;
@@ -2420,9 +2419,25 @@ function returnReviewStatusText(status?: CmsReturnReviewStatus) {
       return "보류";
     case "RESOLVED":
       return "처리 완료";
+    case "CANCELLED":
+      return "취소됨";
     default:
       return "확인 필요";
   }
+}
+
+function returnReviewStatusBadgeClass(status?: CmsReturnReviewStatus) {
+  if (status === "RESOLVED") return "normal";
+  if (status === "HOLD") return "virtual";
+  if (status === "CANCELLED") return "name";
+  return "missing";
+}
+
+function returnHistorySourceText(history: CmsReturnHistory) {
+  if (history.referenceType === "RETURN_REVIEW") return "확인 처리";
+  if (history.stockItemId) return "QR/SN 반품";
+  if (history.purchaseHistoryId) return "구매 이력";
+  return "반품 처리";
 }
 
 function returnReviewWholesalerCandidates(summary: string) {
@@ -2595,10 +2610,7 @@ function cmsDateRangePresets() {
     { label: "최근 7일", ...recentWeekDateRange() },
     {
       label: "이번분기",
-      ...dateRangeFromDates(
-        startOfDateQuarter(today),
-        endOfDateQuarter(today),
-      ),
+      ...dateRangeFromDates(startOfDateQuarter(today), endOfDateQuarter(today)),
     },
     {
       label: "저번분기",
@@ -7142,8 +7154,8 @@ type CmsPrescriptionSubstitutionRole =
   | "SUBSTITUTE"
   | "SURCHARGE";
 type CmsShortageListFilter = "OPEN" | "ORDERED" | "HOLD" | "SUBSTITUTED";
-type CmsReturnReviewStatus = "OPEN" | "HOLD" | "RESOLVED";
-type CmsReturnReviewFilter = CmsReturnReviewStatus;
+type CmsReturnReviewStatus = "OPEN" | "HOLD" | "RESOLVED" | "CANCELLED";
+type CmsReturnReviewFilter = "OPEN" | "RESOLVED";
 
 type CmsReturnReview = {
   id: string;
@@ -7167,6 +7179,31 @@ type CmsReturnReview = {
   memo?: string;
   createdAt: string;
   resolvedAt?: string;
+};
+
+type CmsReturnHistory = {
+  id: string;
+  stockId?: string;
+  stockItemId?: string;
+  purchaseHistoryId?: string;
+  drugName: string;
+  insuranceCode: string;
+  matchType: "ESTIMATED" | "NO_SELLER_CANDIDATE" | "CONFIRMED" | "UNKNOWN";
+  beforeQuantity: number;
+  changeQuantity: number;
+  afterQuantity: number;
+  returnQuantity: number;
+  reason: string;
+  referenceType: string;
+  referenceId: string;
+  wholesalerName: string;
+  createdAt: string;
+  cancelled: boolean;
+  cancelMovementId?: string;
+  cancelledAt?: string;
+  cancelReason?: string;
+  cancelBeforeQuantity?: number;
+  cancelAfterQuantity?: number;
 };
 
 type CmsDeductionRecord = {
@@ -7689,8 +7726,8 @@ function KakaoExternalBrowserGate() {
         </div>
         <h1>기본 브라우저에서 열어주세요</h1>
         <p>
-          카카오톡 브라우저에서는 카메라, 다운로드, 로그인 동작이 제한될 수
-          있어 새 브라우저로 이동합니다.
+          카카오톡 브라우저에서는 카메라, 다운로드, 로그인 동작이 제한될 수 있어
+          새 브라우저로 이동합니다.
         </p>
         <div className="external-browser-actions">
           <button
@@ -8050,6 +8087,9 @@ function CmsApp({
     CmsPrescriptionRecord[]
   >([]);
   const [returnReviews, setReturnReviews] = useState<CmsReturnReview[]>([]);
+  const [returnHistories, setReturnHistories] = useState<CmsReturnHistory[]>(
+    [],
+  );
   const [deductionFilter, setDeductionFilter] =
     useState<CmsDeductionFilter>("ALL");
   const [prescriptionQuery, setPrescriptionQuery] = useState("");
@@ -8509,18 +8549,27 @@ function CmsApp({
           setShortageSearchStatus("done");
         }
       } else if (targetPage === "return-reviews") {
-        const [reviewResult, stockResult] = await Promise.allSettled([
-          apiFetch<unknown>("/returns/reviews"),
-          apiFetch<unknown>(
-            "/stocks?includeZero=false&sortBy=name&sortDirection=asc",
-          ),
-        ]);
-        throwRejected([reviewResult, stockResult]);
+        const [reviewResult, historyResult, stockResult] =
+          await Promise.allSettled([
+            apiFetch<unknown>("/returns/reviews"),
+            apiFetch<unknown>("/returns/histories"),
+            apiFetch<unknown>(
+              "/stocks?includeZero=false&sortBy=name&sortDirection=asc",
+            ),
+          ]);
+        throwRejected([reviewResult, historyResult, stockResult]);
 
         if (reviewResult.status === "fulfilled") {
           setReturnReviews(
             returnReviewPayload(reviewResult.value).map(
               normalizeCmsReturnReview,
+            ),
+          );
+        }
+        if (historyResult.status === "fulfilled") {
+          setReturnHistories(
+            returnHistoryPayload(historyResult.value).map(
+              normalizeCmsReturnHistory,
             ),
           );
         }
@@ -8579,7 +8628,9 @@ function CmsApp({
                 : [];
             const merged = mergeDeductionRecords(deductions, shortages);
             setDeductionRecords(merged);
-            setPrescriptionRecords(createPrescriptionRecordsFromDeductions(merged));
+            setPrescriptionRecords(
+              createPrescriptionRecordsFromDeductions(merged),
+            );
           }
           setPrescriptionSearchStatus("done");
         }
@@ -9432,7 +9483,7 @@ function CmsApp({
     record: CmsReturnReview,
     status: CmsReturnReviewStatus,
   ) {
-    if (status === "RESOLVED") return;
+    if (status === "RESOLVED" || status === "CANCELLED") return;
 
     try {
       const response = await apiFetch<unknown>(
@@ -9492,6 +9543,35 @@ function CmsApp({
       setSelectedReturnReviewId(record.id);
       setApiState("connected");
       setApiMessage("반품 확인 항목 처리 완료");
+      void refreshCms();
+    } catch (error) {
+      cmsFallback(error);
+    }
+  }
+
+  async function cancelReturnHistory(record: CmsReturnHistory) {
+    if (record.cancelled) return;
+
+    try {
+      const response = await apiFetch<unknown>(
+        `/returns/histories/${record.id}/cancel`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            memo: "관리자 반품 이력 취소",
+          }),
+        },
+      );
+      const nextRecord = normalizeCmsReturnHistory(response, 0);
+      setReturnHistories((current) =>
+        current.map((item) =>
+          item.id === record.id
+            ? { ...item, ...nextRecord, id: item.id }
+            : item,
+        ),
+      );
+      setApiState("connected");
+      setApiMessage("반품 취소 완료");
       void refreshCms();
     } catch (error) {
       cmsFallback(error);
@@ -9677,6 +9757,7 @@ function CmsApp({
           {visiblePage === "return-reviews" && (
             <CmsReturnReviewPage
               detailMode={Boolean(returnReviewRouteId)}
+              histories={returnHistories}
               records={returnReviews}
               selectedRecord={selectedReturnReview}
               stocks={stocks}
@@ -9690,6 +9771,7 @@ function CmsApp({
                   `/cms/inventory/returns/${encodeURIComponent(record.id)}`,
                 )
               }
+              onCancelHistory={cancelReturnHistory}
               onResolve={resolveReturnReview}
               onSelect={(record) => setSelectedReturnReviewId(record.id)}
               onStatus={updateReturnReviewStatus}
@@ -9815,6 +9897,31 @@ function returnReviewPayload(raw: unknown): unknown[] {
   return [];
 }
 
+function returnHistoryPayload(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  const item = asRecord(raw);
+  for (const key of [
+    "returnHistories",
+    "histories",
+    "items",
+    "content",
+    "data",
+  ]) {
+    const value = item[key];
+    if (Array.isArray(value)) return value;
+  }
+
+  const payload = unwrapObjectPayload(raw);
+  if (payload !== item) {
+    const nestedPayload = returnHistoryPayload(payload);
+    if (nestedPayload.length > 0) return nestedPayload;
+    return isReturnHistoryLikePayload(payload) ? [payload] : [];
+  }
+
+  if (isReturnHistoryLikePayload(item)) return [item];
+  return [];
+}
+
 function normalizeStockSnapshotSyncSummary(
   raw: unknown,
 ): CmsStockSnapshotSyncSummary {
@@ -9858,6 +9965,18 @@ function isReturnReviewLikePayload(raw: unknown) {
   );
 }
 
+function isReturnHistoryLikePayload(raw: unknown) {
+  const item = asRecord(raw);
+  return [
+    "id",
+    "movementId",
+    "returnQuantity",
+    "changeQuantity",
+    "referenceType",
+    "cancelled",
+  ].some((key) => item[key] !== undefined);
+}
+
 function mergeDeductionRecords(
   current: CmsDeductionRecord[],
   incoming: CmsDeductionRecord[],
@@ -9876,11 +9995,13 @@ function normalizeCmsReturnReview(
   const item = unwrapObjectPayload(raw);
   const rawStatus = String(item.status ?? "OPEN").toUpperCase();
   const status: CmsReturnReviewStatus =
-    rawStatus === "RESOLVED"
-      ? "RESOLVED"
-      : rawStatus === "HOLD"
-        ? "HOLD"
-        : "OPEN";
+    rawStatus === "CANCELLED" || rawStatus === "CANCELED"
+      ? "CANCELLED"
+      : rawStatus === "RESOLVED"
+        ? "RESOLVED"
+        : rawStatus === "HOLD"
+          ? "HOLD"
+          : "OPEN";
   const rawMatchType = String(
     item.matchType ?? "NO_SELLER_CANDIDATE",
   ).toUpperCase();
@@ -9923,6 +10044,57 @@ function normalizeCmsReturnReview(
       item.resolvedAt === undefined
         ? undefined
         : formatTransactionAt(item.resolvedAt, "-"),
+  };
+}
+
+function normalizeCmsReturnHistory(
+  raw: unknown,
+  index: number,
+): CmsReturnHistory {
+  const item = unwrapObjectPayload(raw);
+  const rawMatchType = String(item.matchType ?? "UNKNOWN").toUpperCase();
+  const matchType: CmsReturnHistory["matchType"] = rawMatchType.includes(
+    "ESTIMATED",
+  )
+    ? "ESTIMATED"
+    : rawMatchType.includes("CONFIRMED")
+      ? "CONFIRMED"
+      : rawMatchType.includes("NO_SELLER")
+        ? "NO_SELLER_CANDIDATE"
+        : "UNKNOWN";
+
+  return {
+    id: String(item.id ?? item.movementId ?? index),
+    stockId: optionalText(item.stockId) || undefined,
+    stockItemId: optionalText(item.stockItemId) || undefined,
+    purchaseHistoryId: optionalText(item.purchaseHistoryId) || undefined,
+    drugName: optionalText(item.drugName ?? item.name) || "미확인 약품",
+    insuranceCode: optionalText(item.insuranceCode ?? item.productCode) || "",
+    matchType,
+    beforeQuantity: finiteNumber(item.beforeQuantity),
+    changeQuantity: finiteNumber(item.changeQuantity),
+    afterQuantity: finiteNumber(item.afterQuantity),
+    returnQuantity: finiteNumber(item.returnQuantity),
+    reason: optionalText(item.reason ?? item.memo) || "",
+    referenceType: optionalText(item.referenceType) || "",
+    referenceId: optionalText(item.referenceId) || "",
+    wholesalerName: optionalText(item.wholesalerName) || "",
+    createdAt: formatTransactionAt(item.createdAt),
+    cancelled: normalizeBoolean(item.cancelled ?? item.canceled ?? false),
+    cancelMovementId: optionalText(item.cancelMovementId) || undefined,
+    cancelledAt:
+      item.cancelledAt === undefined
+        ? undefined
+        : formatTransactionAt(item.cancelledAt, "-"),
+    cancelReason: optionalText(item.cancelReason) || undefined,
+    cancelBeforeQuantity:
+      item.cancelBeforeQuantity === undefined
+        ? undefined
+        : finiteNumber(item.cancelBeforeQuantity),
+    cancelAfterQuantity:
+      item.cancelAfterQuantity === undefined
+        ? undefined
+        : finiteNumber(item.cancelAfterQuantity),
   };
 }
 
@@ -10694,7 +10866,9 @@ function normalizeCmsPrescriptionRecord(
     drugs.reduce((sum, drug) => sum + finiteNumber(drug.shortageQuantity), 0);
 
   return {
-    id: String(item.id ?? item.prescriptionId ?? item.prescriptionCode ?? index),
+    id: String(
+      item.id ?? item.prescriptionId ?? item.prescriptionCode ?? index,
+    ),
     prescriptionCode: String(item.prescriptionCode ?? "-"),
     prescriptionGroupLabel: String(item.prescriptionGroupLabel ?? "-"),
     source: String(item.source ?? "-"),
@@ -10743,7 +10917,9 @@ function createPrescriptionRecordsFromDeductions(
   });
 
   return [...grouped.entries()].map(([prescriptionCode, items], index) => {
-    const sortedItems = [...items].sort((left, right) => left.lineNo - right.lineNo);
+    const sortedItems = [...items].sort(
+      (left, right) => left.lineNo - right.lineNo,
+    );
     const visibleItems = sortedItems.filter((record) =>
       isCmsPrescriptionVisibleRole(record.substitutionRole),
     );
@@ -10788,12 +10964,12 @@ function createPrescriptionRecordsFromDeductions(
       visibleItems.length === 0
         ? "PENDING"
         : shortageQuantity > 0
-        ? "SHORTAGE"
-        : failedLineCount > 0
-          ? "FAILED"
-          : visibleItems.every((record) => record.status === "DEDUCTED")
-            ? "DEDUCTED"
-            : "PARTIAL_DEDUCTED";
+          ? "SHORTAGE"
+          : failedLineCount > 0
+            ? "FAILED"
+            : visibleItems.every((record) => record.status === "DEDUCTED")
+              ? "DEDUCTED"
+              : "PARTIAL_DEDUCTED";
 
     return {
       id: prescriptionCode || String(index),
@@ -13979,20 +14155,24 @@ function CmsInventoryShortagePage({
 
 function CmsReturnReviewPage({
   detailMode,
+  histories,
   records,
   selectedRecord,
   stocks,
   onBack,
+  onCancelHistory,
   onOpenDetail,
   onResolve,
   onSelect,
   onStatus,
 }: {
   detailMode: boolean;
+  histories: CmsReturnHistory[];
   records: CmsReturnReview[];
   selectedRecord?: CmsReturnReview;
   stocks: StockItem[];
   onBack: () => void;
+  onCancelHistory: (record: CmsReturnHistory) => void;
   onOpenDetail: (record: CmsReturnReview) => void;
   onResolve: (
     record: CmsReturnReview,
@@ -14004,6 +14184,7 @@ function CmsReturnReviewPage({
   onStatus: (record: CmsReturnReview, status: CmsReturnReviewStatus) => void;
 }) {
   const [listFilter, setListFilter] = useState<CmsReturnReviewFilter>("OPEN");
+  const [includeHoldRecords, setIncludeHoldRecords] = useState(false);
   const [resolveStockId, setResolveStockId] = useState("");
   const [resolveQuantity, setResolveQuantity] = useState(1);
   const [resolveMemo, setResolveMemo] = useState("관리자 반품 확인 처리");
@@ -14012,21 +14193,33 @@ function CmsReturnReviewPage({
   const [confirmAction, setConfirmAction] = useState<"HOLD" | "RESOLVE" | "">(
     "",
   );
+  const [cancelHistoryId, setCancelHistoryId] = useState("");
   const openRecords = records.filter((record) => record.status === "OPEN");
   const holdRecords = records.filter((record) => record.status === "HOLD");
   const resolvedRecords = records.filter(
     (record) => record.status === "RESOLVED",
   );
-  const visibleRecords =
-    listFilter === "HOLD"
-      ? holdRecords
-      : listFilter === "RESOLVED"
-        ? resolvedRecords
-        : openRecords;
+  const cancelledRecords = records.filter(
+    (record) => record.status === "CANCELLED",
+  );
+  const visibleRecords = records.filter((record) =>
+    listFilter === "RESOLVED"
+      ? record.status === "RESOLVED"
+      : record.status === "OPEN" ||
+        (includeHoldRecords && record.status === "HOLD"),
+  );
   const recordPagination = usePagination(
     visibleRecords,
     CMS_PAGE_SIZES.shortages,
-    `${listFilter}-${visibleRecords.length}`,
+    `${listFilter}-${includeHoldRecords}-${visibleRecords.length}`,
+  );
+  const historyPagination = usePagination(
+    histories,
+    CMS_PAGE_SIZES.shortages,
+    `${histories.length}-${histories.map((history) => `${history.id}:${history.cancelled}`).join("|")}`,
+  );
+  const cancelHistoryTarget = histories.find(
+    (history) => history.id === cancelHistoryId,
   );
   const activeRecord = selectedRecord;
   const expectedWholesalers = returnReviewWholesalerCandidates(
@@ -14040,12 +14233,14 @@ function CmsReturnReviewPage({
   const canResolve =
     Boolean(activeRecord) &&
     activeRecord?.status !== "RESOLVED" &&
+    activeRecord?.status !== "CANCELLED" &&
     Boolean(selectedStock) &&
     resolveQuantity > 0 &&
     resolveQuantity <= maxQuantity;
   const canHold =
     Boolean(activeRecord) &&
     activeRecord?.status !== "RESOLVED" &&
+    activeRecord?.status !== "CANCELLED" &&
     activeRecord?.status !== "HOLD";
   const activeDrugKeyword = normalizeSearchText(activeRecord?.drugName ?? "");
   const recommendedStocks = stocks
@@ -14088,14 +14283,13 @@ function CmsReturnReviewPage({
     value: CmsReturnReviewFilter;
   }> = [
     { count: openRecords.length, label: "확인 필요", value: "OPEN" },
-    { count: holdRecords.length, label: "보류", value: "HOLD" },
     { count: resolvedRecords.length, label: "처리 완료", value: "RESOLVED" },
   ];
   const emptyMessage =
-    listFilter === "HOLD"
-      ? "보류된 반품 확인 항목이 없습니다."
-      : listFilter === "RESOLVED"
-        ? "처리 완료된 반품 확인 항목이 없습니다."
+    listFilter === "RESOLVED"
+      ? "처리 완료된 반품 확인 항목이 없습니다."
+      : includeHoldRecords
+        ? "확인 필요 또는 보류된 반품 항목이 없습니다."
         : "확인 필요한 반품 항목이 없습니다.";
 
   useEffect(() => {
@@ -14164,6 +14358,12 @@ function CmsReturnReviewPage({
     }
   }
 
+  function confirmHistoryCancel() {
+    if (!cancelHistoryTarget || cancelHistoryTarget.cancelled) return;
+    onCancelHistory(cancelHistoryTarget);
+    setCancelHistoryId("");
+  }
+
   return (
     <section className="cms-content cms-list-page cms-shortage-page">
       {detailMode && (
@@ -14192,7 +14392,7 @@ function CmsReturnReviewPage({
 
       {!detailMode && (
         <>
-          <CmsKpiGrid columns={3}>
+          <CmsKpiGrid columns={4}>
             <CmsKpi
               label="확인 필요"
               value={`${openRecords.length}`}
@@ -14206,14 +14406,32 @@ function CmsReturnReviewPage({
               unit="건"
               tone="blue"
             />
+            <CmsKpi
+              label="취소됨"
+              value={`${cancelledRecords.length}`}
+              unit="건"
+            />
           </CmsKpiGrid>
 
-          <CmsSegmentFilter
-            columns={filterItems.length}
-            items={filterItems}
-            value={listFilter}
-            onChange={selectListFilter}
-          />
+          <div className="cms-return-review-filterbar">
+            <CmsSegmentFilter
+              columns={filterItems.length}
+              items={filterItems}
+              value={listFilter}
+              onChange={selectListFilter}
+            />
+            <label className="cms-check cms-return-hold-toggle">
+              <input
+                type="checkbox"
+                checked={includeHoldRecords}
+                onChange={(event) =>
+                  setIncludeHoldRecords(event.target.checked)
+                }
+              />
+              보류도 보기
+              <span>{holdRecords.length}건</span>
+            </label>
+          </div>
         </>
       )}
 
@@ -14256,7 +14474,11 @@ function CmsReturnReviewPage({
                       <em>{record.sn || "SN 없음"}</em>
                     </span>
                     <b>{record.sellerCandidateCount}건</b>
-                    <span className="cms-badge missing">
+                    <span
+                      className={`cms-badge ${returnReviewStatusBadgeClass(
+                        record.status,
+                      )}`}
+                    >
                       {returnReviewStatusText(record.status)}
                     </span>
                     <button
@@ -14306,7 +14528,11 @@ function CmsReturnReviewPage({
                         닫기
                       </button>
                     )}
-                    <span className="cms-badge missing">
+                    <span
+                      className={`cms-badge ${returnReviewStatusBadgeClass(
+                        activeRecord.status,
+                      )}`}
+                    >
                       {returnReviewStatusText(activeRecord.status)}
                     </span>
                     <strong>{activeRecord.drugName}</strong>
@@ -14376,14 +14602,20 @@ function CmsReturnReviewPage({
                     </div>
                   )}
 
-                  {activeRecord.status === "RESOLVED" ? (
+                  {activeRecord.status === "RESOLVED" ||
+                  activeRecord.status === "CANCELLED" ? (
                     <div className="cms-prescription-paper">
                       <div className="cms-prescription-paper-head">
                         <div>
                           <span>처리 재고</span>
                           <strong>{activeRecord.stockName ?? "-"}</strong>
                         </div>
-                        <b>{activeRecord.returnQuantity}개 반품</b>
+                        <b>
+                          {activeRecord.returnQuantity}개{" "}
+                          {activeRecord.status === "CANCELLED"
+                            ? "반품 취소"
+                            : "반품"}
+                        </b>
                       </div>
                       <div className="cms-prescription-paper-meta">
                         <span>
@@ -14514,6 +14746,82 @@ function CmsReturnReviewPage({
         )}
       </div>
 
+      {!detailMode && (
+        <div className="cms-table-card cms-return-history-card">
+          <div className="cms-return-history-head">
+            <div>
+              <strong>반품 처리 이력</strong>
+              <span>
+                재고가 감소된 반품 이력 {histories.length}건 · 취소 시 재고가
+                원복됩니다.
+              </span>
+            </div>
+          </div>
+          <div className="cms-table-scroll">
+            <div className="cms-return-history-table">
+              <div className="cms-return-history-row cms-th">
+                <span>처리일시</span>
+                <span>약품</span>
+                <span>수량</span>
+                <span>재고 변화</span>
+                <span>처리 기준</span>
+                <span>상태</span>
+                <span>취소</span>
+              </div>
+              {historyPagination.items.map((history) => (
+                <div className="cms-return-history-row" key={history.id}>
+                  <span>{history.createdAt}</span>
+                  <strong>
+                    {history.drugName}
+                    <em>{history.insuranceCode || "보험코드 없음"}</em>
+                  </strong>
+                  <b>{history.returnQuantity}개</b>
+                  <span>
+                    {history.beforeQuantity} → {history.afterQuantity}
+                    {history.cancelled &&
+                      history.cancelAfterQuantity !== undefined && (
+                        <em>취소 후 {history.cancelAfterQuantity}개</em>
+                      )}
+                  </span>
+                  <span>
+                    {returnHistorySourceText(history)}
+                    {history.wholesalerName && (
+                      <em>{history.wholesalerName}</em>
+                    )}
+                  </span>
+                  <span
+                    className={`cms-badge ${
+                      history.cancelled ? "name" : "normal"
+                    }`}
+                  >
+                    {history.cancelled ? "취소됨" : "처리됨"}
+                  </span>
+                  <span>
+                    <button
+                      className="cms-return-cancel-button"
+                      disabled={history.cancelled}
+                      type="button"
+                      onClick={() => setCancelHistoryId(history.id)}
+                    >
+                      {history.cancelled ? "취소 완료" : "반품 취소"}
+                    </button>
+                    {history.cancelledAt != "-" && (
+                      <em>{history.cancelledAt}</em>
+                    )}
+                  </span>
+                </div>
+              ))}
+              {histories.length === 0 && (
+                <p className="cms-empty table-empty">
+                  재고가 감소된 반품 이력이 없습니다.
+                </p>
+              )}
+            </div>
+          </div>
+          <CmsPagination {...historyPagination} />
+        </div>
+      )}
+
       {stockSearchOpen && activeRecord && (
         <CmsModal
           title="다른 재고 찾기"
@@ -14582,7 +14890,7 @@ function CmsReturnReviewPage({
                 <>
                   <span>이 반품 확인 항목을 보류로 이동합니다.</span>
                   <strong>{activeRecord.drugName}</strong>
-                  <em>보류 항목은 보류 탭에서 다시 확인할 수 있습니다.</em>
+                  <em>보류도 보기 선택 시 목록에서 다시 확인할 수 있습니다.</em>
                 </>
               ) : selectedStock ? (
                 <>
@@ -14624,6 +14932,55 @@ function CmsReturnReviewPage({
                 onClick={confirmReturnAction}
               >
                 {confirmAction === "HOLD" ? "보류 처리" : "감소 처리"}
+              </button>
+            </div>
+          </div>
+        </CmsModal>
+      )}
+
+      {cancelHistoryTarget && (
+        <CmsModal
+          title="반품 취소 확인"
+          subtitle={cancelHistoryTarget.drugName}
+          variant="confirm"
+          onClose={() => setCancelHistoryId("")}
+        >
+          <div className="cms-resolution-confirm">
+            <div className="cms-resolution-confirm-card is-stock">
+              <span>아래 반품 이력의 재고 감소를 취소합니다.</span>
+              <strong>{cancelHistoryTarget.drugName}</strong>
+              <em>
+                처리 수량: {currency(cancelHistoryTarget.returnQuantity)}개
+              </em>
+              <em>
+                현재 이력 기준 {currency(cancelHistoryTarget.afterQuantity)}개 →
+                취소 후{" "}
+                {currency(
+                  cancelHistoryTarget.afterQuantity +
+                    cancelHistoryTarget.returnQuantity,
+                )}
+                개
+              </em>
+            </div>
+            <p>
+              확인 시 재고 수량이 원복되고, 이 반품 이력은 취소됨으로
+              표시됩니다.
+            </p>
+            <div className="cms-confirm-actions">
+              <button
+                className="cms-confirm-button"
+                type="button"
+                onClick={() => setCancelHistoryId("")}
+              >
+                닫기
+              </button>
+              <button
+                className="cms-confirm-button is-primary"
+                disabled={cancelHistoryTarget.cancelled}
+                type="button"
+                onClick={confirmHistoryCancel}
+              >
+                반품 취소
               </button>
             </div>
           </div>
