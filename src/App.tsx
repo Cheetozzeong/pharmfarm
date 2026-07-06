@@ -8083,7 +8083,7 @@ function CmsApp({
   });
   const [baropharmCookieDraft, setBaropharmCookieDraft] =
     useState<BaropharmCookieDraft>({
-      pharmacyId: authAccount?.pharmacyId ?? "",
+      pharmacyId: "",
       sessionId: "",
       csrfToken: "",
     });
@@ -8093,15 +8093,6 @@ function CmsApp({
   const [syncEndDate, setSyncEndDate] = useState(
     new Date().toISOString().split("T")[0],
   );
-
-  useEffect(() => {
-    if (!canAccessRootCms(authAccount) || !authAccount?.pharmacyId) return;
-    setBaropharmCookieDraft((current) =>
-      current.pharmacyId
-        ? current
-        : { ...current, pharmacyId: authAccount.pharmacyId ?? "" },
-    );
-  }, [authAccount]);
 
   const [purchaseHistories, setPurchaseHistories] = useState<
     CmsPurchaseHistory[]
@@ -16728,6 +16719,7 @@ function CmsPurchasePage({
                 }
               />
             </label>
+            <label className="cms-input"></label>
             <label className="cms-input">
               <span>sessionid</span>
               <input
