@@ -8172,7 +8172,7 @@ function CmsApp({
     "INCREASE" | "DECREASE"
   >("INCREASE");
   const [adjustMemo, setAdjustMemo] = useState("실사 후 수량 보정");
-  const [mergeInsuranceCode, setMergeInsuranceCode] = useState("643102120");
+  const [mergeInsuranceCode, setMergeInsuranceCode] = useState("");
   const [prescriptionId, setPrescriptionId] = useState("");
   const canAccessMasterData = canAccessMasterDataCms(authAccount);
   const visiblePage = canAccessCmsPage(authAccount, page) ? page : "dashboard";
@@ -8280,6 +8280,10 @@ function CmsApp({
       setSelectedStockId(stocks[0].id);
     }
   }, [selectedStockId, stocks]);
+
+  useEffect(() => {
+    setMergeInsuranceCode("");
+  }, [selectedStockId]);
 
   useEffect(() => {
     if (filteredDeductionRecords.length === 0) {
@@ -9372,6 +9376,7 @@ function CmsApp({
       });
       setApiState("connected");
       setApiMessage("임의 재고 병합/전환 요청 완료");
+      setMergeInsuranceCode("");
       void refreshCms();
     } catch (error) {
       cmsFallback(error);
@@ -12616,6 +12621,12 @@ function CmsInventoryPage({
     setSyncPharmacyId(syncSnapshotDefaultPharmacyId);
   }, [syncSnapshotDefaultPharmacyId]);
 
+  useEffect(() => {
+    if (sheetMode === "virtualPrice") {
+      onMergeInsuranceCode("");
+    }
+  }, [onMergeInsuranceCode, sheetMode, sheetStock?.id]);
+
   async function submitCreateStock(event: FormEvent) {
     event.preventDefault();
     if (!canCreateStock) return;
@@ -13173,6 +13184,7 @@ function CmsInventoryPage({
                     </label>
                     <button
                       className="cms-primary"
+                      disabled={!mergeInsuranceCode.trim()}
                       type="button"
                       onClick={onMergeVirtual}
                     >
