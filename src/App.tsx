@@ -7041,6 +7041,23 @@ type CmsMaster = {
   active: boolean;
 };
 
+type CmsPageInfo = {
+  page: number;
+  pageSize: number;
+  totalItems: number;
+  totalPages: number;
+};
+
+type CmsPaginationState<T> = {
+  endIndex: number;
+  items: T[];
+  page: number;
+  setPage: (page: number) => void;
+  startIndex: number;
+  totalItems: number;
+  totalPages: number;
+};
+
 type CmsImportJob = {
   id: string;
   dataType: "1번" | "2번";
@@ -8058,6 +8075,10 @@ function CmsApp({
   const [masterQuery, setMasterQuery] = useState("");
   const [includeInactive, setIncludeInactive] = useState(false);
   const [masters, setMasters] = useState<CmsMaster[]>([]);
+  const [masterPage, setMasterPage] = useState(1);
+  const [masterPageInfo, setMasterPageInfo] = useState<CmsPageInfo>(() =>
+    emptyCmsPageInfo(CMS_PAGE_SIZES.master),
+  );
   const [stocks, setStocks] = useState<StockItem[]>([]);
   const [stockQuery, setStockQuery] = useState("");
   const [stockControlledFilter, setStockControlledFilter] =
@@ -8394,6 +8415,16 @@ function CmsApp({
 
   const applyCmsDemoData = useCallback(() => {
     setMasters((current) => (current.length > 0 ? current : demoCmsMasters));
+    setMasterPage(1);
+    setMasterPageInfo({
+      page: 1,
+      pageSize: CMS_PAGE_SIZES.master,
+      totalItems: demoCmsMasters.length,
+      totalPages: Math.max(
+        1,
+        Math.ceil(demoCmsMasters.length / CMS_PAGE_SIZES.master),
+      ),
+    });
     setStocks((current) => (current.length > 0 ? current : initialStocks));
     setImportJobs((current) => (current.length > 0 ? current : demoImportJobs));
     setCookieState((current) =>
@@ -8436,6 +8467,40 @@ function CmsApp({
     },
     [applyCmsDemoData],
   );
+
+  const updateMasterQuery = useCallback((value: string) => {
+    setMasterPage(1);
+    setMasterQuery(value);
+  }, []);
+
+  const updateIncludeInactive = useCallback((value: boolean) => {
+    setMasterPage(1);
+    setIncludeInactive(value);
+  }, []);
+
+  const masterPagination = useMemo(() => {
+    const pageSize = masterPageInfo.pageSize || CMS_PAGE_SIZES.master;
+    const totalItems = masterPageInfo.totalItems;
+    const totalPages = Math.max(1, masterPageInfo.totalPages);
+    const currentPage = Math.min(Math.max(1, masterPage), totalPages);
+    const startIndex = totalItems === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+    const endIndex =
+      totalItems === 0
+        ? 0
+        : Math.min(totalItems, startIndex + masters.length - 1);
+
+    return {
+      endIndex,
+      items: masters,
+      page: currentPage,
+      setPage: (nextPage: number) => {
+        setMasterPage(Math.max(1, Math.min(nextPage, totalPages)));
+      },
+      startIndex,
+      totalItems,
+      totalPages,
+    };
+  }, [masterPage, masterPageInfo, masters]);
 
   const refreshCms = useCallback(async () => {
     if (!hasStoredAuthTokens()) {
@@ -8496,6 +8561,8 @@ function CmsApp({
         setDeductionRecords(mergeDeductionRecords(failures, shortages));
       } else if (targetPage === "master") {
         const masterParams = new URLSearchParams();
+        masterParams.set("page", String(Math.max(0, masterPage - 1)));
+        masterParams.set("size", String(CMS_PAGE_SIZES.master));
         if (masterQuery.trim()) {
           masterParams.set("keyword", masterQuery.trim());
         }
@@ -8503,7 +8570,12 @@ function CmsApp({
         const response = await apiFetch<unknown>(
           `/drug-masters${masterParams.toString() ? `?${masterParams}` : ""}`,
         );
-        setMasters(arrayPayload(response).map(normalizeCmsMaster));
+        const pageResponse = normalizeCmsPageResponse(
+          response,
+          CMS_PAGE_SIZES.master,
+        );
+        setMasters(pageResponse.items.map(normalizeCmsMaster));
+        setMasterPageInfo(pageResponse.pageInfo);
       } else if (targetPage === "inventory") {
         const trimmed = stockQuery.trim();
         const normalizedKeyword = normalizeSearchText(trimmed);
@@ -8722,6 +8794,7 @@ function CmsApp({
     baropharmCookieDraft.pharmacyId,
     cmsFallback,
     includeInactive,
+    masterPage,
     masterQuery,
     page,
     prescriptionEndDate,
@@ -8763,7 +8836,7 @@ function CmsApp({
     }, 250);
 
     return () => window.clearTimeout(timer);
-  }, [includeInactive, masterQuery, visiblePage]);
+  }, [includeInactive, masterPage, masterQuery, visiblePage]);
 
   async function submitCmsLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -9729,10 +9802,11 @@ function CmsApp({
               includeInactive={includeInactive}
               masterQuery={masterQuery}
               masters={masters}
+              pagination={masterPagination}
               selectedMaster={selectedMaster}
-              onIncludeInactive={setIncludeInactive}
+              onIncludeInactive={updateIncludeInactive}
               onMasterChange={updateMaster}
-              onQuery={setMasterQuery}
+              onQuery={updateMasterQuery}
               onRematch={rematchMaster}
               onSave={saveMaster}
               onSelect={setSelectedMasterId}
@@ -9919,6 +9993,62 @@ function arrayPayload(raw: unknown): unknown[] {
   if (Array.isArray(item.items)) return item.items;
   if (Array.isArray(item.data)) return item.data;
   return [];
+}
+
+function emptyCmsPageInfo(pageSize: number): CmsPageInfo {
+  return {
+    page: 1,
+    pageSize,
+    totalItems: 0,
+    totalPages: 1,
+  };
+}
+
+function normalizeCmsPageResponse(
+  raw: unknown,
+  pageSize: number,
+): { items: unknown[]; pageInfo: CmsPageInfo } {
+  const payload = unwrapObjectPayload(raw);
+  const payloadItems = arrayPayload(payload);
+  const items = payloadItems.length > 0 ? payloadItems : arrayPayload(raw);
+  const pageSource = Array.isArray(payload.content) ? payload : asRecord(raw);
+  const normalizedPageSize = Math.max(
+    1,
+    finiteNumber(
+      pageSource.size ?? pageSource.pageSize ?? pageSource.perPage,
+      pageSize,
+    ),
+  );
+  const totalItems = Math.max(
+    0,
+    finiteNumber(
+      pageSource.totalElements ??
+        pageSource.totalItems ??
+        pageSource.totalCount ??
+        pageSource.total,
+      items.length,
+    ),
+  );
+  const totalPages = Math.max(
+    1,
+    finiteNumber(
+      pageSource.totalPages ?? pageSource.pageCount,
+      Math.ceil(totalItems / normalizedPageSize) || 1,
+    ),
+  );
+  const rawPage =
+    pageSource.page ?? pageSource.number ?? pageSource.currentPage ?? 0;
+  const page = Math.min(totalPages, Math.max(1, finiteNumber(rawPage, 0) + 1));
+
+  return {
+    items,
+    pageInfo: {
+      page,
+      pageSize: normalizedPageSize,
+      totalItems,
+      totalPages,
+    },
+  };
 }
 
 function deductionPayload(raw: unknown): unknown[] {
@@ -12108,6 +12238,7 @@ function CmsMasterPage({
   includeInactive,
   masterQuery,
   masters,
+  pagination,
   selectedMaster,
   onIncludeInactive,
   onMasterChange,
@@ -12120,6 +12251,7 @@ function CmsMasterPage({
   includeInactive: boolean;
   masterQuery: string;
   masters: CmsMaster[];
+  pagination: CmsPaginationState<CmsMaster>;
   selectedMaster?: CmsMaster;
   onIncludeInactive: (value: boolean) => void;
   onMasterChange: (masterId: string, patch: Partial<CmsMaster>) => void;
@@ -12130,11 +12262,6 @@ function CmsMasterPage({
   onUpload: (kind: "drug" | "price", file: File | null) => void;
 }) {
   const [sheetOpen, setSheetOpen] = useState(false);
-  const masterPagination = usePagination(
-    masters,
-    CMS_PAGE_SIZES.master,
-    `${masterQuery}|${includeInactive}`,
-  );
 
   useEffect(() => {
     if (!selectedMaster) setSheetOpen(false);
@@ -12145,12 +12272,12 @@ function CmsMasterPage({
       <div className="cms-table-card">
         <div className="cms-toolbar">
           <div className="cms-pills">
-            <span>전체 {masters.length}</span>
+            <span>전체 {pagination.totalItems}</span>
             <span>
-              정상 {masters.filter((item) => item.status === "NORMAL").length}
+              현재 정상 {masters.filter((item) => item.status === "NORMAL").length}
             </span>
             <span>
-              보정 {masters.filter((item) => item.status !== "NORMAL").length}
+              현재 보정 {masters.filter((item) => item.status !== "NORMAL").length}
             </span>
           </div>
           <label className="cms-search">
@@ -12191,7 +12318,7 @@ function CmsMasterPage({
               <span>가격</span>
               <span>매칭</span>
             </div>
-            {masterPagination.items.map((master) => (
+            {pagination.items.map((master) => (
               <button
                 key={master.id}
                 className={`cms-tr ${selectedMaster?.id === master.id ? "is-selected" : ""}`}
@@ -12219,7 +12346,7 @@ function CmsMasterPage({
             )}
           </div>
         </div>
-        <CmsPagination {...masterPagination} />
+        <CmsPagination {...pagination} />
       </div>
       {sheetOpen && selectedMaster && (
         <CmsSheet
