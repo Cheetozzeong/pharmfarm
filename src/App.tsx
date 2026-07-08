@@ -69,7 +69,7 @@ type QrFields = {
 
 type ScanHandleResult =
   | { kind: "accepted"; qr: QrFields; cooldownMs?: number }
-  | { kind: "handled"; cooldownMs?: number }
+  | { kind: "handled"; cooldownMs?: number; suppressBarcodeInput?: boolean }
   | null;
 
 type Wholesaler = {
@@ -315,6 +315,7 @@ const alreadyProcessedAudioSrc =
 const defaultScanCooldownMs = 900;
 const duplicateScanCooldownMs = 2500;
 const retakeScanCooldownMs = 2800;
+const invalidBarcodeScanCooldownMs = 1800;
 const minimumReliableSnLength = 6;
 const virtualInsuranceCodeGenerationAttempts = 40;
 const pcOnlyUninsuredReceiptNotice =
@@ -568,17 +569,7 @@ function isNativeAppShell() {
 
 function getNativeBarcodeTypes(scanCodeMode: ScanCodeMode) {
   return scanCodeMode === "barcode"
-    ? [
-        "ean13",
-        "ean8",
-        "upc_a",
-        "upc_e",
-        "code128",
-        "code39",
-        "code93",
-        "itf14",
-        "codabar",
-      ]
+    ? ["ean13", "itf14"]
     : ["datamatrix", "qr"];
 }
 
@@ -614,7 +605,6 @@ function createScannerReader(
   scanCodeMode: ScanCodeMode,
 ) {
   const hints = new Map<DecodeHintType, unknown>();
-  hints.set(DecodeHintType.TRY_HARDER, true);
   hints.set(DecodeHintType.CHARACTER_SET, "UTF-8");
   const performanceMode = isScanPerformanceMode(scanPerformanceMode);
   const options = {
@@ -626,18 +616,12 @@ function createScannerReader(
   if (scanCodeMode === "barcode") {
     hints.set(DecodeHintType.POSSIBLE_FORMATS, [
       BarcodeFormat.EAN_13,
-      BarcodeFormat.EAN_8,
-      BarcodeFormat.UPC_A,
-      BarcodeFormat.UPC_E,
-      BarcodeFormat.CODE_128,
-      BarcodeFormat.CODE_39,
-      BarcodeFormat.CODE_93,
       BarcodeFormat.ITF,
-      BarcodeFormat.CODABAR,
     ]);
     return new BrowserMultiFormatOneDReader(hints, options);
   }
 
+  hints.set(DecodeHintType.TRY_HARDER, true);
   return new BrowserDatamatrixCodeReader(hints, options);
 }
 
@@ -1667,8 +1651,12 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
     productTotalQuantity > 0 ||
     (name && name !== "미확인 약품"),
   );
+  const responsePcOnlyUninsured = normalizeBoolean(item.pcOnlyUninsured);
   const pcOnlyUninsured =
-    !qr.sn && hasDrugMaster && !isMeaningfulInsuranceCode(insuranceCode);
+    !qr.sn &&
+    hasDrugMaster &&
+    (responsePcOnlyUninsured ||
+      !isMeaningfulInsuranceCode(insuranceCode, qr.pc));
   const pcOnlyVirtualInsuranceCode =
     responseVirtualInsuranceCode || createPcOnlyVirtualInsuranceCode(qr.pc);
   const effectivePriceMasters = pcOnlyUninsured ? [] : priceMasters;
@@ -1950,12 +1938,13 @@ function parseBarcodePayload(rawValue: string): QrFields {
   if (structured.pc) {
     return {
       ...structured,
+      pc: normalizeBarcodePc(structured.pc),
       format: "barcode",
     };
   }
 
   const digits = raw.replace(/\D/g, "");
-  const pc = normalizePc(digits || raw);
+  const pc = normalizeBarcodePc(digits || raw);
   const result: QrFields = {
     pc,
     sn: "",
@@ -1969,6 +1958,31 @@ function parseBarcodePayload(rawValue: string): QrFields {
   if (!result.pc) result.errors.push("PC 없음");
 
   return result;
+}
+
+function normalizeBarcodePc(value: string) {
+  const compact = value.trim();
+  const digits = compact.replace(/\D/g, "");
+  if (digits.length === 14 && digits.slice(1).startsWith("880")) {
+    return digits.slice(1);
+  }
+  return normalizePc(digits || compact);
+}
+
+function getLowConfidenceBarcodeReason(rawValue: string, qr: QrFields) {
+  const raw = rawValue.trim();
+  const rawDigits = raw.replace(/\D/g, "");
+  const pc = normalizeBarcodePc(qr.pc || rawDigits || raw);
+  if (!pc) {
+    return "바코드 값을 읽었지만 약품 PC로 판단할 수 없습니다. 바코드를 프레임 안에 다시 맞춰주세요.";
+  }
+  if (!/^\d{13}$/.test(pc)) {
+    return "약품 바코드는 13자리 PC만 자동 입고합니다. 바코드를 더 크게 맞춰 다시 스캔해 주세요.";
+  }
+  if (!pc.startsWith("880")) {
+    return "880으로 시작하는 약품 표준코드가 아니어서 무시했습니다.";
+  }
+  return "";
 }
 
 function getLowConfidenceSnReason(qr: QrFields) {
@@ -2717,9 +2731,14 @@ function createPcOnlyVirtualInsuranceCode(pc: string) {
   return `PCONLY${(normalizedPc || "UNKNOWN").slice(-32)}`;
 }
 
-function isMeaningfulInsuranceCode(value: string | undefined) {
+function isMeaningfulInsuranceCode(value: string | undefined, pc?: string) {
   const normalized = normalizeInsuranceCode(value);
-  return normalized.length > 0 && normalized !== "-";
+  const normalizedPc = normalizeInsuranceCode(pc);
+  return (
+    normalized.length > 0 &&
+    normalized !== "-" &&
+    (!normalizedPc || normalized !== normalizedPc)
+  );
 }
 
 function stockNameMatchesRecord(stock: StockItem, record: CmsDeductionRecord) {
@@ -3389,6 +3408,7 @@ function MobileApp() {
     at: 0,
     cooldownMs: defaultScanCooldownMs,
   });
+  const rejectedBarcodeUntilRef = useRef(0);
   const expiryDismissTimerRef = useRef<number | null>(null);
   const expirySpeechTimerRef = useRef<number | null>(null);
   const expirySpeechRequestRef = useRef(0);
@@ -4396,13 +4416,31 @@ function MobileApp() {
   );
 
   const handlePayload = useCallback(
-    (payload: string): ScanHandleResult => {
+    (
+      payload: string,
+      forcedScanCodeMode?: ScanCodeMode,
+    ): ScanHandleResult => {
+      const effectiveScanCodeMode = forcedScanCodeMode ?? scanCodeMode;
       const qr =
-        scanCodeMode === "barcode"
+        effectiveScanCodeMode === "barcode"
           ? parseBarcodePayload(payload)
           : parseQrPayload(payload);
+      const lowConfidenceBarcodeReason =
+        effectiveScanCodeMode === "barcode"
+          ? getLowConfidenceBarcodeReason(payload, qr)
+          : "";
       const lowConfidenceSnReason = getLowConfidenceSnReason(qr);
-      const codeLabel = scanCodeModeLabel(scanCodeMode);
+      const codeLabel = scanCodeModeLabel(effectiveScanCodeMode);
+
+      if (lowConfidenceBarcodeReason) {
+        setLastScanName("바코드 재촬영 필요");
+        setScanNotice(lowConfidenceBarcodeReason);
+        return {
+          kind: "handled",
+          cooldownMs: invalidBarcodeScanCooldownMs,
+          suppressBarcodeInput: true,
+        };
+      }
 
       if (lowConfidenceSnReason) {
         setLastScanName("SN 재촬영 필요");
@@ -4465,6 +4503,29 @@ function MobileApp() {
     ],
   );
 
+  const submitManualBarcode = useCallback(
+    (value: string) => {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        setLastScanName("바코드 입력 필요");
+        setScanNotice("입고할 바코드 값을 입력해 주세요.");
+        return false;
+      }
+
+      const handled = handlePayload(trimmed, "barcode");
+      if (!handled) return false;
+
+      if (handled.kind !== "accepted") {
+        return false;
+      }
+
+      playScanSound();
+      presentScanExpiry(handled.qr);
+      return true;
+    },
+    [handlePayload, playScanSound, presentScanExpiry],
+  );
+
   useEffect(() => {
     function handleNativeScannerMessage(event: MessageEvent) {
       if (typeof event.data !== "string") return;
@@ -4490,6 +4551,13 @@ function MobileApp() {
       if (!value) return;
 
       const now = Date.now();
+      if (
+        scanCodeMode === "barcode" &&
+        now < rejectedBarcodeUntilRef.current
+      ) {
+        return;
+      }
+
       const lastDetected = lastDetectedRef.current;
       if (
         value === lastDetected.value &&
@@ -4506,6 +4574,10 @@ function MobileApp() {
           cooldownMs: handled.cooldownMs ?? defaultScanCooldownMs,
         };
       }
+      if (handled?.kind === "handled" && handled.suppressBarcodeInput) {
+        rejectedBarcodeUntilRef.current =
+          now + (handled.cooldownMs ?? invalidBarcodeScanCooldownMs);
+      }
 
       if (handled?.kind === "accepted") {
         playScanSound();
@@ -4517,7 +4589,7 @@ function MobileApp() {
     return () => {
       window.removeEventListener("message", handleNativeScannerMessage);
     };
-  }, [handlePayload, playScanSound, presentScanExpiry]);
+  }, [handlePayload, playScanSound, presentScanExpiry, scanCodeMode]);
 
   const activateCamera = useCallback(() => {
     lastDetectedRef.current = {
@@ -4525,6 +4597,7 @@ function MobileApp() {
       at: 0,
       cooldownMs: defaultScanCooldownMs,
     };
+    rejectedBarcodeUntilRef.current = 0;
     setCameraActive(true);
   }, []);
 
@@ -4534,6 +4607,7 @@ function MobileApp() {
       at: 0,
       cooldownMs: defaultScanCooldownMs,
     };
+    rejectedBarcodeUntilRef.current = 0;
     setCameraError("");
     setScanNotice("카메라를 새로고침하고 있습니다.");
     stopCamera();
@@ -4587,6 +4661,7 @@ function MobileApp() {
       at: 0,
       cooldownMs: defaultScanCooldownMs,
     };
+    rejectedBarcodeUntilRef.current = 0;
     setScanNotice(
       `${formatVideoInputLabel(nextDevice, nextIndex)}로 전환합니다.`,
     );
@@ -4607,6 +4682,7 @@ function MobileApp() {
         at: 0,
         cooldownMs: defaultScanCooldownMs,
       };
+      rejectedBarcodeUntilRef.current = 0;
       setScanNotice(
         next === "performance"
           ? "저사양 스캔 모드로 전환했습니다. 카메라를 가볍게 다시 맞춥니다."
@@ -4627,6 +4703,7 @@ function MobileApp() {
           at: 0,
           cooldownMs: defaultScanCooldownMs,
         };
+        rejectedBarcodeUntilRef.current = 0;
         setScanNotice(
           next === "barcode"
             ? "바코드 인식 모드로 전환했습니다. 가로 프레임 안에 바코드를 맞춰주세요."
@@ -4658,6 +4735,7 @@ function MobileApp() {
         at: 0,
         cooldownMs: defaultScanCooldownMs,
       };
+      rejectedBarcodeUntilRef.current = 0;
 
       if (next === "native") {
         postNativeScannerMessage("stop", scanCodeMode);
@@ -4799,6 +4877,13 @@ function MobileApp() {
           }
 
           const now = Date.now();
+          if (
+            scanCodeMode === "barcode" &&
+            now < rejectedBarcodeUntilRef.current
+          ) {
+            return;
+          }
+
           const lastDetected = lastDetectedRef.current;
           if (
             value === lastDetected.value &&
@@ -4814,6 +4899,10 @@ function MobileApp() {
               at: now,
               cooldownMs: handled.cooldownMs ?? defaultScanCooldownMs,
             };
+          }
+          if (handled?.kind === "handled" && handled.suppressBarcodeInput) {
+            rejectedBarcodeUntilRef.current =
+              now + (handled.cooldownMs ?? invalidBarcodeScanCooldownMs);
           }
 
           if (handled?.kind === "accepted") {
@@ -5256,6 +5345,7 @@ function MobileApp() {
           torchOn={torchOn}
           videoRef={videoRef}
           onLogout={logoutMobile}
+          onManualBarcodeSubmit={submitManualBarcode}
           onMode={chooseMode}
           onReview={() => {
             if (startReceipt()) setScreen("receiptReview");
@@ -5564,6 +5654,7 @@ function ScanScreen({
   torchOn,
   videoRef,
   onLogout,
+  onManualBarcodeSubmit,
   onMode,
   onRefocusCamera,
   onRefreshCamera,
@@ -5594,6 +5685,7 @@ function ScanScreen({
   torchOn: boolean;
   videoRef: RefObject<HTMLVideoElement>;
   onLogout: () => void;
+  onManualBarcodeSubmit: (value: string) => boolean;
   onMode: (mode: Mode) => void;
   onRefocusCamera: () => void;
   onRefreshCamera: () => void;
@@ -5618,6 +5710,17 @@ function ScanScreen({
       ? `${codeLabel}가 인식되면 자동으로 스캔됩니다`
       : "입고 이력 또는 구매 내역에서 판매처를 찾아드려요");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [manualBarcodeOpen, setManualBarcodeOpen] = useState(false);
+  const [manualBarcodeValue, setManualBarcodeValue] = useState("");
+  const manualBarcodeDisabled = !isReceipt || !selectedWholesaler;
+
+  const submitManualBarcodeForm = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const submitted = onManualBarcodeSubmit(manualBarcodeValue);
+    if (!submitted) return;
+    setManualBarcodeValue("");
+    setManualBarcodeOpen(false);
+  };
 
   return (
     <>
@@ -5669,6 +5772,16 @@ function ScanScreen({
                 }}
               >
                 입고 확인 리스트
+              </button>
+              <button
+                type="button"
+                disabled={manualBarcodeDisabled}
+                onClick={() => {
+                  setMenuOpen(false);
+                  setManualBarcodeOpen(true);
+                }}
+              >
+                바코드 수기 입력
               </button>
               {/* {nativeAppBridgeAvailable && (
                 <> */}
@@ -5732,6 +5845,36 @@ function ScanScreen({
           </button>
         </div>
       </div>
+
+      {manualBarcodeOpen && (
+        <form
+          className="manual-barcode-panel"
+          onSubmit={submitManualBarcodeForm}
+        >
+          <label htmlFor="manual-barcode-input">바코드 수기 입력</label>
+          <input
+            id="manual-barcode-input"
+            autoComplete="off"
+            autoFocus
+            inputMode="numeric"
+            placeholder="PC 또는 바코드 값"
+            value={manualBarcodeValue}
+            onChange={(event) => setManualBarcodeValue(event.target.value)}
+          />
+          <div className="manual-barcode-actions">
+            <button
+              type="button"
+              onClick={() => {
+                setManualBarcodeOpen(false);
+                setManualBarcodeValue("");
+              }}
+            >
+              닫기
+            </button>
+            <button type="submit">입고 추가</button>
+          </div>
+        </form>
+      )}
 
       <section className="scanner-zone">
         {canUseCamera && (

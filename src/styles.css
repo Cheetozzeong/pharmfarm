@@ -328,6 +328,65 @@ p {
   color: var(--dark);
 }
 
+.manual-barcode-panel {
+  position: relative;
+  z-index: 11;
+  display: grid;
+  gap: 10px;
+  margin: 10px 18px 0;
+  padding: 14px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 12px;
+  background: rgba(18, 22, 27, 0.9);
+  box-shadow: 0 14px 30px rgba(0, 0, 0, 0.22);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+
+.manual-barcode-panel label {
+  color: rgba(255, 255, 255, 0.76);
+  font-size: 12px;
+  font-weight: 850;
+}
+
+.manual-barcode-panel input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  padding: 0 12px;
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.manual-barcode-panel input::placeholder {
+  color: rgba(255, 255, 255, 0.42);
+}
+
+.manual-barcode-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.manual-barcode-actions button {
+  min-height: 40px;
+  border-radius: 10px;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 900;
+}
+
+.manual-barcode-actions button:first-child {
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.manual-barcode-actions button:last-child {
+  background: rgba(77, 154, 255, 0.92);
+}
+
 .camera-actions {
   position: absolute;
   top: 16px;
