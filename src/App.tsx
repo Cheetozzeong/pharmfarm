@@ -5113,24 +5113,15 @@ function MobileApp() {
   }
 
   function openWholesalerPicker() {
-    const hasReceiptDraft = receiptQueue.length > 0;
-    if (
-      hasReceiptDraft &&
-      !window.confirm(
-        "도매처를 변경하면 현재 스캔한 입고 목록이 삭제됩니다. 계속할까요?",
-      )
-    ) {
-      return;
-    }
-
     if (cameraActive) {
       setCameraActive(false);
     }
 
-    if (hasReceiptDraft) {
-      setReceiptQueue([]);
-      setLastScanName("도매처 선택 필요");
-      setScanNotice("도매처를 다시 선택하면 새 입고 스캔을 시작합니다.");
+    if (receiptQueue.length > 0) {
+      setLastScanName("도매처 변경");
+      setScanNotice(
+        "입고 목록은 유지되며, 선택한 도매처가 전체 목록에 적용됩니다.",
+      );
     }
 
     resetWholesalerDraft();
@@ -5381,7 +5372,9 @@ function MobileApp() {
     >
       {screen === "wholesaler" && (
         <WholesalerScreen
+          currentWholesalerName={selectedWholesaler?.name ?? ""}
           pendingId={pendingWholesalerId}
+          preservedQueueCount={receiptQueue.length}
           searchResults={wholesalerSearchResults}
           searchStatus={wholesalerSearchStatus}
           wholesalers={wholesalers}
@@ -5403,7 +5396,11 @@ function MobileApp() {
             setSelectedWholesalerId(wholesaler.id);
             setMode("receipt");
             setLastScanName("스캔 준비 완료");
-            setScanNotice(`${wholesaler.name} 입고 스캔을 시작합니다.`);
+            setScanNotice(
+              receiptQueue.length > 0
+                ? `${wholesaler.name}이 현재 입고 목록 전체에 적용됩니다.`
+                : `${wholesaler.name} 입고 스캔을 시작합니다.`,
+            );
             setScreen("scan");
           }}
         />
@@ -6093,7 +6090,9 @@ function apiStateLabel(state: ApiState) {
 }
 
 function WholesalerScreen({
+  currentWholesalerName,
   pendingId,
+  preservedQueueCount,
   searchResults,
   searchStatus,
   wholesalers,
@@ -6103,7 +6102,9 @@ function WholesalerScreen({
   onSearch,
   onStart,
 }: {
+  currentWholesalerName?: string;
   pendingId: string;
+  preservedQueueCount: number;
   searchResults: Wholesaler[];
   searchStatus: "idle" | "short" | "loading" | "done" | "error";
   wholesalers: Wholesaler[];
@@ -6114,9 +6115,25 @@ function WholesalerScreen({
   onStart: () => void;
 }) {
   const selected = wholesalers.find((item) => item.id === pendingId);
+  const hasPreservedQueue = preservedQueueCount > 0;
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [query, setQuery] = useState("");
   const normalizedQuery = normalizeSearchText(query);
   const canSearch = normalizedQuery.length >= 2;
+
+  function handleStart() {
+    if (!selected) return;
+    if (hasPreservedQueue) {
+      setConfirmOpen(true);
+      return;
+    }
+    onStart();
+  }
+
+  function confirmWholesalerChange() {
+    setConfirmOpen(false);
+    onStart();
+  }
 
   useEffect(() => {
     if (!canSearch) {
@@ -6191,14 +6208,60 @@ function WholesalerScreen({
           className="primary-btn"
           type="button"
           disabled={!selected}
-          onClick={onStart}
+          onClick={handleStart}
         >
-          이 도매처로 입고 시작
+          {hasPreservedQueue
+            ? "이 도매처로 전체 목록 변경"
+            : "이 도매처로 입고 시작"}
         </button>
         <button className="secondary-btn" type="button" onClick={onReturnFirst}>
           반품 먼저 하기
         </button>
       </BottomBar>
+      {confirmOpen && selected && (
+        <div
+          className="mobile-modal-backdrop"
+          role="presentation"
+          onPointerDown={(event) => {
+            if (event.target === event.currentTarget) setConfirmOpen(false);
+          }}
+        >
+          <aside
+            aria-modal="true"
+            className="mobile-confirm-modal"
+            role="dialog"
+          >
+            <span>도매처 변경 확인</span>
+            <strong>입고 목록 {preservedQueueCount}건에 적용할까요?</strong>
+            <p>
+              입력한 약품은 삭제되지 않고, 선택한 도매처가 현재 입고 목록
+              전체에 적용됩니다.
+            </p>
+            <div className="wholesaler-change-summary">
+              {currentWholesalerName && (
+                <span>현재 도매처: {currentWholesalerName}</span>
+              )}
+              <span>변경 도매처: {selected.name}</span>
+            </div>
+            <div className="mobile-confirm-actions">
+              <button
+                className="secondary-btn"
+                type="button"
+                onClick={() => setConfirmOpen(false)}
+              >
+                취소
+              </button>
+              <button
+                className="primary-btn"
+                type="button"
+                onClick={confirmWholesalerChange}
+              >
+                확인
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
     </>
   );
 }
