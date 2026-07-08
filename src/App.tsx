@@ -87,12 +87,23 @@ type PriceMaster = {
   maxPrice: number;
 };
 
+type StockCandidate = {
+  id: string;
+  insuranceCode: string;
+  name: string;
+  price: number;
+  quantity: number;
+  matchType: string;
+};
+
 type DrugMaster = {
   pc: string;
   drugMasterId?: string;
   insuranceCode: string;
+  selectedStockId?: string;
   priceMasterId?: string;
   priceMasters?: PriceMaster[];
+  stockCandidates?: StockCandidate[];
   name: string;
   productTotalQuantity: number;
   price: number;
@@ -1611,6 +1622,18 @@ function normalizePriceMaster(raw: unknown, index: number): PriceMaster {
   };
 }
 
+function normalizeStockCandidate(raw: unknown, index: number): StockCandidate {
+  const item = asRecord(raw);
+  return {
+    id: String(item.stockId ?? item.id ?? index),
+    insuranceCode: String(item.insuranceCode ?? item.code ?? ""),
+    name: String(item.drugName ?? item.name ?? "임의 재고"),
+    price: Number(item.price ?? 0),
+    quantity: Number(item.quantity ?? 0),
+    matchType: String(item.matchType ?? item.type ?? "NAME_MATCHED"),
+  };
+}
+
 function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
   const item = unwrapObjectPayload(raw);
   const priceMasters = firstArrayPayload(item, [
@@ -1621,9 +1644,17 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
     "content",
     "data",
   ]).map(normalizePriceMaster);
+  const stockCandidates = firstArrayPayload(item, [
+    "stockCandidates",
+    "pcOnlyStockCandidates",
+    "stockCandidateItems",
+  ]).map(normalizeStockCandidate);
   const firstPrice = priceMasters[0];
   const responseVirtualInsuranceCode = String(
     item.virtualInsuranceCode ?? item.pcOnlyVirtualInsuranceCode ?? "",
+  );
+  const recommendedStockId = String(
+    item.recommendedStockId ?? item.stockId ?? "",
   );
   const rawDrugMasterId = item.drugMasterId ?? item.masterId ?? item.id;
   const insuranceCode = String(
@@ -1657,8 +1688,12 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
     hasDrugMaster &&
     (responsePcOnlyUninsured ||
       !isMeaningfulInsuranceCode(insuranceCode, qr.pc));
+  const selectedStockCandidate = pcOnlyUninsured
+    ? stockCandidates.find((candidate) => candidate.id === recommendedStockId) ??
+      stockCandidates.find((candidate) => candidate.matchType === "PC_HISTORY")
+    : undefined;
   const pcOnlyVirtualInsuranceCode =
-    responseVirtualInsuranceCode || createPcOnlyVirtualInsuranceCode(qr.pc);
+    selectedStockCandidate?.insuranceCode || responseVirtualInsuranceCode;
   const effectivePriceMasters = pcOnlyUninsured ? [] : priceMasters;
   const firstEffectivePrice = effectivePriceMasters[0];
   const exactPrice = effectivePriceMasters.find(
@@ -1686,13 +1721,18 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
     insuranceCode: pcOnlyUninsured
       ? pcOnlyVirtualInsuranceCode
       : selectedPrice?.productCode ?? insuranceCode,
+    selectedStockId: selectedStockCandidate?.id,
     priceMasterId: selectedPrice?.id,
     priceMasters: effectivePriceMasters,
-    name: selectedPrice?.productName ?? name,
+    stockCandidates,
+    name: selectedPrice?.productName ?? selectedStockCandidate?.name ?? name,
     productTotalQuantity,
-    price: selectedPrice?.maxPrice ?? Number(item.price ?? item.maxPrice ?? 0),
+    price:
+      selectedPrice?.maxPrice ??
+      selectedStockCandidate?.price ??
+      Number(item.price ?? item.maxPrice ?? 0),
     matchStatus,
-    virtualDrugName: selectedPrice ? "" : name,
+    virtualDrugName: selectedPrice ? "" : selectedStockCandidate?.name ?? name,
     virtualInsuranceCode: selectedPrice
       ? ""
       : pcOnlyUninsured
@@ -2726,9 +2766,15 @@ function normalizeInsuranceCode(value: string | undefined) {
   return (value ?? "").replace(/\s+/g, "").toUpperCase();
 }
 
-function createPcOnlyVirtualInsuranceCode(pc: string) {
-  const normalizedPc = normalizeInsuranceCode(pc).replace(/[^A-Z0-9]/g, "");
-  return `PCONLY${(normalizedPc || "UNKNOWN").slice(-32)}`;
+function formatInsuranceCodeForDisplay(value: string | undefined) {
+  const code = (value ?? "").trim();
+  if (!code) return "";
+  const legacyPcOnlyPrefix = "PC_ONLY_VIRTUAL:";
+  if (code.startsWith(legacyPcOnlyPrefix)) {
+    const suffix = code.slice(legacyPcOnlyPrefix.length);
+    return `자동관리 ${suffix.slice(0, 8) || "PC-only"}`;
+  }
+  return code;
 }
 
 function isMeaningfulInsuranceCode(value: string | undefined, pc?: string) {
@@ -3778,10 +3824,7 @@ function MobileApp() {
       if (item.qr.errors.length > 0) return false;
       if (item.drug.priceMasterId) return true;
       if (item.drug.pcOnlyUninsured) {
-        return Boolean(
-          item.drug.virtualDrugName?.trim() &&
-            item.drug.virtualInsuranceCode?.trim(),
-        );
+        return Boolean(item.drug.virtualDrugName?.trim() || item.drug.name.trim());
       }
 
       return Boolean(
@@ -4099,6 +4142,38 @@ function MobileApp() {
               virtualDrugName: "",
               virtualInsuranceCode: "",
               insuranceCodeExists: null,
+            },
+          };
+        }),
+      );
+    },
+    [],
+  );
+
+  const selectReceiptStockCandidate = useCallback(
+    (itemId: string, stockId: string) => {
+      setReceiptSubmitError("");
+      setReceiptQueue((current) =>
+        current.map((item) => {
+          if (item.id !== itemId) return item;
+
+          const candidate = item.drug.stockCandidates?.find(
+            (stock) => stock.id === stockId,
+          );
+          if (!candidate) return item;
+
+          return {
+            ...item,
+            drug: {
+              ...item.drug,
+              selectedStockId: candidate.id,
+              insuranceCode: candidate.insuranceCode,
+              virtualInsuranceCode: candidate.insuranceCode,
+              name: candidate.name,
+              virtualDrugName: candidate.name,
+              price: candidate.price,
+              matchStatus: "VIRTUAL",
+              insuranceCodeExists: false,
             },
           };
         }),
@@ -5114,6 +5189,7 @@ function MobileApp() {
             exp: item.qr.exp,
             drugMasterId: optionalId(drug.drugMasterId),
             insuranceCode: drug.insuranceCode || undefined,
+            stockId: optionalId(drug.selectedStockId),
             priceMasterId: optionalId(drug.priceMasterId),
             virtualDrugName: drug.priceMasterId
               ? null
@@ -5390,6 +5466,7 @@ function MobileApp() {
               : undefined
           }
           onSelectPrice={selectReceiptPriceMaster}
+          onSelectStock={selectReceiptStockCandidate}
           onVirtualCode={(itemId, value) =>
             patchReceiptDrug(itemId, {
               virtualInsuranceCode: value,
@@ -6194,6 +6271,7 @@ function ReceiptMatchScreen({
   onGenerateVirtual,
   onRegeneratePreviewSerials,
   onSelectPrice,
+  onSelectStock,
   onVirtualCode,
   onVirtualName,
 }: {
@@ -6207,6 +6285,7 @@ function ReceiptMatchScreen({
   onGenerateVirtual: (itemId: string) => void;
   onRegeneratePreviewSerials?: () => void;
   onSelectPrice: (itemId: string, priceMasterId: string) => void;
+  onSelectStock: (itemId: string, stockId: string) => void;
   onVirtualCode: (itemId: string, value: string) => void;
   onVirtualName: (itemId: string, value: string) => void;
 }) {
@@ -6258,6 +6337,7 @@ function ReceiptMatchScreen({
               onCheckVirtual={onCheckVirtual}
               onGenerateVirtual={onGenerateVirtual}
               onSelectPrice={onSelectPrice}
+              onSelectStock={onSelectStock}
               onToggle={() =>
                 setExpandedGroups((current) => ({
                   ...current,
@@ -6313,6 +6393,7 @@ function ReceiptMatchGroup({
   onCheckVirtual,
   onGenerateVirtual,
   onSelectPrice,
+  onSelectStock,
   onToggle,
   onVirtualCode,
   onVirtualName,
@@ -6325,6 +6406,7 @@ function ReceiptMatchGroup({
   onCheckVirtual: (itemId: string, insuranceCode: string) => void;
   onGenerateVirtual: (itemId: string) => void;
   onSelectPrice: (itemId: string, priceMasterId: string) => void;
+  onSelectStock: (itemId: string, stockId: string) => void;
   onToggle: () => void;
   onVirtualCode: (itemId: string, value: string) => void;
   onVirtualName: (itemId: string, value: string) => void;
@@ -6363,6 +6445,7 @@ function ReceiptMatchGroup({
               onCheckVirtual={onCheckVirtual}
               onGenerateVirtual={onGenerateVirtual}
               onSelectPrice={onSelectPrice}
+              onSelectStock={onSelectStock}
               onVirtualCode={onVirtualCode}
               onVirtualName={onVirtualName}
             />
@@ -6378,6 +6461,7 @@ function ReceiptMatchItem({
   onCheckVirtual,
   onGenerateVirtual,
   onSelectPrice,
+  onSelectStock,
   onVirtualCode,
   onVirtualName,
 }: {
@@ -6385,6 +6469,7 @@ function ReceiptMatchItem({
   onCheckVirtual: (itemId: string, insuranceCode: string) => void;
   onGenerateVirtual: (itemId: string) => void;
   onSelectPrice: (itemId: string, priceMasterId: string) => void;
+  onSelectStock: (itemId: string, stockId: string) => void;
   onVirtualCode: (itemId: string, value: string) => void;
   onVirtualName: (itemId: string, value: string) => void;
 }) {
@@ -6395,6 +6480,14 @@ function ReceiptMatchItem({
   const hasPriceCandidates = candidatePrices.length > 0;
   const needsVirtualFields = !item.drug.priceMasterId && !hasPriceCandidates;
   const isPcOnlyUninsured = Boolean(item.drug.pcOnlyUninsured);
+  const stockCandidates = item.drug.stockCandidates ?? [];
+  const selectedStockCandidate = stockCandidates.find(
+    (candidate) => candidate.id === item.drug.selectedStockId,
+  );
+  const pcOnlyDisplayCode =
+    selectedStockCandidate?.insuranceCode ??
+    item.drug.virtualInsuranceCode ??
+    item.drug.insuranceCode;
 
   return (
     <div className="receipt-fix-card">
@@ -6436,6 +6529,30 @@ function ReceiptMatchItem({
           {item.drug.receiptNotice ?? pcOnlyUninsuredReceiptNotice}
         </p>
       )}
+      {isPcOnlyUninsured && stockCandidates.length > 0 && (
+        <div className="stock-candidate-chips">
+          {stockCandidates.map((stock) => (
+            <button
+              key={stock.id}
+              className={
+                item.drug.selectedStockId === stock.id ? "is-active" : ""
+              }
+              disabled={item.drug.selectedStockId === stock.id}
+              type="button"
+              onClick={() => onSelectStock(item.id, stock.id)}
+            >
+              <span className="candidate-code">
+                {stock.matchType === "PC_HISTORY" ? "같은 PC" : "이름 후보"}
+              </span>
+              <span className="candidate-name">{stock.name}</span>
+              <span className="candidate-meta">
+                {formatInsuranceCodeForDisplay(stock.insuranceCode)} · 재고{" "}
+                {stock.quantity}
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
       {needsVirtualFields && isPcOnlyUninsured && (
         <div className="virtual-fields">
           <label>
@@ -6445,12 +6562,18 @@ function ReceiptMatchItem({
           <label>
             <span>자동 관리코드</span>
             <input
-              value={item.drug.virtualInsuranceCode ?? item.drug.insuranceCode}
+              value={
+                pcOnlyDisplayCode
+                  ? formatInsuranceCodeForDisplay(pcOnlyDisplayCode)
+                  : "입고 확정 시 자동 생성"
+              }
               readOnly
             />
           </label>
           <div className="virtual-actions">
-            <span className="is-available">자동 임의재고</span>
+            <span className="is-available">
+              {selectedStockCandidate ? "기존 임의재고 연결" : "자동 임의재고"}
+            </span>
           </div>
         </div>
       )}
@@ -6935,7 +7058,10 @@ function StocksScreen({
                 <div className="stock-main">
                   <strong className="stock-name">{stock.name}</strong>
                   <div className="stock-meta">
-                    <span>{stock.insuranceCode || "보험코드 없음"}</span>
+                    <span>
+                      {formatInsuranceCodeForDisplay(stock.insuranceCode) ||
+                        "보험코드 없음"}
+                    </span>
                     <span>예상 {currency(stock.quantity * stock.price)}원</span>
                   </div>
                 </div>
@@ -7132,15 +7258,23 @@ function receiptDrugDetail(item: ReceiptQueueItem) {
   const candidateCount = item.drug.priceMasters?.length ?? 0;
 
   if (item.drug.priceMasterId) {
-    parts.push(item.drug.insuranceCode || "보험코드 없음");
+    parts.push(
+      formatInsuranceCodeForDisplay(item.drug.insuranceCode) || "보험코드 없음",
+    );
     parts.push(`가격 ${currency(item.drug.price)}원`);
   } else if (candidateCount > 0) {
     parts.push(`가격 후보 ${candidateCount}건`);
-    if (item.drug.insuranceCode) parts.push(item.drug.insuranceCode);
+    if (item.drug.insuranceCode) {
+      parts.push(formatInsuranceCodeForDisplay(item.drug.insuranceCode));
+    }
   } else if (item.drug.virtualInsuranceCode || item.drug.insuranceCode) {
     parts.push(
-      `임의 ${item.drug.virtualInsuranceCode || item.drug.insuranceCode}`,
+      `임의 ${formatInsuranceCodeForDisplay(
+        item.drug.virtualInsuranceCode || item.drug.insuranceCode,
+      )}`,
     );
+  } else if (item.drug.pcOnlyUninsured) {
+    parts.push("임의 자동 생성 예정");
   } else {
     parts.push("보험코드 보정 필요");
   }
@@ -13069,7 +13203,7 @@ function CmsInventoryPage({
                     </span>
                   )}
                 </div>
-                <span>{stock.insuranceCode}</span>
+                <span>{formatInsuranceCodeForDisplay(stock.insuranceCode)}</span>
                 <span>{currency(stock.price)}원</span>
                 <span>{stock.quantity}</span>
                 <span>{currency(stock.quantity * stock.price)}원</span>
@@ -13407,7 +13541,10 @@ function CmsInventoryPage({
                     실제 관리 가격을 직접 입력해 주세요.
                   </em>
                 </div>
-                <CmsField label="보험코드" value={sheetStock.insuranceCode} />
+                <CmsField
+                  label="보험코드"
+                  value={formatInsuranceCodeForDisplay(sheetStock.insuranceCode)}
+                />
                 <CmsField
                   label="현재 재고"
                   value={`${currency(sheetStock.quantity)}개`}
@@ -14200,7 +14337,9 @@ function CmsInventoryShortagePage({
                             <div className="cms-prescription-line-main">
                               <strong>{drug.drugName}</strong>
                               <span>
-                                {drug.insuranceCode || "보험코드 없음"}
+                                {formatInsuranceCodeForDisplay(
+                                  drug.insuranceCode,
+                                ) || "보험코드 없음"}
                               </span>
                             </div>
                             <CmsPrescriptionLineQuantity drug={drug} />
@@ -14391,7 +14530,10 @@ function CmsInventoryShortagePage({
                 >
                   <span>대체 후보</span>
                   <strong>{stock.name}</strong>
-                  <em>{stock.insuranceCode || "보험코드 없음"}</em>
+                  <em>
+                    {formatInsuranceCodeForDisplay(stock.insuranceCode) ||
+                      "보험코드 없음"}
+                  </em>
                   <b>보유 {currency(stock.quantity)}개</b>
                 </button>
               ))}
@@ -14964,7 +15106,11 @@ function CmsReturnReviewPage({
                                     {exactCode ? "보험코드 일치" : "이름 후보"}
                                   </span>
                                   <strong>{stock.name}</strong>
-                                  <em>{stock.insuranceCode}</em>
+                                  <em>
+                                    {formatInsuranceCodeForDisplay(
+                                      stock.insuranceCode,
+                                    )}
+                                  </em>
                                   <b>{stock.quantity}개</b>
                                 </button>
                               );
@@ -15077,7 +15223,10 @@ function CmsReturnReviewPage({
                   <span>{history.createdAt}</span>
                   <strong>
                     {history.drugName}
-                    <em>{history.insuranceCode || "보험코드 없음"}</em>
+                    <em>
+                      {formatInsuranceCodeForDisplay(history.insuranceCode) ||
+                        "보험코드 없음"}
+                    </em>
                   </strong>
                   <b>{history.returnQuantity}개</b>
                   <span>
@@ -15161,7 +15310,9 @@ function CmsReturnReviewPage({
                 >
                   <span>검색 후보</span>
                   <strong>{stock.name}</strong>
-                  <em>{stock.insuranceCode || "-"}</em>
+                  <em>
+                    {formatInsuranceCodeForDisplay(stock.insuranceCode) || "-"}
+                  </em>
                   <b>{stock.quantity}개</b>
                 </button>
               ))}
@@ -15828,7 +15979,10 @@ function CmsPrescriptionSummaryPage({
                       </div>
                       <div className="cms-prescription-line-main">
                         <strong>{drug.drugName}</strong>
-                        <span>{drug.insuranceCode || "보험코드 없음"}</span>
+                        <span>
+                          {formatInsuranceCodeForDisplay(drug.insuranceCode) ||
+                            "보험코드 없음"}
+                        </span>
                       </div>
                       <CmsPrescriptionLineQuantity drug={drug} />
                       <div className="cms-prescription-line-tags">
@@ -16674,7 +16828,10 @@ function CmsPrescriptionPage({
                     >
                       <span>{stockCandidateLabel(stock, selectedRecord)}</span>
                       <strong>{stock.name}</strong>
-                      <em>{stock.insuranceCode || "-"}</em>
+                      <em>
+                        {formatInsuranceCodeForDisplay(stock.insuranceCode) ||
+                          "-"}
+                      </em>
                       <b>보유 {currency(stock.quantity)}개</b>
                     </button>
                   ))}
