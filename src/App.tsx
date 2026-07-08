@@ -99,6 +99,8 @@ type DrugMaster = {
   matchStatus: MatchStatus;
   virtualDrugName?: string;
   virtualInsuranceCode?: string;
+  pcOnlyUninsured?: boolean;
+  receiptNotice?: string;
   insuranceCodeExists?: boolean | null;
 };
 
@@ -315,6 +317,8 @@ const duplicateScanCooldownMs = 2500;
 const retakeScanCooldownMs = 2800;
 const minimumReliableSnLength = 6;
 const virtualInsuranceCodeGenerationAttempts = 40;
+const pcOnlyUninsuredReceiptNotice =
+  "처방 일반약으로 확인됩니다. 추후 반품 도매처 확정이 어렵습니다.";
 const missingExpiryReceiptNotice = "약통에 있는 유효기간을 확인해주세요";
 const missingExpiryAudioSrc = `/audio/${encodeURIComponent(
   "유효기간 정보가 없습니다.포장용기를 확인해주세요.mp3",
@@ -1634,6 +1638,9 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
     "data",
   ]).map(normalizePriceMaster);
   const firstPrice = priceMasters[0];
+  const responseVirtualInsuranceCode = String(
+    item.virtualInsuranceCode ?? item.pcOnlyVirtualInsuranceCode ?? "",
+  );
   const rawDrugMasterId = item.drugMasterId ?? item.masterId ?? item.id;
   const insuranceCode = String(
     item.insuranceCode ?? item.productCode ?? item["제품코드(개정후)"] ?? "",
@@ -1660,16 +1667,23 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
     productTotalQuantity > 0 ||
     (name && name !== "미확인 약품"),
   );
-  const exactPrice = priceMasters.find(
+  const pcOnlyUninsured =
+    !qr.sn && hasDrugMaster && !isMeaningfulInsuranceCode(insuranceCode);
+  const pcOnlyVirtualInsuranceCode =
+    responseVirtualInsuranceCode || createPcOnlyVirtualInsuranceCode(qr.pc);
+  const effectivePriceMasters = pcOnlyUninsured ? [] : priceMasters;
+  const firstEffectivePrice = effectivePriceMasters[0];
+  const exactPrice = effectivePriceMasters.find(
     (price) => price.productCode && price.productCode === insuranceCode,
   );
   const selectedPrice =
-    exactPrice ?? (priceMasters.length === 1 ? firstPrice : undefined);
+    exactPrice ??
+    (effectivePriceMasters.length === 1 ? firstEffectivePrice : undefined);
   const matchStatus: MatchStatus = selectedPrice
     ? exactPrice
       ? "NORMAL"
       : "NAME_MATCH"
-    : priceMasters.length > 0
+    : effectivePriceMasters.length > 0
       ? "NAME_MATCH"
       : !hasDrugMaster
         ? "MISSING"
@@ -1681,16 +1695,24 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
       rawDrugMasterId === undefined || rawDrugMasterId === null
         ? undefined
         : String(rawDrugMasterId),
-    insuranceCode: selectedPrice?.productCode ?? insuranceCode,
+    insuranceCode: pcOnlyUninsured
+      ? pcOnlyVirtualInsuranceCode
+      : selectedPrice?.productCode ?? insuranceCode,
     priceMasterId: selectedPrice?.id,
-    priceMasters,
+    priceMasters: effectivePriceMasters,
     name: selectedPrice?.productName ?? name,
     productTotalQuantity,
     price: selectedPrice?.maxPrice ?? Number(item.price ?? item.maxPrice ?? 0),
     matchStatus,
     virtualDrugName: selectedPrice ? "" : name,
-    virtualInsuranceCode: selectedPrice ? "" : insuranceCode,
-    insuranceCodeExists: null,
+    virtualInsuranceCode: selectedPrice
+      ? ""
+      : pcOnlyUninsured
+        ? pcOnlyVirtualInsuranceCode
+        : insuranceCode,
+    pcOnlyUninsured,
+    receiptNotice: pcOnlyUninsured ? pcOnlyUninsuredReceiptNotice : undefined,
+    insuranceCodeExists: pcOnlyUninsured ? false : null,
   };
 }
 
@@ -2690,6 +2712,11 @@ function normalizeInsuranceCode(value: string | undefined) {
   return (value ?? "").replace(/\s+/g, "").toUpperCase();
 }
 
+function createPcOnlyVirtualInsuranceCode(pc: string) {
+  const normalizedPc = normalizeInsuranceCode(pc).replace(/[^A-Z0-9]/g, "");
+  return `PCONLY${(normalizedPc || "UNKNOWN").slice(-32)}`;
+}
+
 function isMeaningfulInsuranceCode(value: string | undefined) {
   const normalized = normalizeInsuranceCode(value);
   return normalized.length > 0 && normalized !== "-";
@@ -3670,6 +3697,8 @@ function MobileApp() {
 
   const isVirtualInsuranceCodeDuplicatedInQueue = useCallback(
     (item: ReceiptQueueItem) => {
+      if (item.drug.pcOnlyUninsured) return false;
+
       const code = normalizeInsuranceCode(
         item.drug.virtualInsuranceCode || item.drug.insuranceCode,
       );
@@ -3728,6 +3757,12 @@ function MobileApp() {
     (item: ReceiptQueueItem) => {
       if (item.qr.errors.length > 0) return false;
       if (item.drug.priceMasterId) return true;
+      if (item.drug.pcOnlyUninsured) {
+        return Boolean(
+          item.drug.virtualDrugName?.trim() &&
+            item.drug.virtualInsuranceCode?.trim(),
+        );
+      }
 
       return Boolean(
         item.drug.virtualDrugName?.trim() &&
@@ -6216,6 +6251,7 @@ function ReceiptMatchItem({
   );
   const hasPriceCandidates = candidatePrices.length > 0;
   const needsVirtualFields = !item.drug.priceMasterId && !hasPriceCandidates;
+  const isPcOnlyUninsured = Boolean(item.drug.pcOnlyUninsured);
 
   return (
     <div className="receipt-fix-card">
@@ -6252,7 +6288,30 @@ function ReceiptMatchItem({
           실제 입고할 약 정보를 선택하면 입고 확정에 포함됩니다.
         </p>
       )}
-      {needsVirtualFields && (
+      {isPcOnlyUninsured && (
+        <p className="candidate-help">
+          {item.drug.receiptNotice ?? pcOnlyUninsuredReceiptNotice}
+        </p>
+      )}
+      {needsVirtualFields && isPcOnlyUninsured && (
+        <div className="virtual-fields">
+          <label>
+            <span>관리 약품명</span>
+            <input value={item.drug.virtualDrugName ?? item.drug.name} readOnly />
+          </label>
+          <label>
+            <span>자동 관리코드</span>
+            <input
+              value={item.drug.virtualInsuranceCode ?? item.drug.insuranceCode}
+              readOnly
+            />
+          </label>
+          <div className="virtual-actions">
+            <span className="is-available">자동 임의재고</span>
+          </div>
+        </div>
+      )}
+      {needsVirtualFields && !isPcOnlyUninsured && (
         <div className="virtual-fields">
           <label>
             <span>임의 약품명</span>
