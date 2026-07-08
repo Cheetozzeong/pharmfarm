@@ -4475,6 +4475,7 @@ body:has(.cms-shell) {
 }
 
 .cms-master-page .cms-table-card,
+.cms-account-page .cms-table-card,
 .cms-inventory-page .cms-table-card,
 .cms-wholesaler-page .cms-table-card,
 .cms-prescription-page .prescription-table-card {
@@ -4900,6 +4901,10 @@ body:has(.cms-shell) {
   min-width: 620px;
 }
 
+.cms-table.account {
+  min-width: 940px;
+}
+
 .cms-table.master .cms-tr {
   grid-template-columns: 120px 110px minmax(190px, 1fr) 72px 70px 82px 90px;
 }
@@ -4910,6 +4915,12 @@ body:has(.cms-shell) {
 
 .cms-table.wholesaler .cms-tr {
   grid-template-columns: minmax(240px, 1fr) minmax(150px, 0.7fr) 90px;
+}
+
+.cms-table.account .cms-tr {
+  grid-template-columns:
+    minmax(190px, 1fr) 130px minmax(150px, 0.85fr) 112px 92px
+    132px;
 }
 
 .cms-tr {
@@ -5002,6 +5013,14 @@ body:has(.cms-shell) {
   color: var(--ink);
   font-size: 13px;
   font-weight: 900;
+}
+
+.cms-tr small {
+  display: inline-block;
+  margin-left: 6px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
 }
 
 .cms-stock-name-cell {
@@ -5305,6 +5324,48 @@ body:has(.cms-shell) {
   line-height: 1.4;
 }
 
+.cms-account-edit-summary {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 13px;
+}
+
+.cms-account-edit-summary .cms-badge {
+  justify-self: start;
+}
+
+.cms-account-edit-summary strong,
+.cms-account-edit-summary em {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cms-account-edit-summary strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.cms-account-edit-summary em {
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.cms-form-hint {
+  margin: -4px 0 12px;
+  color: #69737c;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
 .cms-field,
 .cms-input {
   display: block;
@@ -5352,6 +5413,12 @@ body:has(.cms-shell) {
 .cms-input select,
 .cms-input textarea {
   outline: 0;
+}
+
+.cms-input input:disabled,
+.cms-input select:disabled {
+  background: #f6f7f8;
+  color: #8a949c;
 }
 
 .cms-input select {
@@ -7936,6 +8003,7 @@ body:has(.cms-shell) {
   }
 
   .cms-content.cms-list-page.cms-master-page,
+  .cms-content.cms-list-page.cms-account-page,
   .cms-content.cms-list-page.cms-inventory-page,
   .cms-content.cms-list-page.cms-wholesaler-page,
   .cms-content.cms-list-page.cms-prescription-page {
@@ -7953,6 +8021,7 @@ body:has(.cms-shell) {
   }
 
   .cms-master-page .cms-table-card,
+  .cms-account-page .cms-table-card,
   .cms-inventory-page .cms-table-card,
   .cms-wholesaler-page .cms-table-card,
   .cms-prescription-page .prescription-table-card {
@@ -7966,6 +8035,7 @@ body:has(.cms-shell) {
   }
 
   .cms-master-page .cms-table-scroll,
+  .cms-account-page .cms-table-scroll,
   .cms-inventory-page .cms-table-scroll,
   .cms-wholesaler-page .cms-table-scroll,
   .cms-prescription-page .cms-table-scroll {
@@ -8161,6 +8231,7 @@ body:has(.cms-shell) {
 
   .cms-content.cms-list-page,
   .cms-content.cms-list-page.cms-master-page,
+  .cms-content.cms-list-page.cms-account-page,
   .cms-content.cms-list-page.cms-inventory-page,
   .cms-content.cms-list-page.cms-wholesaler-page,
   .cms-content.cms-list-page.cms-prescription-page,
@@ -8188,6 +8259,7 @@ body:has(.cms-shell) {
 
   .cms-list-page .cms-table-scroll,
   .cms-master-page .cms-table-scroll,
+  .cms-account-page .cms-table-scroll,
   .cms-inventory-page .cms-table-scroll,
   .cms-wholesaler-page .cms-table-scroll,
   .cms-prescription-page .cms-table-scroll {
@@ -8397,6 +8469,7 @@ body:has(.cms-shell) {
 
   .cms-content.cms-list-page,
   .cms-content.cms-list-page.cms-master-page,
+  .cms-content.cms-list-page.cms-account-page,
   .cms-content.cms-list-page.cms-inventory-page,
   .cms-content.cms-list-page.cms-wholesaler-page,
   .cms-content.cms-list-page.cms-prescription-page,
@@ -8423,6 +8496,7 @@ body:has(.cms-shell) {
 
   .cms-list-page .cms-table-scroll,
   .cms-master-page .cms-table-scroll,
+  .cms-account-page .cms-table-scroll,
   .cms-inventory-page .cms-table-scroll,
   .cms-wholesaler-page .cms-table-scroll,
   .cms-prescription-page .cms-table-scroll {
@@ -8839,6 +8913,7 @@ body:has(.cms-shell) {
 
   .cms-list-page .cms-table-scroll,
   .cms-master-page .cms-table-scroll,
+  .cms-account-page .cms-table-scroll,
   .cms-inventory-page .cms-table-scroll,
   .cms-wholesaler-page .cms-table-scroll,
   .cms-prescription-page .cms-table-scroll {

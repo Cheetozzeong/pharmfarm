@@ -375,6 +375,15 @@ function createDefaultCmsSignupDraft(): CmsSignupDraft {
   };
 }
 
+function createDefaultCmsAccountDraft(): CmsAccountDraft {
+  return {
+    loginId: "",
+    accountName: "",
+    status: "ACTIVE",
+    newPassword: "",
+  };
+}
+
 type TokenResponse = {
   accessToken?: string;
   refreshToken?: string;
@@ -7428,6 +7437,7 @@ type CmsPage =
   | "master"
   | "import"
   | "signup"
+  | "accounts"
   | "inventory"
   | "inventory-shortages"
   | "return-reviews"
@@ -7507,6 +7517,31 @@ type CmsPurchaseHistory = {
   productName: string;
   quantity: number;
   source: string;
+};
+
+type CmsAccountStatus = "ACTIVE" | "INACTIVE" | "LOCKED";
+
+type CmsAccount = {
+  id: string;
+  accountId: string;
+  pharmacyId: string;
+  pharmacyName: string;
+  loginId: string;
+  accountName: string;
+  role: string;
+  accountType: string;
+  maskingPolicy: string;
+  status: CmsAccountStatus;
+  lastLoginAt: string;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type CmsAccountDraft = {
+  loginId: string;
+  accountName: string;
+  status: CmsAccountStatus;
+  newPassword: string;
 };
 
 type CmsSyncJob = {
@@ -8359,6 +8394,7 @@ function getCmsPage(path: string): CmsPage {
     segment === "master" ||
     segment === "import" ||
     segment === "signup" ||
+    segment === "accounts" ||
     segment === "inventory" ||
     segment === "wholesaler" ||
     segment === "dispense" ||
@@ -8425,6 +8461,7 @@ function isRestrictedCmsPage(page: CmsPage) {
     page === "master" ||
     page === "import" ||
     page === "signup" ||
+    page === "accounts" ||
     page === "wholesaler" ||
     page === "purchase"
   );
@@ -8475,6 +8512,13 @@ function CmsApp({
     createDefaultCmsSignupDraft,
   );
   const [signupSubmitting, setSignupSubmitting] = useState(false);
+  const [accounts, setAccounts] = useState<CmsAccount[]>([]);
+  const [accountQuery, setAccountQuery] = useState("");
+  const [selectedAccountId, setSelectedAccountId] = useState("");
+  const [accountDraft, setAccountDraft] = useState<CmsAccountDraft>(
+    createDefaultCmsAccountDraft,
+  );
+  const [accountSubmitting, setAccountSubmitting] = useState(false);
   const [dashboardData, setDashboardData] = useState<CmsDashboardData | null>(
     null,
   );
@@ -8593,6 +8637,9 @@ function CmsApp({
   const selectedWholesaler =
     wholesalers.find((wholesaler) => wholesaler.id === selectedWholesalerId) ??
     wholesalers[0];
+  const selectedAccount =
+    accounts.find((account) => account.id === selectedAccountId) ??
+    accounts[0];
   const filteredDeductionRecords = useMemo(() => {
     const filtered =
       deductionFilter === "ALL"
@@ -8783,6 +8830,34 @@ function CmsApp({
   useEffect(() => {
     setEditingWholesalerName(selectedWholesaler?.name ?? "");
   }, [selectedWholesaler?.name]);
+
+  useEffect(() => {
+    if (accounts.length === 0) {
+      if (selectedAccountId) setSelectedAccountId("");
+      return;
+    }
+    if (!accounts.some((account) => account.id === selectedAccountId)) {
+      setSelectedAccountId(accounts[0].id);
+    }
+  }, [accounts, selectedAccountId]);
+
+  useEffect(() => {
+    if (!selectedAccount) {
+      setAccountDraft(createDefaultCmsAccountDraft());
+      return;
+    }
+    setAccountDraft({
+      loginId: selectedAccount.loginId,
+      accountName: selectedAccount.accountName,
+      status: selectedAccount.status,
+      newPassword: "",
+    });
+  }, [
+    selectedAccount?.accountName,
+    selectedAccount?.id,
+    selectedAccount?.loginId,
+    selectedAccount?.status,
+  ]);
 
   useEffect(() => {
     if (apiState !== "unauthorized" || isCmsLoginRoute) return;
@@ -8986,6 +9061,21 @@ function CmsApp({
         );
         setMasters(pageResponse.items.map(normalizeCmsMaster));
         setMasterPageInfo(pageResponse.pageInfo);
+      } else if (targetPage === "accounts") {
+        const accountParams = new URLSearchParams();
+        if (accountQuery.trim()) {
+          accountParams.set("keyword", accountQuery.trim());
+        }
+        const response = await apiFetch<unknown>(
+          `/auth/admin/accounts${accountParams.toString() ? `?${accountParams}` : ""}`,
+        );
+        const results = arrayPayload(response).map(normalizeCmsAccount);
+        setAccounts(results);
+        setSelectedAccountId((current) =>
+          results.some((account) => account.id === current)
+            ? current
+            : (results[0]?.id ?? ""),
+        );
       } else if (targetPage === "inventory") {
         const trimmed = stockQuery.trim();
         const normalizedKeyword = normalizeSearchText(trimmed);
@@ -9201,6 +9291,7 @@ function CmsApp({
       return false;
     }
   }, [
+    accountQuery,
     baropharmCookieDraft.pharmacyId,
     cmsFallback,
     includeInactive,
@@ -9247,6 +9338,16 @@ function CmsApp({
 
     return () => window.clearTimeout(timer);
   }, [includeInactive, masterPage, masterQuery, visiblePage]);
+
+  useEffect(() => {
+    if (visiblePage !== "accounts" || !hasStoredAuthTokens()) return;
+
+    const timer = window.setTimeout(() => {
+      void refreshCms();
+    }, 250);
+
+    return () => window.clearTimeout(timer);
+  }, [accountQuery, refreshCms, visiblePage]);
 
   async function submitCmsLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -9340,6 +9441,78 @@ function CmsApp({
       cmsFallback(error);
     } finally {
       setSignupSubmitting(false);
+    }
+  }
+
+  function updateAccountDraft(patch: Partial<CmsAccountDraft>) {
+    setAccountDraft((current) => ({ ...current, ...patch }));
+  }
+
+  async function submitAccountUpdate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedAccount || accountSubmitting) return;
+
+    const loginId = accountDraft.loginId.trim();
+    const accountName = accountDraft.accountName.trim();
+    const newPassword = accountDraft.newPassword.trim();
+    if (!loginId || !accountName) {
+      setApiState("connected");
+      setApiMessage("아이디와 계정명을 입력해 주세요.");
+      return;
+    }
+
+    setAccountSubmitting(true);
+    try {
+      const response = await apiFetch<unknown>(
+        `/auth/admin/accounts/${selectedAccount.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            loginId,
+            accountName,
+            status: accountDraft.status,
+            newPassword: newPassword || undefined,
+          }),
+        },
+      );
+      const updatedAccount = normalizeCmsAccount(response, accounts.length);
+      setAccounts((current) =>
+        current.map((account) =>
+          account.id === updatedAccount.id ? updatedAccount : account,
+        ),
+      );
+      setSelectedAccountId(updatedAccount.id);
+      setAccountDraft({
+        loginId: updatedAccount.loginId,
+        accountName: updatedAccount.accountName,
+        status: updatedAccount.status,
+        newPassword: "",
+      });
+      if (authAccount?.accountId === updatedAccount.accountId) {
+        const nextAccount = storeAuthAccount({
+          ...authAccount,
+          accountName: updatedAccount.accountName,
+          loginId: updatedAccount.loginId,
+        });
+        setAuthAccount(nextAccount);
+      }
+      setApiState("connected");
+      setApiMessage(
+        newPassword ? "계정 정보와 비밀번호 저장 완료" : "계정 정보 저장 완료",
+      );
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        error.status >= 400 &&
+        error.status < 500
+      ) {
+        setApiState("connected");
+        setApiMessage(error.message);
+      } else {
+        cmsFallback(error);
+      }
+    } finally {
+      setAccountSubmitting(false);
     }
   }
 
@@ -10235,6 +10408,20 @@ function CmsApp({
               onSubmit={submitSignup}
             />
           )}
+          {visiblePage === "accounts" && (
+            <CmsAccountPage
+              accounts={accounts}
+              currentAccountId={authAccount?.accountId ?? ""}
+              draft={accountDraft}
+              query={accountQuery}
+              selectedAccount={selectedAccount}
+              submitting={accountSubmitting}
+              onChange={updateAccountDraft}
+              onQuery={setAccountQuery}
+              onSave={submitAccountUpdate}
+              onSelect={setSelectedAccountId}
+            />
+          )}
           {visiblePage === "inventory" && (
             <CmsInventoryPage
               adjustDirection={adjustDirection}
@@ -10752,6 +10939,49 @@ function normalizeCmsPurchase(raw: unknown, index: number): CmsPurchaseHistory {
     quantity: Number(item.quantity ?? 0),
     source: String(item.source ?? "BAROPHARM"),
   };
+}
+
+function normalizeCmsAccount(raw: unknown, index: number): CmsAccount {
+  const item = unwrapObjectPayload(raw);
+  const rawStatus = String(item.status ?? "ACTIVE").toUpperCase();
+  const status: CmsAccountStatus =
+    rawStatus === "LOCKED"
+      ? "LOCKED"
+      : rawStatus === "INACTIVE"
+        ? "INACTIVE"
+        : "ACTIVE";
+  const accountId = String(item.accountId ?? item.id ?? index);
+
+  return {
+    id: accountId,
+    accountId,
+    pharmacyId: optionalText(item.pharmacyId ?? item.pharmacy_id) || "",
+    pharmacyName:
+      optionalText(item.pharmacyName ?? item.pharmacy_name) || "약국 미지정",
+    loginId: optionalText(item.loginId ?? item.login_id) || "",
+    accountName:
+      optionalText(item.accountName ?? item.account_name) || "이름 미지정",
+    role: optionalText(item.role) || "",
+    accountType: optionalText(item.accountType ?? item.account_type) || "",
+    maskingPolicy:
+      optionalText(item.maskingPolicy ?? item.masking_policy) || "",
+    status,
+    lastLoginAt: formatTransactionAt(item.lastLoginAt ?? item.last_login_at),
+    createdAt: formatTransactionAt(item.createdAt ?? item.created_at),
+    updatedAt: formatTransactionAt(item.updatedAt ?? item.updated_at),
+  };
+}
+
+function cmsAccountStatusText(status: CmsAccountStatus) {
+  if (status === "LOCKED") return "잠김";
+  if (status === "INACTIVE") return "비활성";
+  return "활성";
+}
+
+function cmsAccountStatusClass(status: CmsAccountStatus) {
+  if (status === "LOCKED") return "missing";
+  if (status === "INACTIVE") return "virtual";
+  return "normal";
 }
 
 function normalizeCmsSyncJob(raw: unknown, index: number): CmsSyncJob {
@@ -11809,9 +12039,10 @@ function CmsSidebar({
         ] as Array<[CmsPage, string, string, string]>)
       : []),
     ...(canAccessMasterData
-      ? ([["signup", "계정 생성", "/cms/signup", fileTextIcon]] as Array<
-          [CmsPage, string, string, string]
-        >)
+      ? ([
+          ["signup", "계정 생성", "/cms/signup", fileTextIcon],
+          ["accounts", "계정 관리", "/cms/accounts", fileTextIcon],
+        ] as Array<[CmsPage, string, string, string]>)
       : []),
     ["inventory", "재고", "/cms/inventory", barGraphIcon],
     [
@@ -11891,6 +12122,7 @@ function CmsHeader({
     master: "기준 데이터",
     import: "기준 데이터 Import",
     signup: "계정 생성",
+    accounts: "계정 관리",
     inventory: "재고",
     "inventory-shortages": "초과 처방",
     "return-reviews": "반품 확인",
@@ -11903,6 +12135,7 @@ function CmsHeader({
     master: "약품 기준 데이터를 확인하고 정리합니다.",
     import: "기준 데이터 파일을 등록합니다.",
     signup: "root 계정으로 신규 약국과 기본 계정을 생성합니다.",
+    accounts: "root 계정으로 약국 계정 정보와 비밀번호를 관리합니다.",
     inventory: "보유 재고와 수량을 관리합니다.",
     "inventory-shortages": "초과 처방과 부족 수량을 확인합니다.",
     "return-reviews": "앱에서 확정되지 않은 반품을 확인하고 처리합니다.",
@@ -12106,6 +12339,200 @@ function CmsSignupPage({
           </button>
         </div>
       </form>
+    </section>
+  );
+}
+
+function CmsAccountPage({
+  accounts,
+  currentAccountId,
+  draft,
+  query,
+  selectedAccount,
+  submitting,
+  onChange,
+  onQuery,
+  onSave,
+  onSelect,
+}: {
+  accounts: CmsAccount[];
+  currentAccountId: string;
+  draft: CmsAccountDraft;
+  query: string;
+  selectedAccount?: CmsAccount;
+  submitting: boolean;
+  onChange: (patch: Partial<CmsAccountDraft>) => void;
+  onQuery: (value: string) => void;
+  onSave: (event: FormEvent<HTMLFormElement>) => void;
+  onSelect: (id: string) => void;
+}) {
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const accountPagination = usePagination(
+    accounts,
+    CMS_PAGE_SIZES.accounts,
+    `${query}|${accounts.length}`,
+  );
+  const rootSelfSelected =
+    Boolean(selectedAccount) &&
+    selectedAccount?.accountId === currentAccountId &&
+    selectedAccount.loginId.trim().toLowerCase() === ROOT_CMS_LOGIN_ID;
+
+  useEffect(() => {
+    if (!selectedAccount) setSheetOpen(false);
+  }, [selectedAccount]);
+
+  return (
+    <section className="cms-content cms-list-page cms-account-page">
+      <div className="cms-table-card">
+        <div className="cms-toolbar">
+          <div className="cms-pills">
+            <span>계정 {accounts.length}</span>
+            <span>root 전용</span>
+          </div>
+          <label className="cms-search">
+            <span className="search-icon" />
+            <input
+              placeholder="약국명 · 계정명 · 아이디 검색"
+              value={query}
+              onChange={(event) => onQuery(event.target.value)}
+            />
+          </label>
+        </div>
+        <div className="cms-table-scroll">
+          <div className="cms-table account">
+            <div className="cms-tr cms-th">
+              <span>약국</span>
+              <span>로그인 ID</span>
+              <span>계정명</span>
+              <span>권한</span>
+              <span>상태</span>
+              <span>마지막 로그인</span>
+            </div>
+            {accountPagination.items.map((account) => (
+              <button
+                key={account.id}
+                className={`cms-tr ${selectedAccount?.id === account.id ? "is-selected" : ""}`}
+                type="button"
+                onClick={() => {
+                  onSelect(account.id);
+                  setSheetOpen(true);
+                }}
+              >
+                <strong>
+                  {account.pharmacyName}
+                  <small>#{account.pharmacyId}</small>
+                </strong>
+                <span>{account.loginId}</span>
+                <span>{account.accountName}</span>
+                <span>{accountTypeLabel(account)}</span>
+                <span
+                  className={`cms-badge ${cmsAccountStatusClass(account.status)}`}
+                >
+                  {cmsAccountStatusText(account.status)}
+                </span>
+                <span>{account.lastLoginAt}</span>
+              </button>
+            ))}
+            {accounts.length === 0 && (
+              <p className="cms-empty table-empty">표시할 계정이 없습니다.</p>
+            )}
+          </div>
+        </div>
+        <CmsPagination {...accountPagination} />
+      </div>
+      {sheetOpen && selectedAccount && (
+        <CmsSheet
+          title={selectedAccount.loginId}
+          subtitle={`${selectedAccount.pharmacyName} · ${accountTypeLabel(
+            selectedAccount,
+          )}`}
+          onClose={() => setSheetOpen(false)}
+        >
+          <form className="cms-sheet-body" onSubmit={onSave}>
+            <div className="cms-account-edit-summary">
+              <span
+                className={`cms-badge ${cmsAccountStatusClass(
+                  selectedAccount.status,
+                )}`}
+              >
+                {cmsAccountStatusText(selectedAccount.status)}
+              </span>
+              <strong>{selectedAccount.accountName}</strong>
+              <em>
+                계정 #{selectedAccount.accountId} · 약국 #
+                {selectedAccount.pharmacyId}
+              </em>
+            </div>
+            <CmsField label="약국명" value={selectedAccount.pharmacyName} />
+            <label className="cms-input">
+              <span>로그인 ID</span>
+              <input
+                autoComplete="off"
+                disabled={rootSelfSelected}
+                value={draft.loginId}
+                onChange={(event) => onChange({ loginId: event.target.value })}
+                required
+              />
+            </label>
+            <label className="cms-input">
+              <span>계정명</span>
+              <input
+                autoComplete="off"
+                value={draft.accountName}
+                onChange={(event) =>
+                  onChange({ accountName: event.target.value })
+                }
+                required
+              />
+            </label>
+            <label className="cms-input">
+              <span>계정 상태</span>
+              <select
+                disabled={rootSelfSelected}
+                value={draft.status}
+                onChange={(event) =>
+                  onChange({
+                    status: event.target.value as CmsAccountStatus,
+                  })
+                }
+              >
+                <option value="ACTIVE">활성</option>
+                <option value="INACTIVE">비활성</option>
+                <option value="LOCKED">잠김</option>
+              </select>
+            </label>
+            {rootSelfSelected && (
+              <p className="cms-form-hint">
+                현재 로그인한 root 계정은 로그인 ID와 상태를 변경할 수 없습니다.
+              </p>
+            )}
+            <label className="cms-input">
+              <span>새 비밀번호</span>
+              <input
+                autoComplete="new-password"
+                placeholder="비워두면 기존 비밀번호 유지"
+                type="password"
+                value={draft.newPassword}
+                onChange={(event) =>
+                  onChange({ newPassword: event.target.value })
+                }
+              />
+            </label>
+            <p className="cms-form-hint">
+              비밀번호 변경에는 기존 비밀번호 확인이 필요하지 않습니다.
+            </p>
+            <button
+              className="cms-primary"
+              type="submit"
+              disabled={
+                submitting || !draft.loginId.trim() || !draft.accountName.trim()
+              }
+            >
+              {submitting ? "저장 중" : "계정 저장"}
+            </button>
+          </form>
+        </CmsSheet>
+      )}
     </section>
   );
 }
@@ -17763,6 +18190,7 @@ function CmsPanel({
 }
 
 const CMS_PAGE_SIZES = {
+  accounts: 12,
   importJobs: 6,
   inventory: 14,
   master: 14,
