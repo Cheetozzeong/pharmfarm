@@ -1759,6 +1759,11 @@ function normalizeLookupSn(value: unknown, fallback: string) {
   return sn.startsWith("PC_ONLY:") ? "" : sn;
 }
 
+function hasPhysicalSn(value: string | undefined) {
+  const sn = (value ?? "").trim();
+  return sn.length > 0 && !sn.startsWith("PC_ONLY:");
+}
+
 function normalizeLookup(raw: unknown, qr: QrFields): ReturnLookup {
   const item = unwrapObjectPayload(raw);
   const sellerCandidates = firstArrayPayload(item, [
@@ -4265,12 +4270,13 @@ function MobileApp() {
 
   const addReceiptQr = useCallback(
     async (qr: QrFields) => {
+      const hasDuplicateCheckSn = hasPhysicalSn(qr.sn);
       const alreadyReceived = traces.some(
-        (trace) => Boolean(qr.sn) && trace.pc === qr.pc && trace.sn === qr.sn,
+        (trace) => hasDuplicateCheckSn && trace.pc === qr.pc && trace.sn === qr.sn,
       );
       const duplicated = receiptQueue.some(
         (item) =>
-          Boolean(qr.sn) && item.qr.pc === qr.pc && item.qr.sn === qr.sn,
+          hasDuplicateCheckSn && item.qr.pc === qr.pc && item.qr.sn === qr.sn,
       );
 
       if (alreadyReceived || duplicated) {
@@ -4551,12 +4557,13 @@ function MobileApp() {
         setScreen("wholesaler");
         return null;
       }
+      const hasDuplicateCheckSn = hasPhysicalSn(qr.sn);
       const alreadyReceived = traces.some(
-        (trace) => Boolean(qr.sn) && trace.pc === qr.pc && trace.sn === qr.sn,
+        (trace) => hasDuplicateCheckSn && trace.pc === qr.pc && trace.sn === qr.sn,
       );
       const duplicated = receiptQueue.some(
         (item) =>
-          Boolean(qr.sn) && item.qr.pc === qr.pc && item.qr.sn === qr.sn,
+          hasDuplicateCheckSn && item.qr.pc === qr.pc && item.qr.sn === qr.sn,
       );
 
       if (alreadyReceived || duplicated) {
