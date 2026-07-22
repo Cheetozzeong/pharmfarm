@@ -14035,7 +14035,7 @@ function CmsInventoryPage({
                   <strong>{sheetStock.name}</strong>
                   <em>
                     기준 데이터 가격과 자동 연결되지 않는 재고입니다. <br />
-                    실제 관리 가격을 직접 입력해 주세요.
+                    가격 입력 또는 보험코드 보정이 필요합니다.
                   </em>
                 </div>
                 <CmsField
@@ -14071,6 +14071,41 @@ function CmsInventoryPage({
                   onClick={saveVirtualPrice}
                 >
                   가격 저장
+                </button>
+                <div className="cms-divider" />
+                <div className="cms-section-title-row">
+                  <h2>임의 보험코드 보정</h2>
+                  <button
+                    className="cms-help-icon"
+                    type="button"
+                    aria-label="임의 보험코드 보정 설명"
+                  >
+                    <CircleHelp size={16} strokeWidth={2.4} />
+                    <span>
+                      입력한 코드와 같은 코드의 약이 있으면 이 재고 수량을
+                      <br />
+                      그 약에 더합니다.
+                      <br />
+                      없으면, 이 임의 재고의 코드만 입력한 코드로 바뀝니다.
+                    </span>
+                  </button>
+                </div>
+                <label className="cms-input">
+                  <span>전환/병합할 보험코드</span>
+                  <input
+                    value={mergeInsuranceCode}
+                    onChange={(event) =>
+                      onMergeInsuranceCode(event.target.value)
+                    }
+                  />
+                </label>
+                <button
+                  className="cms-primary"
+                  disabled={!mergeInsuranceCode.trim()}
+                  type="button"
+                  onClick={onMergeVirtual}
+                >
+                  실제 코드로 전환/병합
                 </button>
               </div>
             )}
