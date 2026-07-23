@@ -12748,14 +12748,14 @@ function CmsDashboard({
     <section className="cms-content cms-dashboard-page">
       <div className="cms-dashboard-hero">
         <div className="cms-dashboard-greeting">
-          <span>오늘의 처방 업무</span>
+          <span>이번 달 처방 업무</span>
           <strong>
             안녕하세요, {pharmacyGreetingName} {greetingRole}.
           </strong>
-          <p>오늘 해야할 일들을 확인해보세요!</p>
+          <p>이번 달 확인할 처방 이슈를 확인해보세요!</p>
         </div>
         <div className="cms-dashboard-work-count">
-          <span>오늘 처리할 일</span>
+          <span>이번 달 처방 이슈</span>
           <strong>{prescriptionWorkTotal}건</strong>
           <button type="button" onClick={() => navigate("/cms/prescriptions")}>
             처방전 확인
@@ -12768,8 +12768,8 @@ function CmsDashboard({
           <div>
             <strong>
               {prescriptionWorkTotal > 0
-                ? "지금 확인이 필요한 처방 업무가 있습니다."
-                : "오늘 바로 처리할 처방 이슈가 없습니다."}
+                ? "이번 달 확인이 필요한 처방 업무가 있습니다."
+                : "이번 달 바로 처리할 처방 이슈가 없습니다."}
             </strong>
           </div>
           <button
