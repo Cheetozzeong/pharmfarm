@@ -7768,6 +7768,12 @@ type CmsPrescriptionRecord = {
 type CmsDashboardData = {
   tasks: {
     failedDeductions: number;
+    openShortages: number;
+    orderedShortages: number;
+    holdShortages: number;
+    substitutedShortages: number;
+    shortageDeductions: number;
+    prescriptionIssues: number;
     virtualStocks: number;
     zeroStocks: number;
     controlledCandidates: number;
@@ -9019,31 +9025,11 @@ function CmsApp({
       };
 
       if (targetPage === "dashboard") {
-        const [dashboardResult, failureResult, shortageResult] =
-          await Promise.allSettled([
-            optionalCmsApiFetch<unknown>("/dashboard"),
-            apiFetch<unknown>("/prescription-deductions/failed"),
-            optionalCmsApiFetch<unknown>("/prescription-shortages"),
-          ]);
-        throwRejected([dashboardResult, failureResult, shortageResult]);
-
-        if (dashboardResult.status === "fulfilled") {
-          setDashboardData(
-            dashboardResult.value
-              ? normalizeCmsDashboard(dashboardResult.value)
-              : null,
-          );
-        }
-
-        const failures =
-          failureResult.status === "fulfilled"
-            ? deductionPayload(failureResult.value).map(normalizeCmsDeduction)
-            : [];
-        const shortages =
-          shortageResult.status === "fulfilled" && shortageResult.value
-            ? deductionPayload(shortageResult.value).map(normalizeCmsDeduction)
-            : [];
-        setDeductionRecords(mergeDeductionRecords(failures, shortages));
+        const dashboardResult = await optionalCmsApiFetch<unknown>("/dashboard");
+        setDashboardData(
+          dashboardResult ? normalizeCmsDashboard(dashboardResult) : null,
+        );
+        setDeductionRecords([]);
       } else if (targetPage === "master") {
         const masterParams = new URLSearchParams();
         masterParams.set("page", String(Math.max(0, masterPage - 1)));
@@ -11899,6 +11885,16 @@ function normalizeCmsDashboard(raw: unknown): CmsDashboardData {
   return {
     tasks: {
       failedDeductions: Number(tasks.failedDeductions ?? 0),
+      openShortages: Number(tasks.openShortages ?? 0),
+      orderedShortages: Number(tasks.orderedShortages ?? 0),
+      holdShortages: Number(tasks.holdShortages ?? 0),
+      substitutedShortages: Number(tasks.substitutedShortages ?? 0),
+      shortageDeductions: Number(tasks.shortageDeductions ?? 0),
+      prescriptionIssues: Number(
+        tasks.prescriptionIssues ??
+          Number(tasks.failedDeductions ?? 0) +
+            Number(tasks.openShortages ?? 0),
+      ),
       virtualStocks: Number(tasks.virtualStocks ?? 0),
       zeroStocks: Number(tasks.zeroStocks ?? 0),
       controlledCandidates: Number(tasks.controlledCandidates ?? 0),
@@ -12645,6 +12641,7 @@ function CmsDashboard({
       stocks,
       syncJobs,
     });
+  const hasDashboardData = Boolean(dashboard);
   const canViewAmounts = canViewAmountCms(account);
   const accountDisplay = getCmsAccountDisplay(account);
   const pharmacyGreetingName =
@@ -12671,12 +12668,30 @@ function CmsDashboard({
   const substitutedShortageRecords = shortageRecords.filter(
     (record) => record.shortageStatus === "SUBSTITUTED",
   );
-  const prescriptionIssueCount =
-    activeShortageRecords.length + failedPrescriptionRecords.length;
-  const prescriptionWorkTotal =
-    prescriptionIssueCount > 0
-      ? prescriptionIssueCount
-      : data.tasks.failedDeductions;
+  const failedPrescriptionCount = hasDashboardData
+    ? data.tasks.failedDeductions
+    : failedPrescriptionRecords.length;
+  const activeShortageCount = hasDashboardData
+    ? data.tasks.openShortages
+    : activeShortageRecords.length;
+  const orderNeededShortageCount = hasDashboardData
+    ? data.tasks.openShortages
+    : orderNeededShortageRecords.length;
+  const orderedShortageCount = hasDashboardData
+    ? data.tasks.orderedShortages
+    : orderedShortageRecords.length;
+  const holdShortageCount = hasDashboardData
+    ? data.tasks.holdShortages
+    : holdShortageRecords.length;
+  const substitutedShortageCount = hasDashboardData
+    ? data.tasks.substitutedShortages
+    : substitutedShortageRecords.length;
+  const prescriptionRecordCount = hasDashboardData
+    ? data.tasks.failedDeductions + data.tasks.shortageDeductions
+    : deductionRecords.length;
+  const prescriptionWorkTotal = hasDashboardData
+    ? data.tasks.prescriptionIssues
+    : activeShortageCount + failedPrescriptionCount;
   const inventoryTaskTotal =
     data.tasks.virtualStocks +
     data.tasks.zeroStocks +
@@ -12689,31 +12704,31 @@ function CmsDashboard({
     tone: "blue" | "amber" | "red";
   }> = [
     {
-      count: activeShortageRecords.length,
+      count: activeShortageCount,
       description: "부족 수량과 연결된 처방을 확인하세요",
       href: "/cms/inventory/shortages",
       title: "초과 처방 확인",
       tone: "red",
     },
     {
-      count: failedPrescriptionRecords.length,
+      count: failedPrescriptionCount,
       description: "재고 매칭이 필요한 처방 약품입니다",
       href: "/cms/prescriptions",
       title: "차감 실패 처리",
       tone: "red",
     },
     {
-      count: orderNeededShortageRecords.length,
+      count: orderNeededShortageCount,
       description: "아직 주문 처리로 넘기지 않은 부족분입니다",
       href: "/cms/inventory/shortages",
       title: "주문 필요 부족분",
       tone: "amber",
     },
     {
-      count: deductionRecords.length,
-      description: "최근 차감 결과를 처방 단위로 확인합니다",
+      count: prescriptionRecordCount,
+      description: "차감 실패와 부족분을 처방 단위로 확인합니다",
       href: "/cms/prescriptions",
-      title: "처방 기록 보기",
+      title: "처방 이슈 보기",
       tone: "blue",
     },
   ];
@@ -12861,16 +12876,16 @@ function CmsDashboard({
         </CmsDashboardSection>
         <CmsDashboardSection
           title="초과 처방 처리 상태"
-          summary={`${activeShortageRecords.length}건`}
+          summary={`${activeShortageCount}건`}
           action="상세 보기"
           onAction={() => navigate("/cms/inventory/shortages")}
         >
           <CmsMiniList
             items={[
-              ["주문 필요", `${orderNeededShortageRecords.length}건`],
-              ["주문 완료", `${orderedShortageRecords.length}건`],
-              ["보류", `${holdShortageRecords.length}건`],
-              ["대체 처리", `${substitutedShortageRecords.length}건`],
+              ["주문 필요", `${orderNeededShortageCount}건`],
+              ["주문 완료", `${orderedShortageCount}건`],
+              ["보류", `${holdShortageCount}건`],
+              ["대체 처리", `${substitutedShortageCount}건`],
             ]}
           />
         </CmsDashboardSection>
@@ -12979,9 +12994,22 @@ function createFallbackDashboardData({
 }): CmsDashboardData {
   const failedDeductions = deductionRecords.filter(
     (record) =>
-      record.status === "FAILED" ||
-      (record.shortageQuantity > 0 &&
-        isActiveShortageStatus(record.shortageStatus)),
+      record.status === "FAILED",
+  ).length;
+  const shortageRecords = deductionRecords.filter(
+    (record) => record.shortageQuantity > 0,
+  );
+  const openShortages = shortageRecords.filter((record) =>
+    isOpenShortageStatus(record.shortageStatus),
+  ).length;
+  const orderedShortages = shortageRecords.filter(
+    (record) => record.shortageStatus === "ORDERED",
+  ).length;
+  const holdShortages = shortageRecords.filter((record) =>
+    isHoldShortageStatus(record.shortageStatus),
+  ).length;
+  const substitutedShortages = shortageRecords.filter(
+    (record) => record.shortageStatus === "SUBSTITUTED",
   ).length;
   const controlledStockCount = stocks.filter(
     (stock) => stock.controlledDrug.controlled,
@@ -13001,6 +13029,12 @@ function createFallbackDashboardData({
   return {
     tasks: {
       failedDeductions,
+      openShortages,
+      orderedShortages,
+      holdShortages,
+      substitutedShortages,
+      shortageDeductions: shortageRecords.length,
+      prescriptionIssues: failedDeductions + openShortages,
       virtualStocks: stocks.filter(isVirtualStock).length,
       zeroStocks: stocks.filter((stock) => stock.quantity <= 0).length,
       controlledCandidates: controlledStockCount,
