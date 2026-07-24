@@ -46,6 +46,7 @@ type Screen =
   | "wholesaler"
   | "receiptReview"
   | "receiptMatch"
+  | "receiptIssues"
   | "receiptDone"
   | "returnConfirmed"
   | "returnEstimated"
@@ -1697,12 +1698,6 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
     hasDrugMaster &&
     (responsePcOnlyUninsured ||
       !isMeaningfulInsuranceCode(insuranceCode, qr.pc));
-  const selectedStockCandidate = pcOnlyUninsured
-    ? stockCandidates.find((candidate) => candidate.id === recommendedStockId) ??
-      stockCandidates.find((candidate) => candidate.matchType === "PC_HISTORY")
-    : undefined;
-  const pcOnlyVirtualInsuranceCode =
-    selectedStockCandidate?.insuranceCode || responseVirtualInsuranceCode;
   const effectivePriceMasters = pcOnlyUninsured ? [] : priceMasters;
   const firstEffectivePrice = effectivePriceMasters[0];
   const exactPrice = effectivePriceMasters.find(
@@ -1720,6 +1715,22 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
       : !hasDrugMaster
         ? "MISSING"
         : "VIRTUAL";
+  const selectedStockCandidate = selectedPrice
+    ? undefined
+    : (stockCandidates.find(
+        (candidate) => candidate.id === recommendedStockId,
+      ) ??
+      (!qr.sn
+        ? stockCandidates.find(
+            (candidate) => candidate.matchType === "PC_HISTORY",
+          )
+        : undefined));
+  const virtualInsuranceCode =
+    selectedStockCandidate?.insuranceCode || responseVirtualInsuranceCode;
+  const effectiveInsuranceCode =
+    selectedPrice?.productCode ??
+    selectedStockCandidate?.insuranceCode ??
+    (virtualInsuranceCode || insuranceCode);
 
   return {
     pc: String(item.pc ?? item.standardCode ?? qr.pc),
@@ -1727,9 +1738,7 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
       rawDrugMasterId === undefined || rawDrugMasterId === null
         ? undefined
         : String(rawDrugMasterId),
-    insuranceCode: pcOnlyUninsured
-      ? pcOnlyVirtualInsuranceCode
-      : selectedPrice?.productCode ?? insuranceCode,
+    insuranceCode: effectiveInsuranceCode,
     selectedStockId: selectedStockCandidate?.id,
     priceMasterId: selectedPrice?.id,
     priceMasters: effectivePriceMasters,
@@ -1741,15 +1750,14 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
       selectedStockCandidate?.price ??
       Number(item.price ?? item.maxPrice ?? 0),
     matchStatus,
-    virtualDrugName: selectedPrice ? "" : selectedStockCandidate?.name ?? name,
-    virtualInsuranceCode: selectedPrice
+    virtualDrugName: selectedPrice
       ? ""
-      : pcOnlyUninsured
-        ? pcOnlyVirtualInsuranceCode
-        : insuranceCode,
+      : (selectedStockCandidate?.name ?? name),
+    virtualInsuranceCode: selectedPrice ? "" : virtualInsuranceCode,
     pcOnlyUninsured,
     receiptNotice: pcOnlyUninsured ? pcOnlyUninsuredReceiptNotice : undefined,
-    insuranceCodeExists: pcOnlyUninsured ? false : null,
+    insuranceCodeExists:
+      selectedStockCandidate || pcOnlyUninsured ? false : null,
   };
 }
 
@@ -1771,6 +1779,56 @@ function normalizeLookupSn(value: unknown, fallback: string) {
 function hasPhysicalSn(value: string | undefined) {
   const sn = (value ?? "").trim();
   return sn.length > 0 && !sn.startsWith("PC_ONLY:");
+}
+
+function isPlaceholderReceiptDrugName(value: string | undefined) {
+  const name = normalizeSearchText(value ?? "");
+  return !name || name === normalizeSearchText("미확인 약품");
+}
+
+function getReceiptIssueReason(
+  item: ReceiptQueueItem,
+  duplicatedVirtualCode = false,
+) {
+  if (item.qr.errors.length > 0) {
+    return `QR 필드 오류: ${item.qr.errors.join(", ")}`;
+  }
+
+  const hasPriceCandidates = (item.drug.priceMasters?.length ?? 0) > 0;
+  if (
+    !item.drug.priceMasterId &&
+    !item.drug.selectedStockId &&
+    hasPriceCandidates
+  ) {
+    return "실제 입고할 약품 후보를 선택해야 합니다.";
+  }
+
+  if (item.drug.priceMasterId || item.drug.selectedStockId) return "";
+
+  const virtualName = (item.drug.virtualDrugName ?? item.drug.name).trim();
+  if (item.drug.pcOnlyUninsured) {
+    return virtualName ? "" : "관리 약품명을 확인해야 합니다.";
+  }
+
+  if (isPlaceholderReceiptDrugName(virtualName)) {
+    return "임의 약품명을 입력해야 합니다.";
+  }
+
+  const virtualInsuranceCode = normalizeInsuranceCode(
+    item.drug.virtualInsuranceCode || item.drug.insuranceCode,
+  );
+  if (!virtualInsuranceCode) return "임의 보험코드를 입력해야 합니다.";
+  if (duplicatedVirtualCode) {
+    return "현재 입고 목록에 같은 임의 보험코드가 있습니다.";
+  }
+  if (item.drug.insuranceCodeExists === true) {
+    return "이미 사용 중인 보험코드입니다.";
+  }
+  if (item.drug.insuranceCodeExists !== false) {
+    return "보험코드 중복 확인이 필요합니다.";
+  }
+
+  return "";
 }
 
 function normalizeLookup(raw: unknown, qr: QrFields): ReturnLookup {
@@ -3537,6 +3595,8 @@ function MobileApp() {
     null,
   );
   const [receiptSubmitError, setReceiptSubmitError] = useState("");
+  const [receiptPartialConfirmOpen, setReceiptPartialConfirmOpen] =
+    useState(false);
   const [returnLookup, setReturnLookup] = useState<ReturnLookup | null>(null);
   const [returnQuantity, setReturnQuantity] = useState(10);
   const [returnMemo, setReturnMemo] = useState("유통기한 임박 반품");
@@ -3763,7 +3823,7 @@ function MobileApp() {
     const counts = new Map<string, number>();
 
     for (const item of receiptQueue) {
-      if (item.drug.priceMasterId) continue;
+      if (item.drug.priceMasterId || item.drug.selectedStockId) continue;
 
       const code = normalizeInsuranceCode(
         item.drug.virtualInsuranceCode || item.drug.insuranceCode,
@@ -3777,7 +3837,7 @@ function MobileApp() {
 
   const isVirtualInsuranceCodeDuplicatedInQueue = useCallback(
     (item: ReceiptQueueItem) => {
-      if (item.drug.pcOnlyUninsured) return false;
+      if (item.drug.pcOnlyUninsured || item.drug.selectedStockId) return false;
 
       const code = normalizeInsuranceCode(
         item.drug.virtualInsuranceCode || item.drug.insuranceCode,
@@ -3811,6 +3871,7 @@ function MobileApp() {
           (item) =>
             item.id !== itemId &&
             !item.drug.priceMasterId &&
+            !item.drug.selectedStockId &&
             normalizeInsuranceCode(
               item.drug.virtualInsuranceCode || item.drug.insuranceCode,
             ) === insuranceCode,
@@ -3833,22 +3894,18 @@ function MobileApp() {
     [receiptQueue],
   );
 
-  const isReceiptItemReady = useCallback(
-    (item: ReceiptQueueItem) => {
-      if (item.qr.errors.length > 0) return false;
-      if (item.drug.priceMasterId) return true;
-      if (item.drug.pcOnlyUninsured) {
-        return Boolean(item.drug.virtualDrugName?.trim() || item.drug.name.trim());
-      }
-
-      return Boolean(
-        item.drug.virtualDrugName?.trim() &&
-        item.drug.virtualInsuranceCode?.trim() &&
-        item.drug.insuranceCodeExists === false &&
-        !isVirtualInsuranceCodeDuplicatedInQueue(item),
-      );
-    },
+  const getReceiptItemIssueReason = useCallback(
+    (item: ReceiptQueueItem) =>
+      getReceiptIssueReason(
+        item,
+        isVirtualInsuranceCodeDuplicatedInQueue(item),
+      ),
     [isVirtualInsuranceCodeDuplicatedInQueue],
+  );
+
+  const isReceiptItemReady = useCallback(
+    (item: ReceiptQueueItem) => !getReceiptItemIssueReason(item),
+    [getReceiptItemIssueReason],
   );
 
   const hasManualVirtualReceiptInput = useCallback((item: ReceiptQueueItem) => {
@@ -3867,12 +3924,22 @@ function MobileApp() {
     [isReceiptItemReady, receiptQueue],
   );
 
+  const receiptIssueItems = useMemo(
+    () => receiptQueue.filter((item) => !isReceiptItemReady(item)),
+    [isReceiptItemReady, receiptQueue],
+  );
+
   const receiptCommitBlockedReason = useMemo(() => {
     if (receiptQueue.length === 0) return "";
+    if (eligibleReceiptItems.length > 0 && receiptIssueItems.length > 0) {
+      return `미해결 이슈 ${receiptIssueItems.length}건은 제외하고 입고 가능 ${eligibleReceiptItems.length}건만 처리할 수 있습니다.`;
+    }
 
     const unselectedNameMatchCount = receiptQueue.filter(
       (item) =>
-        !item.drug.priceMasterId && (item.drug.priceMasters?.length ?? 0) > 0,
+        !item.drug.priceMasterId &&
+        !item.drug.selectedStockId &&
+        (item.drug.priceMasters?.length ?? 0) > 0,
     ).length;
 
     if (unselectedNameMatchCount > 0) {
@@ -3896,7 +3963,12 @@ function MobileApp() {
     }
 
     return "";
-  }, [isReceiptItemReady, receiptQueue]);
+  }, [
+    eligibleReceiptItems.length,
+    isReceiptItemReady,
+    receiptIssueItems.length,
+    receiptQueue,
+  ]);
 
   const receiptIncrease = useMemo(
     () =>
@@ -3994,7 +4066,12 @@ function MobileApp() {
       });
       const drug = normalizeReceiptValidation(response, qr);
 
-      if (drug.matchStatus === "MISSING" && !drug.virtualInsuranceCode) {
+      if (
+        (drug.matchStatus === "MISSING" ||
+          (drug.matchStatus === "VIRTUAL" && !drug.pcOnlyUninsured)) &&
+        !drug.selectedStockId &&
+        !drug.virtualInsuranceCode
+      ) {
         try {
           const generated = await findAvailableVirtualInsuranceCode();
           drug.virtualInsuranceCode = generated.insuranceCode;
@@ -4144,6 +4221,7 @@ function MobileApp() {
             drug: {
               ...item.drug,
               insuranceCode: price.productCode,
+              selectedStockId: undefined,
               priceMasterId: price.id,
               name: price.productName,
               price: price.maxPrice,
@@ -4182,6 +4260,7 @@ function MobileApp() {
               ...item.drug,
               selectedStockId: candidate.id,
               insuranceCode: candidate.insuranceCode,
+              priceMasterId: undefined,
               virtualInsuranceCode: candidate.insuranceCode,
               name: candidate.name,
               virtualDrugName: candidate.name,
@@ -4246,6 +4325,7 @@ function MobileApp() {
         (item) =>
           item.id !== itemId &&
           !item.drug.priceMasterId &&
+          !item.drug.selectedStockId &&
           normalizeInsuranceCode(
             item.drug.virtualInsuranceCode || item.drug.insuranceCode,
           ) === normalized,
@@ -5167,22 +5247,32 @@ function MobileApp() {
     return true;
   }
 
-  async function commitReceipt() {
+  async function commitReceipt(options: { partialConfirmed?: boolean } = {}) {
     const wholesaler = selectedWholesaler;
     if (!wholesaler || receiptQueue.length === 0) return;
 
-    if (receiptCommitBlockedReason) {
+    if (eligibleReceiptItems.length === 0) {
       setApiState(receiptMatchPreview ? "demo" : "connected");
-      setApiMessage(receiptCommitBlockedReason);
-      setScanNotice(receiptCommitBlockedReason);
+      setApiMessage(
+        receiptCommitBlockedReason || "입고 가능한 항목이 없습니다.",
+      );
+      setScanNotice("미해결 이슈를 먼저 확인해 주세요.");
+      setScreen("receiptIssues");
+      return;
+    }
+
+    if (receiptIssueItems.length > 0 && !options.partialConfirmed) {
+      setReceiptPartialConfirmOpen(true);
       return;
     }
 
     setReceiptSubmitError("");
+    setReceiptPartialConfirmOpen(false);
 
     try {
+      const committedItems = eligibleReceiptItems;
       const requestItems = await Promise.all(
-        eligibleReceiptItems.map(async (item) => {
+        committedItems.map(async (item) => {
           const keepManualVirtualInput = hasManualVirtualReceiptInput(item);
           const drug =
             receiptMatchPreview && !keepManualVirtualInput
@@ -5236,13 +5326,22 @@ function MobileApp() {
       commitReceiptDemo(eligibleReceiptItems, wholesaler);
     }
 
+    const committedIds = new Set(eligibleReceiptItems.map((item) => item.id));
+    const committedIncrease = eligibleReceiptItems.reduce(
+      (sum, item) => sum + item.drug.productTotalQuantity,
+      0,
+    );
+    const unresolvedCount = receiptQueue.length - eligibleReceiptItems.length;
+
     setReceiptSummary({
       wholesalerName: wholesaler.name,
       count: eligibleReceiptItems.length,
-      increase: receiptIncrease,
-      missing: receiptQueue.length - eligibleReceiptItems.length,
+      increase: committedIncrease,
+      missing: unresolvedCount,
     });
-    setReceiptQueue([]);
+    setReceiptQueue((current) =>
+      current.filter((item) => !committedIds.has(item.id)),
+    );
     setScreen("receiptDone");
   }
 
@@ -5455,9 +5554,13 @@ function MobileApp() {
       {screen === "receiptReview" && (
         <ReceiptReviewScreen
           increase={receiptIncrease}
+          issueItems={receiptIssueItems}
           queue={receiptQueue}
+          readyItems={eligibleReceiptItems}
           selectedWholesaler={selectedWholesaler}
+          getIssueReason={getReceiptItemIssueReason}
           onBack={() => setScreen("scan")}
+          onIssues={() => setScreen("receiptIssues")}
           onRemove={removeReceiptItem}
           onNext={() => setScreen("receiptMatch")}
         />
@@ -5467,12 +5570,15 @@ function MobileApp() {
         <ReceiptMatchScreen
           commitBlockedReason={receiptCommitBlockedReason}
           eligibleCount={eligibleReceiptItems.length}
+          issueCount={receiptIssueItems.length}
           queue={receiptQueue}
           submitErrorMessage={receiptSubmitError}
+          getIssueReason={getReceiptItemIssueReason}
           onBack={() => setScreen("receiptReview")}
           onCheckVirtual={checkVirtualForReceiptItem}
           onCommit={commitReceipt}
           onGenerateVirtual={generateVirtualForReceiptItem}
+          onIssues={() => setScreen("receiptIssues")}
           onRegeneratePreviewSerials={
             receiptMatchPreview && debugToolsEnabled
               ? regenerateReceiptPreviewSerials
@@ -5482,6 +5588,7 @@ function MobileApp() {
           onSelectStock={selectReceiptStockCandidate}
           onVirtualCode={(itemId, value) =>
             patchReceiptDrug(itemId, {
+              selectedStockId: undefined,
               virtualInsuranceCode: value,
               insuranceCode: value,
               insuranceCodeExists: null,
@@ -5489,6 +5596,38 @@ function MobileApp() {
           }
           onVirtualName={(itemId, value) =>
             patchReceiptDrug(itemId, {
+              selectedStockId: undefined,
+              virtualDrugName: value,
+              name: value || "미확인 약품",
+            })
+          }
+        />
+      )}
+
+      {screen === "receiptIssues" && (
+        <ReceiptIssuesScreen
+          eligibleCount={eligibleReceiptItems.length}
+          getIssueReason={getReceiptItemIssueReason}
+          items={receiptIssueItems}
+          submitErrorMessage={receiptSubmitError}
+          onBack={() => setScreen("receiptMatch")}
+          onCheckVirtual={checkVirtualForReceiptItem}
+          onCommit={commitReceipt}
+          onGenerateVirtual={generateVirtualForReceiptItem}
+          onRemove={removeReceiptItem}
+          onSelectPrice={selectReceiptPriceMaster}
+          onSelectStock={selectReceiptStockCandidate}
+          onVirtualCode={(itemId, value) =>
+            patchReceiptDrug(itemId, {
+              selectedStockId: undefined,
+              virtualInsuranceCode: value,
+              insuranceCode: value,
+              insuranceCodeExists: null,
+            })
+          }
+          onVirtualName={(itemId, value) =>
+            patchReceiptDrug(itemId, {
+              selectedStockId: undefined,
               virtualDrugName: value,
               name: value || "미확인 약품",
             })
@@ -5504,7 +5643,17 @@ function MobileApp() {
             setReceiptSummary(null);
             setScreen("scan");
           }}
-          onSecondary={() => setScreen("stocks")}
+          secondaryLabel={
+            receiptSummary.missing > 0 ? "미해결 이슈 확인" : undefined
+          }
+          onSecondary={() => {
+            if (receiptSummary.missing > 0) {
+              setReceiptSummary(null);
+              setScreen("receiptIssues");
+              return;
+            }
+            setScreen("stocks");
+          }}
         />
       )}
 
@@ -5626,6 +5775,19 @@ function MobileApp() {
           <strong>{scanExpiryNotice.display}</strong>
           <em>스캔 완료</em>
         </div>
+      )}
+
+      {receiptPartialConfirmOpen && (
+        <ReceiptPartialConfirmModal
+          eligibleCount={eligibleReceiptItems.length}
+          issueCount={receiptIssueItems.length}
+          onCancel={() => setReceiptPartialConfirmOpen(false)}
+          onConfirm={() => void commitReceipt({ partialConfirmed: true })}
+          onIssues={() => {
+            setReceiptPartialConfirmOpen(false);
+            setScreen("receiptIssues");
+          }}
+        />
       )}
     </main>
   );
@@ -6275,18 +6437,38 @@ function WholesalerScreen({
   );
 }
 
+type ReceiptCandidateSheetState =
+  | {
+      candidates: PriceMaster[];
+      item: ReceiptQueueItem;
+      kind: "price";
+    }
+  | {
+      candidates: StockCandidate[];
+      item: ReceiptQueueItem;
+      kind: "stock";
+    };
+
 function ReceiptReviewScreen({
   increase,
+  issueItems,
   queue,
+  readyItems,
   selectedWholesaler,
+  getIssueReason,
   onBack,
+  onIssues,
   onNext,
   onRemove,
 }: {
   increase: number;
+  issueItems: ReceiptQueueItem[];
   queue: ReceiptQueueItem[];
+  readyItems: ReceiptQueueItem[];
   selectedWholesaler: Wholesaler | null;
+  getIssueReason: (item: ReceiptQueueItem) => string;
   onBack: () => void;
+  onIssues: () => void;
   onNext: () => void;
   onRemove: (itemId: string) => void;
 }) {
@@ -6298,26 +6480,62 @@ function ReceiptReviewScreen({
         onBack={onBack}
       />
       <section className="scroll-body">
-        <div className="metrics">
-          <Metric label="스캔 건수" value={`${queue.length}`} unit="건" />
+        <div className="metrics is-three">
+          <Metric
+            label="입고 가능"
+            value={`${readyItems.length}`}
+            unit="건"
+            blue
+          />
           <Metric
             label="예상 재고 증가"
             value={`+${increase}`}
             unit="개"
             blue
           />
+          <Metric
+            label="확인 필요"
+            value={`${issueItems.length}`}
+            unit="건"
+            danger={issueItems.length > 0}
+          />
         </div>
         {queue.length > 0 ? (
-          <div className="list-card">
-            {queue.map((item) => (
-              <DrugRow
-                key={item.id}
-                item={item}
-                delta={item.drug.productTotalQuantity}
-                onRemove={onRemove}
-              />
-            ))}
-          </div>
+          <>
+            {readyItems.length > 0 && (
+              <>
+                <div className="section-label">입고 가능</div>
+                <div className="list-card">
+                  {readyItems.map((item) => (
+                    <DrugRow
+                      key={item.id}
+                      item={item}
+                      delta={item.drug.productTotalQuantity}
+                      state="ready"
+                      onRemove={onRemove}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+            {issueItems.length > 0 && (
+              <>
+                <div className="section-label">확인 필요</div>
+                <div className="list-card">
+                  {issueItems.map((item) => (
+                    <DrugRow
+                      key={item.id}
+                      item={item}
+                      delta={item.drug.productTotalQuantity}
+                      issueReason={getIssueReason(item)}
+                      state="issue"
+                      onRemove={onRemove}
+                    />
+                  ))}
+                </div>
+              </>
+            )}
+          </>
         ) : (
           <div className="empty-state compact">
             <strong>입고할 QR이 없습니다</strong>
@@ -6325,7 +6543,12 @@ function ReceiptReviewScreen({
           </div>
         )}
       </section>
-      <BottomBar>
+      <BottomBar stack={issueItems.length > 0}>
+        {issueItems.length > 0 && (
+          <button className="secondary-btn" type="button" onClick={onIssues}>
+            미해결 이슈 확인
+          </button>
+        )}
         <button
           className="primary-btn"
           type="button"
@@ -6342,12 +6565,15 @@ function ReceiptReviewScreen({
 function ReceiptMatchScreen({
   commitBlockedReason,
   eligibleCount,
+  issueCount,
   queue,
   submitErrorMessage,
+  getIssueReason,
   onBack,
   onCheckVirtual,
   onCommit,
   onGenerateVirtual,
+  onIssues,
   onRegeneratePreviewSerials,
   onSelectPrice,
   onSelectStock,
@@ -6356,12 +6582,15 @@ function ReceiptMatchScreen({
 }: {
   commitBlockedReason: string;
   eligibleCount: number;
+  issueCount: number;
   queue: ReceiptQueueItem[];
   submitErrorMessage: string;
+  getIssueReason: (item: ReceiptQueueItem) => string;
   onBack: () => void;
   onCheckVirtual: (itemId: string, insuranceCode: string) => void;
   onCommit: () => void;
   onGenerateVirtual: (itemId: string) => void;
+  onIssues: () => void;
   onRegeneratePreviewSerials?: () => void;
   onSelectPrice: (itemId: string, priceMasterId: string) => void;
   onSelectStock: (itemId: string, stockId: string) => void;
@@ -6372,61 +6601,154 @@ function ReceiptMatchScreen({
   const name = queue.filter((item) => item.drug.matchStatus === "NAME_MATCH");
   const virtual = queue.filter((item) => item.drug.matchStatus === "VIRTUAL");
   const missing = queue.filter((item) => item.drug.matchStatus === "MISSING");
-  const commitBlocked = Boolean(commitBlockedReason);
-  const [expandedGroups, setExpandedGroups] = useState<
-    Record<MatchStatus, boolean>
-  >({
-    MISSING: true,
-    NAME_MATCH: true,
-    NORMAL: true,
-    VIRTUAL: true,
-  });
+  const [activeStatus, setActiveStatus] = useState<MatchStatus>("NORMAL");
+  const [candidateSheet, setCandidateSheet] =
+    useState<ReceiptCandidateSheetState | null>(null);
   const groups: Array<{
     color: string;
     danger?: boolean;
+    description: string;
     items: ReceiptQueueItem[];
     status: MatchStatus;
     title: string;
   }> = [
-    { color: "#0064FF", items: normal, status: "NORMAL", title: "정상매칭" },
-    { color: "#6B4EE6", items: name, status: "NAME_MATCH", title: "이름매칭" },
-    { color: "#B07514", items: virtual, status: "VIRTUAL", title: "임의" },
+    {
+      color: "#0064FF",
+      description: "기준 데이터가 완전히 일치한 항목입니다.",
+      items: normal,
+      status: "NORMAL",
+      title: "완전 일치",
+    },
+    {
+      color: "#6B4EE6",
+      description: "후보 중 실제 입고할 약품을 선택해야 합니다.",
+      items: name,
+      status: "NAME_MATCH",
+      title: "이름매칭",
+    },
+    {
+      color: "#B07514",
+      description: "기준 데이터와 연결되지 않은 임의 재고 항목입니다.",
+      items: virtual,
+      status: "VIRTUAL",
+      title: "임의",
+    },
     {
       color: "#C13B2C",
       danger: true,
+      description: "입고 전에 약명과 보험코드를 확인해야 합니다.",
       items: missing,
       status: "MISSING",
       title: "미등록",
     },
   ];
+  const activeGroup =
+    groups.find(
+      (group) => group.status === activeStatus && group.items.length,
+    ) ??
+    groups.find((group) => group.items.length > 0) ??
+    groups[0];
+  const nonEmptyGroups = groups.filter((group) => group.items.length > 0);
+  const activeStepIndex = Math.max(
+    0,
+    nonEmptyGroups.findIndex((group) => group.status === activeGroup.status),
+  );
+  const previousGroup = nonEmptyGroups[activeStepIndex - 1];
+  const nextGroup = nonEmptyGroups[activeStepIndex + 1];
+  const activeIssueCount = activeGroup.items.filter(getIssueReason).length;
+  const activeReadyCount = activeGroup.items.length - activeIssueCount;
+  const commitDisabled = eligibleCount === 0;
 
   return (
     <>
-      <Header title="매칭 결과" onBack={onBack} />
+      <Header
+        title="매칭 결과"
+        note={
+          nonEmptyGroups.length > 0
+            ? `${activeStepIndex + 1}/${nonEmptyGroups.length}`
+            : ""
+        }
+        onBack={onBack}
+      />
       <section className="scroll-body">
         {queue.length > 0 ? (
-          groups.map((group) => (
-            <ReceiptMatchGroup
-              key={group.title}
-              color={group.color}
-              danger={group.danger}
-              expanded={expandedGroups[group.status]}
-              items={group.items}
-              title={group.title}
-              onCheckVirtual={onCheckVirtual}
-              onGenerateVirtual={onGenerateVirtual}
-              onSelectPrice={onSelectPrice}
-              onSelectStock={onSelectStock}
-              onToggle={() =>
-                setExpandedGroups((current) => ({
-                  ...current,
-                  [group.status]: !current[group.status],
-                }))
-              }
-              onVirtualCode={onVirtualCode}
-              onVirtualName={onVirtualName}
-            />
-          ))
+          <>
+            <div
+              className="receipt-stepper"
+              role="tablist"
+              aria-label="입고 매칭 단계"
+            >
+              {groups.map((group) => (
+                <button
+                  key={group.status}
+                  className={
+                    activeGroup.status === group.status ? "is-active" : ""
+                  }
+                  style={{ "--step-color": group.color } as CSSProperties}
+                  type="button"
+                  disabled={group.items.length === 0}
+                  role="tab"
+                  aria-selected={activeGroup.status === group.status}
+                  onClick={() => setActiveStatus(group.status)}
+                >
+                  <span>{group.title}</span>
+                  <strong>{group.items.length}</strong>
+                </button>
+              ))}
+            </div>
+            <section
+              className={`receipt-step-panel ${activeGroup.danger ? "danger" : ""}`}
+            >
+              <div className="receipt-step-summary">
+                <span>
+                  <i style={{ backgroundColor: activeGroup.color }} />
+                  {activeGroup.title}
+                </span>
+                <strong>
+                  입고 가능 {activeReadyCount}건 · 확인 필요 {activeIssueCount}
+                  건
+                </strong>
+                <em>{activeGroup.description}</em>
+              </div>
+              {activeGroup.items.length > 0 ? (
+                <div
+                  className={`receipt-fix-list ${
+                    activeGroup.items.length >= 4 ? "is-scrollable" : ""
+                  }`}
+                >
+                  {activeGroup.items.map((item) => (
+                    <ReceiptMatchItem
+                      key={item.id}
+                      getIssueReason={getIssueReason}
+                      item={item}
+                      onCheckVirtual={onCheckVirtual}
+                      onGenerateVirtual={onGenerateVirtual}
+                      onOpenPriceCandidates={(nextItem, candidates) =>
+                        setCandidateSheet({
+                          candidates,
+                          item: nextItem,
+                          kind: "price",
+                        })
+                      }
+                      onOpenStockCandidates={(nextItem, candidates) =>
+                        setCandidateSheet({
+                          candidates,
+                          item: nextItem,
+                          kind: "stock",
+                        })
+                      }
+                      onVirtualCode={onVirtualCode}
+                      onVirtualName={onVirtualName}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state compact">
+                  <strong>해당 단계 항목이 없습니다</strong>
+                </div>
+              )}
+            </section>
+          </>
         ) : (
           <div className="empty-state compact">
             <strong>입고할 QR이 없습니다</strong>
@@ -6434,7 +6756,7 @@ function ReceiptMatchScreen({
           </div>
         )}
       </section>
-      <BottomBar stack={Boolean(onRegeneratePreviewSerials)}>
+      <BottomBar stack>
         {onRegeneratePreviewSerials && (
           <button
             className="secondary-btn"
@@ -6444,111 +6766,199 @@ function ReceiptMatchScreen({
             테스트 SN 재생성
           </button>
         )}
-        {commitBlocked && (
+        {nonEmptyGroups.length > 1 && (
+          <div className="receipt-step-actions">
+            <button
+              className="secondary-btn"
+              type="button"
+              disabled={!previousGroup}
+              onClick={() =>
+                previousGroup && setActiveStatus(previousGroup.status)
+              }
+            >
+              이전 단계
+            </button>
+            <button
+              className="secondary-btn"
+              type="button"
+              disabled={!nextGroup}
+              onClick={() => nextGroup && setActiveStatus(nextGroup.status)}
+            >
+              다음 단계
+            </button>
+          </div>
+        )}
+        {issueCount > 0 && (
           <p className="receipt-bottom-warning">{commitBlockedReason}</p>
         )}
-        {!commitBlocked && submitErrorMessage && (
+        {submitErrorMessage && (
+          <p className="receipt-bottom-error">{submitErrorMessage}</p>
+        )}
+        {issueCount > 0 && (
+          <button className="secondary-btn" type="button" onClick={onIssues}>
+            미해결 이슈 보기
+          </button>
+        )}
+        <button
+          className="primary-btn"
+          type="button"
+          disabled={queue.length === 0 || commitDisabled}
+          onClick={onCommit}
+        >
+          {commitDisabled
+            ? "해결 후 입고 확정"
+            : issueCount > 0
+              ? `${eligibleCount}건만 입고 확정`
+              : `${eligibleCount}건 입고 확정`}
+        </button>
+      </BottomBar>
+      <ReceiptCandidateSheet
+        sheet={candidateSheet}
+        onClose={() => setCandidateSheet(null)}
+        onSelectPrice={(itemId, priceMasterId) => {
+          onSelectPrice(itemId, priceMasterId);
+          setCandidateSheet(null);
+        }}
+        onSelectStock={(itemId, stockId) => {
+          onSelectStock(itemId, stockId);
+          setCandidateSheet(null);
+        }}
+      />
+    </>
+  );
+}
+
+function ReceiptIssuesScreen({
+  items,
+  eligibleCount,
+  submitErrorMessage,
+  getIssueReason,
+  onBack,
+  onCheckVirtual,
+  onCommit,
+  onGenerateVirtual,
+  onRemove,
+  onSelectPrice,
+  onSelectStock,
+  onVirtualCode,
+  onVirtualName,
+}: {
+  items: ReceiptQueueItem[];
+  eligibleCount: number;
+  submitErrorMessage: string;
+  getIssueReason: (item: ReceiptQueueItem) => string;
+  onBack: () => void;
+  onCheckVirtual: (itemId: string, insuranceCode: string) => void;
+  onCommit: () => void;
+  onGenerateVirtual: (itemId: string) => void;
+  onRemove: (itemId: string) => void;
+  onSelectPrice: (itemId: string, priceMasterId: string) => void;
+  onSelectStock: (itemId: string, stockId: string) => void;
+  onVirtualCode: (itemId: string, value: string) => void;
+  onVirtualName: (itemId: string, value: string) => void;
+}) {
+  const [candidateSheet, setCandidateSheet] =
+    useState<ReceiptCandidateSheetState | null>(null);
+  const commitDisabled = eligibleCount === 0;
+
+  return (
+    <>
+      <Header title="미해결 이슈" note={`${items.length}건`} onBack={onBack} />
+      <section className="scroll-body">
+        {items.length > 0 ? (
+          <div className="receipt-fix-list">
+            {items.map((item) => (
+              <ReceiptMatchItem
+                key={item.id}
+                getIssueReason={getIssueReason}
+                item={item}
+                onCheckVirtual={onCheckVirtual}
+                onGenerateVirtual={onGenerateVirtual}
+                onRemove={onRemove}
+                onOpenPriceCandidates={(nextItem, candidates) =>
+                  setCandidateSheet({
+                    candidates,
+                    item: nextItem,
+                    kind: "price",
+                  })
+                }
+                onOpenStockCandidates={(nextItem, candidates) =>
+                  setCandidateSheet({
+                    candidates,
+                    item: nextItem,
+                    kind: "stock",
+                  })
+                }
+                onVirtualCode={onVirtualCode}
+                onVirtualName={onVirtualName}
+              />
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state compact">
+            <strong>모든 이슈가 해결되었습니다</strong>
+            <span>입고 가능한 항목을 확정할 수 있습니다.</span>
+          </div>
+        )}
+      </section>
+      <BottomBar stack>
+        {submitErrorMessage && (
           <p className="receipt-bottom-error">{submitErrorMessage}</p>
         )}
         <button
           className="primary-btn"
           type="button"
-          disabled={queue.length === 0 || commitBlocked}
+          disabled={commitDisabled}
           onClick={onCommit}
         >
-          {commitBlocked ? "선택 후 입고 확정" : `${eligibleCount}건 입고 확정`}
+          {commitDisabled
+            ? "해결 후 입고 확정"
+            : `${eligibleCount}건 입고 확정`}
+        </button>
+        <button className="secondary-btn" type="button" onClick={onBack}>
+          매칭 결과로 돌아가기
         </button>
       </BottomBar>
+      <ReceiptCandidateSheet
+        sheet={candidateSheet}
+        onClose={() => setCandidateSheet(null)}
+        onSelectPrice={(itemId, priceMasterId) => {
+          onSelectPrice(itemId, priceMasterId);
+          setCandidateSheet(null);
+        }}
+        onSelectStock={(itemId, stockId) => {
+          onSelectStock(itemId, stockId);
+          setCandidateSheet(null);
+        }}
+      />
     </>
   );
 }
 
-function ReceiptMatchGroup({
-  color,
-  danger,
-  expanded,
-  items,
-  title,
-  onCheckVirtual,
-  onGenerateVirtual,
-  onSelectPrice,
-  onSelectStock,
-  onToggle,
-  onVirtualCode,
-  onVirtualName,
-}: {
-  color: string;
-  danger?: boolean;
-  expanded: boolean;
-  items: ReceiptQueueItem[];
-  title: string;
-  onCheckVirtual: (itemId: string, insuranceCode: string) => void;
-  onGenerateVirtual: (itemId: string) => void;
-  onSelectPrice: (itemId: string, priceMasterId: string) => void;
-  onSelectStock: (itemId: string, stockId: string) => void;
-  onToggle: () => void;
-  onVirtualCode: (itemId: string, value: string) => void;
-  onVirtualName: (itemId: string, value: string) => void;
-}) {
-  return (
-    <section className={`match-box ${danger ? "danger" : ""}`}>
-      <button
-        className="match-box-head"
-        type="button"
-        aria-expanded={expanded}
-        onClick={onToggle}
-      >
-        <span>
-          <i style={{ backgroundColor: color }} />
-          {title}
-        </span>
-        <span className="match-box-count">
-          <strong style={{ color }}>{items.length}건</strong>
-          <ChevronDown
-            className={expanded ? "is-open" : ""}
-            size={16}
-            strokeWidth={2.4}
-          />
-        </span>
-      </button>
-      {expanded && items.length > 0 && (
-        <div
-          className={`receipt-fix-list ${
-            items.length >= 3 ? "is-scrollable" : ""
-          }`}
-        >
-          {items.map((item) => (
-            <ReceiptMatchItem
-              key={item.id}
-              item={item}
-              onCheckVirtual={onCheckVirtual}
-              onGenerateVirtual={onGenerateVirtual}
-              onSelectPrice={onSelectPrice}
-              onSelectStock={onSelectStock}
-              onVirtualCode={onVirtualCode}
-              onVirtualName={onVirtualName}
-            />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
 function ReceiptMatchItem({
+  getIssueReason,
   item,
   onCheckVirtual,
   onGenerateVirtual,
-  onSelectPrice,
-  onSelectStock,
+  onRemove,
+  onOpenPriceCandidates,
+  onOpenStockCandidates,
   onVirtualCode,
   onVirtualName,
 }: {
+  getIssueReason: (item: ReceiptQueueItem) => string;
   item: ReceiptQueueItem;
   onCheckVirtual: (itemId: string, insuranceCode: string) => void;
   onGenerateVirtual: (itemId: string) => void;
-  onSelectPrice: (itemId: string, priceMasterId: string) => void;
-  onSelectStock: (itemId: string, stockId: string) => void;
+  onRemove?: (itemId: string) => void;
+  onOpenPriceCandidates: (
+    item: ReceiptQueueItem,
+    candidates: PriceMaster[],
+  ) => void;
+  onOpenStockCandidates: (
+    item: ReceiptQueueItem,
+    candidates: StockCandidate[],
+  ) => void;
   onVirtualCode: (itemId: string, value: string) => void;
   onVirtualName: (itemId: string, value: string) => void;
 }) {
@@ -6557,50 +6967,76 @@ function ReceiptMatchItem({
     item.drug.priceMasterId,
   );
   const hasPriceCandidates = candidatePrices.length > 0;
-  const needsVirtualFields = !item.drug.priceMasterId && !hasPriceCandidates;
+  const selectedPriceCandidate = candidatePrices.find(
+    (candidate) => candidate.id === item.drug.priceMasterId,
+  );
   const isPcOnlyUninsured = Boolean(item.drug.pcOnlyUninsured);
   const stockCandidates = item.drug.stockCandidates ?? [];
   const selectedStockCandidate = stockCandidates.find(
     (candidate) => candidate.id === item.drug.selectedStockId,
   );
+  const hasSelectedStockCandidate = Boolean(selectedStockCandidate);
+  const needsVirtualFields =
+    !item.drug.priceMasterId &&
+    !hasPriceCandidates &&
+    !hasSelectedStockCandidate;
+  const showStockCandidates =
+    !item.drug.priceMasterId && stockCandidates.length > 0;
   const pcOnlyDisplayCode =
     selectedStockCandidate?.insuranceCode ??
     item.drug.virtualInsuranceCode ??
     item.drug.insuranceCode;
+  const issueReason = getIssueReason(item);
 
   return (
-    <div className="receipt-fix-card">
+    <div
+      className={`receipt-fix-card ${issueReason ? "is-issue" : "is-ready"}`}
+    >
       <div className="receipt-fix-head">
         <div>
           <strong>{item.drug.name}</strong>
+          <span>{receiptDrugDetail(item)}</span>
         </div>
         <div className="receipt-fix-actions">
           <span className={`badge ${statusClass(item.drug.matchStatus)}`}>
             {statusText(item.drug.matchStatus)}
           </span>
+          {onRemove && (
+            <button
+              className="icon-delete-btn"
+              type="button"
+              aria-label={`${item.drug.name} 삭제`}
+              title="삭제"
+              onClick={() => onRemove(item.id)}
+            >
+              <Trash2 size={15} strokeWidth={2.3} />
+            </button>
+          )}
         </div>
       </div>
+      <p
+        className={`receipt-item-state ${issueReason ? "is-issue" : "is-ready"}`}
+      >
+        {issueReason || "입고 가능한 상태입니다."}
+      </p>
       {hasPriceCandidates && (
-        <div className="candidate-chips">
-          {candidatePrices.map((price) => (
-            <button
-              key={price.id}
-              className={
-                item.drug.priceMasterId === price.id ? "is-active" : ""
-              }
-              disabled={item.drug.priceMasterId === price.id}
-              type="button"
-              onClick={() => onSelectPrice(item.id, price.id)}
-            >
-              <span className="candidate-code">{price.productCode}</span>
-              <span className="candidate-name">{price.productName}</span>
-            </button>
-          ))}
-        </div>
+        <ReceiptCandidateTrigger
+          active={Boolean(selectedPriceCandidate)}
+          detail={
+            selectedPriceCandidate
+              ? `${selectedPriceCandidate.productCode} · ${currency(
+                  selectedPriceCandidate.maxPrice,
+                )}원`
+              : `${candidatePrices.length}개 후보 중 선택`
+          }
+          label="2번 기준 후보"
+          title={selectedPriceCandidate?.productName ?? "실제 입고 약품 선택"}
+          onClick={() => onOpenPriceCandidates(item, candidatePrices)}
+        />
       )}
       {!item.drug.priceMasterId && hasPriceCandidates && (
         <p className="candidate-help">
-          실제 입고할 약 정보를 선택하면 입고 확정에 포함됩니다.
+          후보 목록에서 실제 입고할 약 정보를 선택하면 이슈가 해결됩니다.
         </p>
       )}
       {isPcOnlyUninsured && (
@@ -6608,35 +7044,34 @@ function ReceiptMatchItem({
           {item.drug.receiptNotice ?? pcOnlyUninsuredReceiptNotice}
         </p>
       )}
-      {isPcOnlyUninsured && stockCandidates.length > 0 && (
-        <div className="stock-candidate-chips">
-          {stockCandidates.map((stock) => (
-            <button
-              key={stock.id}
-              className={
-                item.drug.selectedStockId === stock.id ? "is-active" : ""
-              }
-              disabled={item.drug.selectedStockId === stock.id}
-              type="button"
-              onClick={() => onSelectStock(item.id, stock.id)}
-            >
-              <span className="candidate-code">
-                {stock.matchType === "PC_HISTORY" ? "같은 PC" : "이름 후보"}
-              </span>
-              <span className="candidate-name">{stock.name}</span>
-              <span className="candidate-meta">
-                {formatInsuranceCodeForDisplay(stock.insuranceCode)} · 재고{" "}
-                {stock.quantity}
-              </span>
-            </button>
-          ))}
-        </div>
+      {showStockCandidates && (
+        <ReceiptCandidateTrigger
+          active={hasSelectedStockCandidate}
+          detail={
+            selectedStockCandidate
+              ? `${formatInsuranceCodeForDisplay(
+                  selectedStockCandidate.insuranceCode,
+                )} · 재고 ${selectedStockCandidate.quantity}`
+              : `${stockCandidates.length}개 재고 후보 중 선택`
+          }
+          label="기존 임의 재고 후보"
+          title={selectedStockCandidate?.name ?? "연결할 기존 재고 선택"}
+          onClick={() => onOpenStockCandidates(item, stockCandidates)}
+        />
+      )}
+      {hasSelectedStockCandidate && (
+        <p className="candidate-help">
+          선택한 기존 임의 재고에 입고 수량을 더합니다.
+        </p>
       )}
       {needsVirtualFields && isPcOnlyUninsured && (
         <div className="virtual-fields">
           <label>
             <span>관리 약품명</span>
-            <input value={item.drug.virtualDrugName ?? item.drug.name} readOnly />
+            <input
+              value={item.drug.virtualDrugName ?? item.drug.name}
+              readOnly
+            />
           </label>
           <label>
             <span>자동 관리코드</span>
@@ -6705,6 +7140,174 @@ function ReceiptMatchItem({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ReceiptCandidateTrigger({
+  active,
+  detail,
+  label,
+  title,
+  onClick,
+}: {
+  active: boolean;
+  detail: string;
+  label: string;
+  title: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      className={`receipt-candidate-trigger ${active ? "is-active" : ""}`}
+      type="button"
+      onClick={onClick}
+    >
+      <span>{label}</span>
+      <strong>{title}</strong>
+      <em>{detail}</em>
+    </button>
+  );
+}
+
+function ReceiptCandidateSheet({
+  sheet,
+  onClose,
+  onSelectPrice,
+  onSelectStock,
+}: {
+  sheet: ReceiptCandidateSheetState | null;
+  onClose: () => void;
+  onSelectPrice: (itemId: string, priceMasterId: string) => void;
+  onSelectStock: (itemId: string, stockId: string) => void;
+}) {
+  if (!sheet) return null;
+
+  return (
+    <div
+      className="receipt-sheet-backdrop"
+      role="presentation"
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <aside
+        aria-modal="true"
+        className="receipt-candidate-sheet"
+        role="dialog"
+      >
+        <div className="sheet-handle" />
+        <header className="receipt-sheet-header">
+          <div>
+            <span>
+              {sheet.kind === "price" ? "약품 후보 선택" : "재고 후보 선택"}
+            </span>
+            <strong>{sheet.item.drug.name}</strong>
+          </div>
+          <button type="button" aria-label="닫기" onClick={onClose}>
+            <X size={18} strokeWidth={2.4} />
+          </button>
+        </header>
+        <div className="receipt-sheet-list">
+          {sheet.kind === "price"
+            ? sheet.candidates.map((candidate) => {
+                const selected = sheet.item.drug.priceMasterId === candidate.id;
+                return (
+                  <button
+                    key={candidate.id}
+                    className={`receipt-sheet-option ${
+                      selected ? "is-selected" : ""
+                    }`}
+                    type="button"
+                    disabled={selected}
+                    onClick={() => onSelectPrice(sheet.item.id, candidate.id)}
+                  >
+                    <span>{candidate.productCode}</span>
+                    <strong>{candidate.productName}</strong>
+                    <em>
+                      {[candidate.spec, candidate.unit]
+                        .filter(Boolean)
+                        .join(" · ")}
+                      {candidate.maxPrice > 0
+                        ? ` · ${currency(candidate.maxPrice)}원`
+                        : ""}
+                    </em>
+                  </button>
+                );
+              })
+            : sheet.candidates.map((candidate) => {
+                const selected =
+                  sheet.item.drug.selectedStockId === candidate.id;
+                return (
+                  <button
+                    key={candidate.id}
+                    className={`receipt-sheet-option ${
+                      selected ? "is-selected" : ""
+                    }`}
+                    type="button"
+                    disabled={selected}
+                    onClick={() => onSelectStock(sheet.item.id, candidate.id)}
+                  >
+                    <span>
+                      {candidate.matchType === "PC_HISTORY"
+                        ? "같은 PC"
+                        : "이름 후보"}
+                    </span>
+                    <strong>{candidate.name}</strong>
+                    <em>
+                      {formatInsuranceCodeForDisplay(candidate.insuranceCode) ||
+                        "보험코드 없음"}{" "}
+                      · 재고 {candidate.quantity}
+                    </em>
+                  </button>
+                );
+              })}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function ReceiptPartialConfirmModal({
+  eligibleCount,
+  issueCount,
+  onCancel,
+  onConfirm,
+  onIssues,
+}: {
+  eligibleCount: number;
+  issueCount: number;
+  onCancel: () => void;
+  onConfirm: () => void;
+  onIssues: () => void;
+}) {
+  return (
+    <div
+      className="mobile-modal-backdrop"
+      role="presentation"
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) onCancel();
+      }}
+    >
+      <aside aria-modal="true" className="mobile-confirm-modal" role="dialog">
+        <span>부분 입고 확인</span>
+        <strong>{eligibleCount}건만 입고 처리할까요?</strong>
+        <p>
+          미해결 이슈 {issueCount}건은 재고에 반영하지 않고 입고 목록에
+          남겨둡니다. 이후 미해결 이슈 화면에서 다시 확인할 수 있습니다.
+        </p>
+        <div className="mobile-confirm-actions is-stacked">
+          <button className="primary-btn" type="button" onClick={onConfirm}>
+            입고 가능 항목만 처리
+          </button>
+          <button className="secondary-btn" type="button" onClick={onIssues}>
+            미해결 이슈 보기
+          </button>
+          <button className="secondary-btn" type="button" onClick={onCancel}>
+            취소
+          </button>
+        </div>
+      </aside>
     </div>
   );
 }
@@ -7013,12 +7616,14 @@ function DoneScreen({
   kind,
   receiptSummary,
   returnSummary,
+  secondaryLabel,
   onPrimary,
   onSecondary,
 }: {
   kind: "receipt" | "return";
   receiptSummary?: ReceiptSummary;
   returnSummary?: ReturnSummary;
+  secondaryLabel?: string;
   onPrimary: () => void;
   onSecondary: () => void;
 }) {
@@ -7080,7 +7685,7 @@ function DoneScreen({
           {isReceipt ? "계속 스캔하기" : "계속 반품하기"}
         </button>
         <button className="secondary-btn" type="button" onClick={onSecondary}>
-          {isReceipt ? "재고 목록 보기" : "홈으로"}
+          {secondaryLabel ?? (isReceipt ? "재고 목록 보기" : "홈으로")}
         </button>
       </BottomBar>
     </>
@@ -7278,11 +7883,13 @@ function ChoiceRow({
 
 function Metric({
   blue,
+  danger,
   label,
   unit,
   value,
 }: {
   blue?: boolean;
+  danger?: boolean;
   label: string;
   unit: string;
   value: string;
@@ -7290,7 +7897,7 @@ function Metric({
   return (
     <div className="metric-card">
       <span>{label}</span>
-      <strong className={blue ? "blue" : ""}>
+      <strong className={blue ? "blue" : danger ? "danger" : ""}>
         {value}
         <em>{unit}</em>
       </strong>
@@ -7300,18 +7907,22 @@ function Metric({
 
 function DrugRow({
   delta,
+  issueReason,
   item,
+  state,
   onRemove,
 }: {
   delta: number;
+  issueReason?: string;
   item: ReceiptQueueItem;
+  state?: "issue" | "ready";
   onRemove?: (itemId: string) => void;
 }) {
   return (
-    <div className="drug-row">
+    <div className={`drug-row ${state ? `is-${state}` : ""}`}>
       <div>
         <strong>{item.drug.name}</strong>
-        <span>{receiptDrugDetail(item)}</span>
+        <span>{issueReason || receiptDrugDetail(item)}</span>
       </div>
       <b>{delta > 0 ? `+${delta}` : "-"}</b>
       <span className={`badge ${statusClass(item.drug.matchStatus)}`}>
