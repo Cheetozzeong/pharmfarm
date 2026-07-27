@@ -4926,6 +4926,64 @@ body:has(.cms-shell) {
   padding: 0 12px;
 }
 
+.cms-stock-decrease-controls {
+  grid-template-columns: 116px minmax(180px, 1fr) 174px auto;
+}
+
+.cms-stock-decrease-pharmacy {
+  min-width: 0;
+  height: 38px;
+  gap: 2px;
+  justify-content: center;
+  padding: 4px 10px;
+}
+
+.cms-stock-decrease-pharmacy span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.cms-stock-decrease-pharmacy input {
+  width: 100%;
+  height: 18px;
+  padding: 0;
+  text-align: left;
+}
+
+.cms-stock-decrease-notice {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #d8e7ff;
+  border-radius: 10px;
+  background: #f7fbff;
+  padding: 11px 14px;
+  color: #4c5d70;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.cms-stock-decrease-notice strong {
+  flex: 0 0 auto;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.cms-stock-decrease-notice.is-partial,
+.cms-stock-decrease-notice.is-unavailable,
+.cms-stock-decrease-notice.is-needs-pharmacy {
+  border-color: #ffe1b0;
+  background: #fff9ed;
+}
+
+.cms-stock-decrease-notice.is-partial strong,
+.cms-stock-decrease-notice.is-unavailable strong,
+.cms-stock-decrease-notice.is-needs-pharmacy strong {
+  color: #9a5b00;
+}
+
 .cms-date-range-inline {
   position: relative;
   min-width: 0;
@@ -6088,6 +6146,97 @@ body:has(.cms-shell) {
 .cms-deduction-row .mono {
   font-family: "SF Mono", ui-monospace, monospace;
   font-size: 11px;
+}
+
+.cms-stock-decrease-card {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.cms-stock-decrease-table {
+  min-width: 1120px;
+}
+
+.cms-stock-decrease-row {
+  display: grid;
+  width: 100%;
+  min-height: 60px;
+  grid-template-columns:
+    134px 100px minmax(220px, 1fr) 84px 140px 180px
+    minmax(180px, 1fr);
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid #f4f5f6;
+  background: #fff;
+  padding: 0 18px;
+  text-align: left;
+}
+
+.cms-stock-decrease-row:last-child {
+  border-bottom: 0;
+}
+
+.cms-stock-decrease-row.is-cancelled {
+  background: #fafbfb;
+}
+
+.cms-stock-decrease-row span,
+.cms-stock-decrease-row strong,
+.cms-stock-decrease-row b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cms-stock-decrease-row span {
+  color: #5a646d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.cms-stock-decrease-row strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.cms-stock-decrease-row b {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 950;
+  text-align: right;
+}
+
+.cms-stock-decrease-row b.is-decrease {
+  color: var(--red);
+}
+
+.cms-stock-decrease-row em {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cms-stock-decrease-row .cms-badge {
+  width: fit-content;
+  justify-self: start;
+}
+
+.cms-badge.is-prescription {
+  background: #edf6ff;
+  color: #1164b4;
+}
+
+.cms-badge.is-return {
+  background: #fff4ed;
+  color: #a24a13;
 }
 
 .cms-deduction-detail {

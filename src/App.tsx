@@ -8050,6 +8050,7 @@ type CmsPage =
   | "signup"
   | "accounts"
   | "inventory"
+  | "inventory-decreases"
   | "inventory-shortages"
   | "return-reviews"
   | "wholesaler"
@@ -8186,6 +8187,19 @@ type CmsStockControlledFilter =
 type CmsStockSortKey = "name" | "quantity";
 type CmsStockSortDirection = "asc" | "desc";
 type CmsStockSearchStatus = "idle" | "short" | "loading" | "done" | "error";
+type CmsStockDecreaseSource = "PRESCRIPTION" | "RETURN";
+type CmsStockDecreaseFilter = "ALL" | CmsStockDecreaseSource;
+type CmsStockDecreaseCoverage =
+  | "ready"
+  | "partial"
+  | "unavailable"
+  | "needs-pharmacy";
+type CmsStockDecreaseSearchStatus =
+  | "idle"
+  | "short"
+  | "loading"
+  | "done"
+  | "error";
 type CmsPrescriptionSortKey =
   | "createdAt"
   | "drugName"
@@ -8254,6 +8268,8 @@ type CmsReturnReview = {
 
 type CmsReturnHistory = {
   id: string;
+  pharmacyId?: string;
+  pharmacyName?: string;
   stockId?: string;
   stockItemId?: string;
   purchaseHistoryId?: string;
@@ -8277,8 +8293,30 @@ type CmsReturnHistory = {
   cancelAfterQuantity?: number;
 };
 
+type CmsStockDecreaseRecord = {
+  id: string;
+  source: CmsStockDecreaseSource;
+  createdAt: string;
+  pharmacyId?: string;
+  pharmacyName?: string;
+  stockId?: string;
+  stockName?: string;
+  drugName: string;
+  insuranceCode: string;
+  changeQuantity: number;
+  beforeQuantity?: number;
+  afterQuantity?: number;
+  reason: string;
+  referenceType: string;
+  referenceId: string;
+  detail: string;
+  cancelled?: boolean;
+};
+
 type CmsDeductionRecord = {
   id: string;
+  pharmacyId?: string;
+  pharmacyName?: string;
   prescriptionCode: string;
   lineNo: number;
   insuranceCode: string;
@@ -9004,6 +9042,9 @@ function getCmsPage(path: string): CmsPage {
   if (segment === "inventory" && subSegment === "shortages") {
     return "inventory-shortages";
   }
+  if (segment === "inventory" && subSegment === "decreases") {
+    return "inventory-decreases";
+  }
   if (segment === "inventory" && subSegment === "returns") {
     return "return-reviews";
   }
@@ -9079,6 +9120,7 @@ function isRestrictedCmsPage(page: CmsPage) {
     page === "import" ||
     page === "signup" ||
     page === "accounts" ||
+    page === "inventory-decreases" ||
     page === "wholesaler" ||
     page === "purchase"
   );
@@ -9197,6 +9239,23 @@ function CmsApp({
   const [returnHistories, setReturnHistories] = useState<CmsReturnHistory[]>(
     [],
   );
+  const [stockDecreaseRecords, setStockDecreaseRecords] = useState<
+    CmsStockDecreaseRecord[]
+  >([]);
+  const [stockDecreaseQuery, setStockDecreaseQuery] = useState("");
+  const [stockDecreasePharmacyId, setStockDecreasePharmacyId] = useState("");
+  const [stockDecreaseStartDate, setStockDecreaseStartDate] = useState(
+    () => recentWeekDateRange().startDate,
+  );
+  const [stockDecreaseEndDate, setStockDecreaseEndDate] = useState(
+    () => recentWeekDateRange().endDate,
+  );
+  const [stockDecreaseFilter, setStockDecreaseFilter] =
+    useState<CmsStockDecreaseFilter>("ALL");
+  const [stockDecreaseCoverage, setStockDecreaseCoverage] =
+    useState<CmsStockDecreaseCoverage>("needs-pharmacy");
+  const [stockDecreaseSearchStatus, setStockDecreaseSearchStatus] =
+    useState<CmsStockDecreaseSearchStatus>("idle");
   const [deductionFilter, setDeductionFilter] =
     useState<CmsDeductionFilter>("ALL");
   const [prescriptionQuery, setPrescriptionQuery] = useState("");
@@ -9706,6 +9765,76 @@ function CmsApp({
           );
           setCmsStockSearchStatus("done");
         }
+      } else if (targetPage === "inventory-decreases") {
+        const trimmedPharmacyId = stockDecreasePharmacyId.trim();
+        const trimmedQuery = stockDecreaseQuery.trim();
+        const normalizedKeyword = normalizeSearchText(trimmedQuery);
+        if (!trimmedPharmacyId) {
+          setStockDecreaseRecords([]);
+          setStockDecreaseSearchStatus("idle");
+          setStockDecreaseCoverage("needs-pharmacy");
+          setApiMessage("차감 이력을 확인할 약국 ID를 입력해 주세요.");
+        } else if (normalizedKeyword.length === 1) {
+          setStockDecreaseSearchStatus("short");
+          setApiMessage("약품 검색어는 2글자 이상 입력해 주세요.");
+        } else {
+          const decreaseParams = new URLSearchParams({
+            pharmacyId: trimmedPharmacyId,
+            sortBy: "createdAt",
+            sortDirection: "desc",
+          });
+          if (trimmedQuery) decreaseParams.set("keyword", trimmedQuery);
+          if (stockDecreaseStartDate) {
+            decreaseParams.set("startDate", stockDecreaseStartDate);
+          }
+          if (stockDecreaseEndDate) {
+            decreaseParams.set("endDate", stockDecreaseEndDate);
+          }
+          setStockDecreaseSearchStatus("loading");
+          const [deductionResult, returnResult] = await Promise.allSettled([
+            optionalCmsApiFetch<unknown>(
+              `/prescription-deductions?${decreaseParams}`,
+            ),
+            optionalCmsApiFetch<unknown>(`/returns/histories?${decreaseParams}`),
+          ]);
+          throwRejected([deductionResult, returnResult]);
+
+          const deductionValue =
+            deductionResult.status === "fulfilled" ? deductionResult.value : null;
+          const returnValue =
+            returnResult.status === "fulfilled" ? returnResult.value : null;
+          const sourceFailures = [deductionValue, returnValue].filter(
+            (value) => value === null,
+          ).length;
+          const deductions = deductionValue
+            ? deductionPayload(deductionValue).map(normalizeCmsDeduction)
+            : [];
+          const histories = returnValue
+            ? returnHistoryPayload(returnValue).map(normalizeCmsReturnHistory)
+            : [];
+          const nextRecords = sortCmsStockDecreaseRecords(
+            [
+              ...deductions.flatMap(stockDecreaseRecordsFromDeduction),
+              ...histories.map(stockDecreaseRecordFromReturnHistory),
+            ].filter(
+              (record) =>
+                (!record.pharmacyId || record.pharmacyId === trimmedPharmacyId) &&
+                stockDecreaseMatchesQuery(record, trimmedQuery),
+            ),
+          );
+
+          setStockDecreaseRecords(nextRecords);
+          setStockDecreaseCoverage(
+            sourceFailures === 0
+              ? "ready"
+              : sourceFailures === 2
+                ? "unavailable"
+                : "partial",
+          );
+          setStockDecreaseSearchStatus(
+            sourceFailures === 2 ? "error" : "done",
+          );
+        }
       } else if (targetPage === "inventory-shortages") {
         const trimmed = shortageQuery.trim();
         const normalizedKeyword = normalizeSearchText(trimmed);
@@ -9905,6 +10034,10 @@ function CmsApp({
     shortageSortDirection,
     shortageSortKey,
     shortageStartDate,
+    stockDecreaseEndDate,
+    stockDecreasePharmacyId,
+    stockDecreaseQuery,
+    stockDecreaseStartDate,
     stockControlledFilter,
     stockSortDirection,
     stockSortKey,
@@ -11061,6 +11194,26 @@ function CmsApp({
               onUpdatePrice={updateCmsStockPrice}
             />
           )}
+          {visiblePage === "inventory-decreases" && (
+            <CmsStockDecreaseHistoryPage
+              coverage={stockDecreaseCoverage}
+              endDate={stockDecreaseEndDate}
+              filter={stockDecreaseFilter}
+              pharmacyId={stockDecreasePharmacyId}
+              query={stockDecreaseQuery}
+              records={stockDecreaseRecords}
+              searchStatus={stockDecreaseSearchStatus}
+              startDate={stockDecreaseStartDate}
+              onApplyFilters={() => void refreshCms()}
+              onEndDate={setStockDecreaseEndDate}
+              onFilter={setStockDecreaseFilter}
+              onPharmacyId={(value) =>
+                setStockDecreasePharmacyId(value.replace(/[^\d]/g, ""))
+              }
+              onQuery={setStockDecreaseQuery}
+              onStartDate={setStockDecreaseStartDate}
+            />
+          )}
           {visiblePage === "inventory-shortages" && (
             <CmsInventoryShortagePage
               detail={selectedShortageDetail}
@@ -11462,6 +11615,9 @@ function normalizeCmsReturnHistory(
 
   return {
     id: String(item.id ?? item.movementId ?? index),
+    pharmacyId: optionalText(item.pharmacyId ?? item.pharmacy_id) || undefined,
+    pharmacyName:
+      optionalText(item.pharmacyName ?? item.pharmacy_name) || undefined,
     stockId: optionalText(item.stockId) || undefined,
     stockItemId: optionalText(item.stockItemId) || undefined,
     purchaseHistoryId: optionalText(item.purchaseHistoryId) || undefined,
@@ -11493,6 +11649,152 @@ function normalizeCmsReturnHistory(
         ? undefined
         : finiteNumber(item.cancelAfterQuantity),
   };
+}
+
+function stockDecreaseRecordFromReturnHistory(
+  history: CmsReturnHistory,
+): CmsStockDecreaseRecord {
+  const returnQuantity = Math.abs(
+    finiteNumber(history.returnQuantity || history.changeQuantity),
+  );
+  const changeQuantity =
+    history.changeQuantity < 0
+      ? history.changeQuantity
+      : -Math.max(0, returnQuantity);
+
+  return {
+    id: `return-${history.id}`,
+    source: "RETURN",
+    createdAt: history.createdAt,
+    pharmacyId: history.pharmacyId,
+    pharmacyName: history.pharmacyName,
+    stockId: history.stockId ?? history.stockItemId,
+    stockName: history.drugName,
+    drugName: history.drugName,
+    insuranceCode: history.insuranceCode,
+    changeQuantity,
+    beforeQuantity: history.beforeQuantity,
+    afterQuantity: history.afterQuantity,
+    reason: history.reason || "반품 처리",
+    referenceType: history.referenceType || "RETURN",
+    referenceId: history.referenceId || history.purchaseHistoryId || history.id,
+    detail: returnHistorySourceText(history),
+    cancelled: history.cancelled,
+  };
+}
+
+function stockDecreaseRecordsFromDeduction(
+  record: CmsDeductionRecord,
+): CmsStockDecreaseRecord[] {
+  const records: CmsStockDecreaseRecord[] = [];
+  const deductedQuantity = Math.abs(finiteNumber(record.deductedQuantity));
+  if (deductedQuantity > 0) {
+    const beforeQuantity =
+      record.stockBefore ??
+      (record.stockAfter !== undefined
+        ? record.stockAfter + deductedQuantity
+        : undefined);
+    records.push({
+      id: `prescription-${record.id}`,
+      source: "PRESCRIPTION",
+      createdAt: record.resolvedAt && record.resolvedAt !== "-" ? record.resolvedAt : record.createdAt,
+      pharmacyId: record.pharmacyId,
+      pharmacyName: record.pharmacyName,
+      stockId: record.stockId,
+      stockName: record.stockName,
+      drugName: record.stockName || record.drugName,
+      insuranceCode: record.insuranceCode,
+      changeQuantity: -deductedQuantity,
+      beforeQuantity,
+      afterQuantity: record.stockAfter,
+      reason: record.reason || deductionStatusText(record.status),
+      referenceType: "PRESCRIPTION_DEDUCT",
+      referenceId: `${record.prescriptionCode} line ${record.lineNo}`,
+      detail: deductionStatusText(record.status),
+    });
+  }
+
+  const substituteQuantity = Math.abs(
+    finiteNumber(record.substituteQuantity ?? 0),
+  );
+  if (substituteQuantity > 0) {
+    const beforeQuantity =
+      record.substituteStockBefore ??
+      (record.substituteStockAfter !== undefined
+        ? record.substituteStockAfter + substituteQuantity
+        : undefined);
+    records.push({
+      id: `prescription-substitute-${record.id}`,
+      source: "PRESCRIPTION",
+      createdAt:
+        record.substituteProcessedAt && record.substituteProcessedAt !== "-"
+          ? record.substituteProcessedAt
+          : record.resolvedAt && record.resolvedAt !== "-"
+            ? record.resolvedAt
+            : record.createdAt,
+      pharmacyId: record.pharmacyId,
+      pharmacyName: record.pharmacyName,
+      stockId: record.substituteStockId,
+      stockName: record.substituteStockName,
+      drugName: record.substituteStockName || "대체 약품",
+      insuranceCode: record.substituteInsuranceCode || "",
+      changeQuantity: -substituteQuantity,
+      beforeQuantity,
+      afterQuantity: record.substituteStockAfter,
+      reason: "초과 처방 대체 약품 처리",
+      referenceType: "PRESCRIPTION_SUBSTITUTE",
+      referenceId: `${record.prescriptionCode} line ${record.lineNo}`,
+      detail: "대체 처리",
+    });
+  }
+
+  return records;
+}
+
+function stockDecreaseSourceLabel(source: CmsStockDecreaseSource) {
+  return source === "PRESCRIPTION" ? "처방 차감" : "반품 차감";
+}
+
+function stockDecreaseCoverageText(coverage: CmsStockDecreaseCoverage) {
+  if (coverage === "needs-pharmacy") {
+    return "root 계정에서 확인할 약국 ID를 입력하면 처방 차감과 반품 차감 이력을 통합 조회합니다.";
+  }
+  if (coverage === "partial") {
+    return "일부 이력 API만 응답했습니다. 표시되지 않는 차감 유형이 있을 수 있습니다.";
+  }
+  if (coverage === "unavailable") {
+    return "차감 이력 API 응답을 받지 못했습니다. 약국 ID 또는 서버 API 지원 여부를 확인해 주세요.";
+  }
+  return "처방 차감과 반품 차감 기준의 통합 이력입니다. 수동 재고 조정, 재동기화, 병합 이력은 제외됩니다.";
+}
+
+function stockDecreaseMatchesQuery(
+  record: CmsStockDecreaseRecord,
+  query: string,
+) {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return true;
+  return normalizeSearchText(
+    [
+      record.drugName,
+      record.stockName,
+      record.insuranceCode,
+      record.referenceId,
+      record.referenceType,
+      record.reason,
+      record.detail,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  ).includes(normalizedQuery);
+}
+
+function sortCmsStockDecreaseRecords(records: CmsStockDecreaseRecord[]) {
+  return [...records].sort((left, right) => {
+    const compared = right.createdAt.localeCompare(left.createdAt);
+    if (compared !== 0) return compared;
+    return right.id.localeCompare(left.id);
+  });
 }
 
 function normalizeCmsMaster(raw: unknown, index: number): CmsMaster {
@@ -11965,6 +12267,9 @@ function normalizeCmsDeduction(
 
   return {
     id: String(item.id ?? item.deductionId ?? index),
+    pharmacyId: optionalText(item.pharmacyId ?? item.pharmacy_id) || undefined,
+    pharmacyName:
+      optionalText(item.pharmacyName ?? item.pharmacy_name) || undefined,
     prescriptionCode: String(item.prescriptionCode ?? "-"),
     lineNo: finiteNumber(item.lineNo ?? item.lineNumber ?? item.pdNo),
     insuranceCode: String(
@@ -12652,6 +12957,16 @@ function CmsSidebar({
         ] as Array<[CmsPage, string, string, string]>)
       : []),
     ["inventory", "재고", "/cms/inventory", barGraphIcon],
+    ...(canAccessMasterData
+      ? ([
+          [
+            "inventory-decreases",
+            "차감 이력",
+            "/cms/inventory/decreases",
+            barGraphIcon,
+          ],
+        ] as Array<[CmsPage, string, string, string]>)
+      : []),
     [
       "inventory-shortages",
       "초과 처방",
@@ -12731,6 +13046,7 @@ function CmsHeader({
     signup: "계정 생성",
     accounts: "계정 관리",
     inventory: "재고",
+    "inventory-decreases": "차감 이력",
     "inventory-shortages": "초과 처방",
     "return-reviews": "반품 확인",
     wholesaler: "도매처 관리",
@@ -12744,6 +13060,7 @@ function CmsHeader({
     signup: "root 계정으로 신규 약국과 기본 계정을 생성합니다.",
     accounts: "root 계정으로 약국 계정 정보와 비밀번호를 관리합니다.",
     inventory: "보유 재고와 수량을 관리합니다.",
+    "inventory-decreases": "약국별 처방/반품 차감 이력을 통합 확인합니다.",
     "inventory-shortages": "초과 처방과 부족 수량을 확인합니다.",
     "return-reviews": "앱에서 확정되지 않은 반품을 확인하고 처리합니다.",
     wholesaler: "약국별 도매처 정보를 관리합니다.",
@@ -14888,6 +15205,226 @@ function CmsInventoryPage({
           </aside>
         </div>
       )}
+    </section>
+  );
+}
+
+function CmsStockDecreaseHistoryPage({
+  coverage,
+  endDate,
+  filter,
+  pharmacyId,
+  query,
+  records,
+  searchStatus,
+  startDate,
+  onApplyFilters,
+  onEndDate,
+  onFilter,
+  onPharmacyId,
+  onQuery,
+  onStartDate,
+}: {
+  coverage: CmsStockDecreaseCoverage;
+  endDate: string;
+  filter: CmsStockDecreaseFilter;
+  pharmacyId: string;
+  query: string;
+  records: CmsStockDecreaseRecord[];
+  searchStatus: CmsStockDecreaseSearchStatus;
+  startDate: string;
+  onApplyFilters: () => void;
+  onEndDate: (value: string) => void;
+  onFilter: (value: CmsStockDecreaseFilter) => void;
+  onPharmacyId: (value: string) => void;
+  onQuery: (value: string) => void;
+  onStartDate: (value: string) => void;
+}) {
+  const visibleRecords = useMemo(() => {
+    const filtered =
+      filter === "ALL"
+        ? records
+        : records.filter((record) => record.source === filter);
+    return sortCmsStockDecreaseRecords(filtered);
+  }, [filter, records]);
+  const activeRecords = visibleRecords.filter((record) => !record.cancelled);
+  const totalDecreaseQuantity = activeRecords.reduce(
+    (sum, record) => sum + Math.abs(record.changeQuantity),
+    0,
+  );
+  const prescriptionCount = activeRecords.filter(
+    (record) => record.source === "PRESCRIPTION",
+  ).length;
+  const returnCount = activeRecords.filter(
+    (record) => record.source === "RETURN",
+  ).length;
+  const cancelledCount = visibleRecords.filter((record) => record.cancelled).length;
+  const filterItems: Array<{
+    count: number;
+    label: string;
+    value: CmsStockDecreaseFilter;
+  }> = [
+    { count: records.length, label: "전체", value: "ALL" },
+    {
+      count: records.filter((record) => record.source === "PRESCRIPTION").length,
+      label: "처방",
+      value: "PRESCRIPTION",
+    },
+    {
+      count: records.filter((record) => record.source === "RETURN").length,
+      label: "반품",
+      value: "RETURN",
+    },
+  ];
+  const pagination = usePagination(
+    visibleRecords,
+    CMS_PAGE_SIZES.stockDecreases,
+    `${filter}|${records.length}|${query}|${pharmacyId}`,
+  );
+  const emptyMessage = !pharmacyId.trim()
+    ? "약국 ID를 입력하고 조회해 주세요."
+    : searchStatus === "loading"
+      ? "차감 이력을 불러오는 중입니다."
+      : searchStatus === "error"
+        ? "차감 이력을 불러오지 못했습니다."
+        : "조회 조건에 맞는 차감 이력이 없습니다.";
+
+  return (
+    <section className="cms-content cms-list-page cms-stock-decrease-page">
+      <CmsKpiGrid columns={5}>
+        <CmsKpi label="조회 이력" value={`${visibleRecords.length}`} unit="건" />
+        <CmsKpi
+          label="순 감소 수량"
+          value={currency(totalDecreaseQuantity)}
+          unit="개"
+          tone={totalDecreaseQuantity > 0 ? "red" : undefined}
+        />
+        <CmsKpi label="처방 차감" value={`${prescriptionCount}`} unit="건" />
+        <CmsKpi label="반품 차감" value={`${returnCount}`} unit="건" />
+        <CmsKpi
+          label="취소 이력"
+          value={`${cancelledCount}`}
+          unit="건"
+          tone={cancelledCount > 0 ? "blue" : undefined}
+        />
+      </CmsKpiGrid>
+
+      <form
+        className="cms-prescription-list-controls cms-stock-decrease-controls"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onApplyFilters();
+        }}
+      >
+        <label className="cms-input cms-stock-decrease-pharmacy">
+          <span>약국 ID</span>
+          <input
+            inputMode="numeric"
+            placeholder="필수"
+            value={pharmacyId}
+            onChange={(event) => onPharmacyId(event.target.value)}
+          />
+        </label>
+        <label className="cms-search">
+          <span className="search-icon" />
+          <input
+            placeholder="약품명 · 보험코드 · 처방전 검색"
+            value={query}
+            onChange={(event) => onQuery(event.target.value)}
+          />
+        </label>
+        <CmsDateRangeInline
+          endDate={endDate}
+          startDate={startDate}
+          onEndDate={onEndDate}
+          onStartDate={onStartDate}
+        />
+        <button className="cms-primary cms-toolbar-action" type="submit">
+          조회
+        </button>
+      </form>
+
+      <div className={`cms-stock-decrease-notice is-${coverage}`}>
+        <strong>{coverage === "ready" ? "통합 조회" : "확인 필요"}</strong>
+        <span>{stockDecreaseCoverageText(coverage)}</span>
+      </div>
+
+      <CmsSegmentFilter
+        columns={3}
+        items={filterItems}
+        value={filter}
+        onChange={onFilter}
+      />
+
+      <div className="cms-table-card cms-stock-decrease-card">
+        <div className="cms-table-scroll">
+          <div className="cms-stock-decrease-table">
+            <div className="cms-stock-decrease-row cms-th">
+              <span>일시</span>
+              <span>구분</span>
+              <span>약품</span>
+              <span>감소</span>
+              <span>재고 변화</span>
+              <span>참조</span>
+              <span>사유</span>
+            </div>
+            {pagination.items.map((record) => (
+              <div
+                className={`cms-stock-decrease-row ${
+                  record.cancelled ? "is-cancelled" : ""
+                }`}
+                key={record.id}
+              >
+                <span>
+                  {record.createdAt}
+                  {record.pharmacyName && <em>{record.pharmacyName}</em>}
+                </span>
+                <span
+                  className={`cms-badge ${
+                    record.source === "PRESCRIPTION"
+                      ? "is-prescription"
+                      : "is-return"
+                  }`}
+                >
+                  {record.cancelled
+                    ? "취소됨"
+                    : stockDecreaseSourceLabel(record.source)}
+                </span>
+                <strong>
+                  {record.drugName}
+                  <em>
+                    {formatInsuranceCodeForDisplay(record.insuranceCode) ||
+                      "보험코드 없음"}
+                  </em>
+                </strong>
+                <b className="is-decrease">
+                  -{currency(Math.abs(record.changeQuantity))}개
+                </b>
+                <span>
+                  {record.beforeQuantity === undefined ||
+                  record.afterQuantity === undefined
+                    ? "-"
+                    : `${currency(record.beforeQuantity)} → ${currency(
+                        record.afterQuantity,
+                      )}`}
+                </span>
+                <span>
+                  {record.referenceId || "-"}
+                  <em>{record.referenceType}</em>
+                </span>
+                <span>
+                  {record.reason || "-"}
+                  <em>{record.detail}</em>
+                </span>
+              </div>
+            ))}
+            {visibleRecords.length === 0 && (
+              <p className="cms-empty table-empty">{emptyMessage}</p>
+            )}
+          </div>
+        </div>
+        <CmsPagination {...pagination} />
+      </div>
     </section>
   );
 }
@@ -18876,6 +19413,7 @@ const CMS_PAGE_SIZES = {
   master: 14,
   prescriptions: 12,
   purchaseHistories: 8,
+  stockDecreases: 12,
   shortages: 10,
   syncJobs: 6,
   wholesaler: 12,
