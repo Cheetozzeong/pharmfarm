@@ -8187,7 +8187,7 @@ type CmsStockControlledFilter =
 type CmsStockSortKey = "name" | "quantity";
 type CmsStockSortDirection = "asc" | "desc";
 type CmsStockSearchStatus = "idle" | "short" | "loading" | "done" | "error";
-type CmsStockDecreaseSource = "PRESCRIPTION" | "RETURN";
+type CmsStockDecreaseSource = "PRESCRIPTION" | "RETURN" | "OTHER";
 type CmsStockDecreaseFilter = "ALL" | CmsStockDecreaseSource;
 type CmsStockDecreaseCoverage =
   | "ready"
@@ -9791,49 +9791,70 @@ function CmsApp({
             decreaseParams.set("endDate", stockDecreaseEndDate);
           }
           setStockDecreaseSearchStatus("loading");
-          const [deductionResult, returnResult] = await Promise.allSettled([
-            optionalCmsApiFetch<unknown>(
-              `/prescription-deductions?${decreaseParams}`,
-            ),
-            optionalCmsApiFetch<unknown>(`/returns/histories?${decreaseParams}`),
-          ]);
-          throwRejected([deductionResult, returnResult]);
-
-          const deductionValue =
-            deductionResult.status === "fulfilled" ? deductionResult.value : null;
-          const returnValue =
-            returnResult.status === "fulfilled" ? returnResult.value : null;
-          const sourceFailures = [deductionValue, returnValue].filter(
-            (value) => value === null,
-          ).length;
-          const deductions = deductionValue
-            ? deductionPayload(deductionValue).map(normalizeCmsDeduction)
-            : [];
-          const histories = returnValue
-            ? returnHistoryPayload(returnValue).map(normalizeCmsReturnHistory)
-            : [];
-          const nextRecords = sortCmsStockDecreaseRecords(
-            [
-              ...deductions.flatMap(stockDecreaseRecordsFromDeduction),
-              ...histories.map(stockDecreaseRecordFromReturnHistory),
-            ].filter(
-              (record) =>
-                (!record.pharmacyId || record.pharmacyId === trimmedPharmacyId) &&
-                stockDecreaseMatchesQuery(record, trimmedQuery),
-            ),
+          const movementValue = await optionalCmsApiFetch<unknown>(
+            `/stock-movements/decreases?${decreaseParams}`,
           );
 
-          setStockDecreaseRecords(nextRecords);
-          setStockDecreaseCoverage(
-            sourceFailures === 0
-              ? "ready"
-              : sourceFailures === 2
-                ? "unavailable"
-                : "partial",
-          );
-          setStockDecreaseSearchStatus(
-            sourceFailures === 2 ? "error" : "done",
-          );
+          if (movementValue) {
+            const nextRecords = sortCmsStockDecreaseRecords(
+              stockMovementPayload(movementValue)
+                .map(normalizeCmsStockMovementDecrease)
+                .filter(
+                  (record) =>
+                    (!record.pharmacyId ||
+                      record.pharmacyId === trimmedPharmacyId) &&
+                    stockDecreaseMatchesQuery(record, trimmedQuery),
+                ),
+            );
+            setStockDecreaseRecords(nextRecords);
+            setStockDecreaseCoverage("ready");
+            setStockDecreaseSearchStatus("done");
+          } else {
+            const [deductionResult, returnResult] = await Promise.allSettled([
+              optionalCmsApiFetch<unknown>(
+                `/prescription-deductions?${decreaseParams}`,
+              ),
+              optionalCmsApiFetch<unknown>(
+                `/returns/histories?${decreaseParams}`,
+              ),
+            ]);
+            throwRejected([deductionResult, returnResult]);
+
+            const deductionValue =
+              deductionResult.status === "fulfilled"
+                ? deductionResult.value
+                : null;
+            const returnValue =
+              returnResult.status === "fulfilled" ? returnResult.value : null;
+            const sourceFailures = [deductionValue, returnValue].filter(
+              (value) => value === null,
+            ).length;
+            const deductions = deductionValue
+              ? deductionPayload(deductionValue).map(normalizeCmsDeduction)
+              : [];
+            const histories = returnValue
+              ? returnHistoryPayload(returnValue).map(normalizeCmsReturnHistory)
+              : [];
+            const nextRecords = sortCmsStockDecreaseRecords(
+              [
+                ...deductions.flatMap(stockDecreaseRecordsFromDeduction),
+                ...histories.map(stockDecreaseRecordFromReturnHistory),
+              ].filter(
+                (record) =>
+                  (!record.pharmacyId ||
+                    record.pharmacyId === trimmedPharmacyId) &&
+                  stockDecreaseMatchesQuery(record, trimmedQuery),
+              ),
+            );
+
+            setStockDecreaseRecords(nextRecords);
+            setStockDecreaseCoverage(
+              sourceFailures === 2 ? "unavailable" : "partial",
+            );
+            setStockDecreaseSearchStatus(
+              sourceFailures === 2 ? "error" : "done",
+            );
+          }
         }
       } else if (targetPage === "inventory-shortages") {
         const trimmed = shortageQuery.trim();
@@ -11472,6 +11493,33 @@ function returnHistoryPayload(raw: unknown): unknown[] {
   return [];
 }
 
+function stockMovementPayload(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  const item = asRecord(raw);
+  for (const key of [
+    "stockMovements",
+    "stockDecreaseHistories",
+    "decreaseHistories",
+    "movements",
+    "items",
+    "content",
+    "data",
+  ]) {
+    const value = item[key];
+    if (Array.isArray(value)) return value;
+  }
+
+  const payload = unwrapObjectPayload(raw);
+  if (payload !== item) {
+    const nestedPayload = stockMovementPayload(payload);
+    if (nestedPayload.length > 0) return nestedPayload;
+    return isStockMovementLikePayload(payload) ? [payload] : [];
+  }
+
+  if (isStockMovementLikePayload(item)) return [item];
+  return [];
+}
+
 function normalizeStockSnapshotSyncSummary(
   raw: unknown,
 ): CmsStockSnapshotSyncSummary {
@@ -11525,6 +11573,13 @@ function isReturnHistoryLikePayload(raw: unknown) {
     "referenceType",
     "cancelled",
   ].some((key) => item[key] !== undefined);
+}
+
+function isStockMovementLikePayload(raw: unknown) {
+  const item = asRecord(raw);
+  return ["id", "movementType", "changeQuantity", "beforeQuantity"].some(
+    (key) => item[key] !== undefined,
+  );
 }
 
 function mergeDeductionRecords(
@@ -11683,6 +11738,43 @@ function stockDecreaseRecordFromReturnHistory(
   };
 }
 
+function normalizeCmsStockMovementDecrease(
+  raw: unknown,
+  index: number,
+): CmsStockDecreaseRecord {
+  const item = unwrapObjectPayload(raw);
+  const movementType = optionalText(item.movementType ?? item.type) || "";
+  const source = stockDecreaseSourceFromMovementType(movementType);
+  const stockId = optionalText(item.stockId) || undefined;
+
+  return {
+    id: `movement-${optionalText(item.id) || index}`,
+    source,
+    createdAt: formatTransactionAt(item.createdAt),
+    pharmacyId: optionalText(item.pharmacyId ?? item.pharmacy_id) || undefined,
+    pharmacyName:
+      optionalText(item.pharmacyName ?? item.pharmacy_name) || undefined,
+    stockId: stockId || optionalText(item.stockItemId) || undefined,
+    stockName: optionalText(item.stockName) || undefined,
+    drugName: optionalText(item.drugName ?? item.name) || "미확인 약품",
+    insuranceCode: optionalText(item.insuranceCode ?? item.productCode) || "",
+    changeQuantity: finiteNumber(item.changeQuantity),
+    beforeQuantity:
+      item.beforeQuantity === undefined
+        ? undefined
+        : finiteNumber(item.beforeQuantity),
+    afterQuantity:
+      item.afterQuantity === undefined
+        ? undefined
+        : finiteNumber(item.afterQuantity),
+    reason: optionalText(item.reason ?? item.memo) || "",
+    referenceType: optionalText(item.referenceType) || movementType,
+    referenceId: optionalText(item.referenceId) || "",
+    detail: stockDecreaseMovementTypeLabel(movementType),
+    cancelled: false,
+  };
+}
+
 function stockDecreaseRecordsFromDeduction(
   record: CmsDeductionRecord,
 ): CmsStockDecreaseRecord[] {
@@ -11697,7 +11789,7 @@ function stockDecreaseRecordsFromDeduction(
     records.push({
       id: `prescription-${record.id}`,
       source: "PRESCRIPTION",
-      createdAt: record.resolvedAt && record.resolvedAt !== "-" ? record.resolvedAt : record.createdAt,
+      createdAt: record.createdAt,
       pharmacyId: record.pharmacyId,
       pharmacyName: record.pharmacyName,
       stockId: record.stockId,
@@ -11752,12 +11844,40 @@ function stockDecreaseRecordsFromDeduction(
 }
 
 function stockDecreaseSourceLabel(source: CmsStockDecreaseSource) {
-  return source === "PRESCRIPTION" ? "처방 차감" : "반품 차감";
+  if (source === "PRESCRIPTION") return "처방 차감";
+  if (source === "RETURN") return "반품 차감";
+  return "기타 차감";
+}
+
+function stockDecreaseSourceFromMovementType(
+  movementType: string,
+): CmsStockDecreaseSource {
+  const normalized = movementType.toUpperCase();
+  if (normalized.includes("PRESCRIPTION")) return "PRESCRIPTION";
+  if (normalized === "RETURN") return "RETURN";
+  return "OTHER";
+}
+
+function stockDecreaseMovementTypeLabel(movementType: string) {
+  switch (movementType.toUpperCase()) {
+    case "PRESCRIPTION_DEDUCT":
+      return "처방 차감";
+    case "PRESCRIPTION_SUBSTITUTE":
+      return "대체 약품 차감";
+    case "RETURN":
+      return "반품 차감";
+    case "MANUAL_ADJUST":
+      return "수동 재고 조정";
+    case "STOCK_SNAPSHOT_SYNC":
+      return "스냅샷 재동기화";
+    default:
+      return movementType || "재고 이동";
+  }
 }
 
 function stockDecreaseCoverageText(coverage: CmsStockDecreaseCoverage) {
   if (coverage === "needs-pharmacy") {
-    return "root 계정에서 확인할 약국 ID를 입력하면 처방 차감과 반품 차감 이력을 통합 조회합니다.";
+    return "root 계정에서 확인할 약국 ID를 입력하면 실제 재고 이동 기준의 차감 이력을 통합 조회합니다.";
   }
   if (coverage === "partial") {
     return "일부 이력 API만 응답했습니다. 표시되지 않는 차감 유형이 있을 수 있습니다.";
@@ -11765,7 +11885,7 @@ function stockDecreaseCoverageText(coverage: CmsStockDecreaseCoverage) {
   if (coverage === "unavailable") {
     return "차감 이력 API 응답을 받지 못했습니다. 약국 ID 또는 서버 API 지원 여부를 확인해 주세요.";
   }
-  return "처방 차감과 반품 차감 기준의 통합 이력입니다. 수동 재고 조정, 재동기화, 병합 이력은 제외됩니다.";
+  return "실제 재고 이동 이력 기준입니다. 과거 부족 row의 갱신 시각이 아닌 실제 차감 발생 시각으로 표시합니다.";
 }
 
 function stockDecreaseMatchesQuery(
@@ -15258,7 +15378,9 @@ function CmsStockDecreaseHistoryPage({
   const returnCount = activeRecords.filter(
     (record) => record.source === "RETURN",
   ).length;
-  const cancelledCount = visibleRecords.filter((record) => record.cancelled).length;
+  const otherCount = activeRecords.filter(
+    (record) => record.source === "OTHER",
+  ).length;
   const filterItems: Array<{
     count: number;
     label: string;
@@ -15274,6 +15396,11 @@ function CmsStockDecreaseHistoryPage({
       count: records.filter((record) => record.source === "RETURN").length,
       label: "반품",
       value: "RETURN",
+    },
+    {
+      count: records.filter((record) => record.source === "OTHER").length,
+      label: "기타",
+      value: "OTHER",
     },
   ];
   const pagination = usePagination(
@@ -15301,12 +15428,7 @@ function CmsStockDecreaseHistoryPage({
         />
         <CmsKpi label="처방 차감" value={`${prescriptionCount}`} unit="건" />
         <CmsKpi label="반품 차감" value={`${returnCount}`} unit="건" />
-        <CmsKpi
-          label="취소 이력"
-          value={`${cancelledCount}`}
-          unit="건"
-          tone={cancelledCount > 0 ? "blue" : undefined}
-        />
+        <CmsKpi label="기타 차감" value={`${otherCount}`} unit="건" />
       </CmsKpiGrid>
 
       <form
@@ -15350,7 +15472,7 @@ function CmsStockDecreaseHistoryPage({
       </div>
 
       <CmsSegmentFilter
-        columns={3}
+        columns={4}
         items={filterItems}
         value={filter}
         onChange={onFilter}
@@ -15383,7 +15505,9 @@ function CmsStockDecreaseHistoryPage({
                   className={`cms-badge ${
                     record.source === "PRESCRIPTION"
                       ? "is-prescription"
-                      : "is-return"
+                      : record.source === "RETURN"
+                        ? "is-return"
+                        : "is-other"
                   }`}
                 >
                   {record.cancelled
@@ -15410,7 +15534,11 @@ function CmsStockDecreaseHistoryPage({
                 </span>
                 <span>
                   {record.referenceId || "-"}
-                  <em>{record.referenceType}</em>
+                  <em>
+                    {[record.referenceType, record.stockId ? `stock#${record.stockId}` : ""]
+                      .filter(Boolean)
+                      .join(" · ")}
+                  </em>
                 </span>
                 <span>
                   {record.reason || "-"}

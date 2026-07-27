@@ -6239,6 +6239,11 @@ body:has(.cms-shell) {
   color: #a24a13;
 }
 
+.cms-badge.is-other {
+  background: #edf8f2;
+  color: #167248;
+}
+
 .cms-deduction-detail {
   display: grid;
   align-content: start;
