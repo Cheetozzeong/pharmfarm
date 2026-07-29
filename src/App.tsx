@@ -17701,7 +17701,14 @@ function CmsPrescriptionSummaryPage({
                 onClick={() => onSelectPrescription(record.id)}
               >
                 <strong>
-                  {record.primaryDrugName}
+                  <span className="cms-prescription-title-main">
+                    <span>{record.primaryDrugName}</span>
+                    {record.substitutionReplacementCount > 0 && (
+                      <i className="cms-prescription-substitute-badge">
+                        대체 처방
+                      </i>
+                    )}
+                  </span>
                   <em>{record.prescriptionCode}</em>
                 </strong>
                 <span>
@@ -17749,7 +17756,16 @@ function CmsPrescriptionSummaryPage({
               <div className="cms-prescription-paper-head">
                 <div>
                   <span>대표 약품</span>
-                  <strong>{activePrescription.primaryDrugName}</strong>
+                  <strong>
+                    <span className="cms-prescription-title-main">
+                      <span>{activePrescription.primaryDrugName}</span>
+                      {activePrescription.substitutionReplacementCount > 0 && (
+                        <i className="cms-prescription-substitute-badge">
+                          대체 처방
+                        </i>
+                      )}
+                    </span>
+                  </strong>
                 </div>
                 <b>{deductionStatusText(activePrescription.status)}</b>
               </div>

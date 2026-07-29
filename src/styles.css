@@ -7754,6 +7754,43 @@ body:has(.cms-shell) {
   font-weight: 950;
 }
 
+.cms-prescription-title-main {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.cms-prescription-summary-row .cms-prescription-title-main,
+.cms-prescription-paper-head .cms-prescription-title-main {
+  color: var(--ink);
+  font-size: inherit;
+  font-weight: inherit;
+}
+
+.cms-prescription-title-main > span {
+  min-width: 0;
+  overflow: hidden;
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cms-prescription-substitute-badge {
+  flex: 0 0 auto;
+  border: 1px solid rgba(86, 103, 220, 0.22);
+  border-radius: 999px;
+  background: #f1f3ff;
+  padding: 2px 6px;
+  color: #4654b8;
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 950;
+  line-height: 1.3;
+}
+
 .cms-prescription-summary-row b {
   color: var(--ink);
   font-size: 13px;
