@@ -16168,6 +16168,16 @@ function CmsStockSnapshotDiffDetailView({
 }) {
   const { summary } = detail;
   const timelineItems = detail.movements;
+  let runningQuantity = summary.snapshotQuantity;
+  const flowSteps = timelineItems.map((movement) => {
+    const beforeExpected = runningQuantity;
+    runningQuantity += movement.changeQuantity;
+    return {
+      ...movement,
+      beforeExpected,
+      afterExpected: runningQuantity,
+    };
+  });
   const maxAbsChange = Math.max(
     1,
     ...timelineItems.map((movement) => Math.abs(movement.changeQuantity)),
@@ -16175,39 +16185,96 @@ function CmsStockSnapshotDiffDetailView({
 
   return (
     <div className="cms-stock-snapshot-detail">
-      <div className="cms-stock-snapshot-flow">
-        <div>
-          <span>스냅샷</span>
-          <strong>{currency(summary.snapshotQuantity)}개</strong>
-          <em>{summary.latestCapturedAt}</em>
+      <section className="cms-detail-section">
+        <header>
+          <strong>재고 변화 흐름</strong>
+          <span>
+            스냅샷 수량에서 시작해 이후 재고 이동을 순서대로 더한 뒤 현재 재고와 비교합니다.
+          </span>
+        </header>
+        <div className="cms-stock-snapshot-flow">
+          <div className="cms-stock-flow-node is-start">
+            <i />
+            <div>
+              <span>스냅샷 캡처</span>
+              <strong>{currency(summary.snapshotQuantity)}개</strong>
+              <em>{summary.latestCapturedAt}</em>
+            </div>
+          </div>
+          {flowSteps.map((movement, index) => {
+            const width = Math.max(
+              10,
+              Math.round((Math.abs(movement.changeQuantity) / maxAbsChange) * 100),
+            );
+            const cause =
+              [movement.referenceType, movement.referenceId]
+                .filter(Boolean)
+                .join(" · ") || movement.reason;
+            return (
+              <div
+                className={`cms-stock-flow-node ${
+                  movement.changeQuantity >= 0 ? "is-plus" : "is-minus"
+                }`}
+                key={movement.id}
+              >
+                <i>{index + 1}</i>
+                <div className="cms-stock-flow-content">
+                  <header>
+                    <strong>
+                      {stockDecreaseMovementTypeLabel(movement.movementType)}
+                    </strong>
+                    <time>{movement.createdAt}</time>
+                  </header>
+                  <p>{cause}</p>
+                  <div className="cms-stock-flow-change">
+                    <b>
+                      {movement.changeQuantity > 0 ? "+" : ""}
+                      {currency(movement.changeQuantity)}개
+                    </b>
+                    <span>
+                      기록 재고 {currency(movement.beforeQuantity)} →{" "}
+                      {currency(movement.afterQuantity)}
+                    </span>
+                    <span>
+                      예상 {currency(movement.beforeExpected)} →{" "}
+                      {currency(movement.afterExpected)}
+                    </span>
+                  </div>
+                  <div className="cms-stock-flow-bar">
+                    <u style={{ width: `${width}%` }} />
+                  </div>
+                  {movement.reason && cause !== movement.reason && (
+                    <em>{movement.reason}</em>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          <div
+            className={`cms-stock-flow-node is-final ${
+              summary.differenceQuantity > 0 ? "is-plus" : "is-minus"
+            }`}
+          >
+            <i />
+            <div>
+              <span>현재 재고 비교</span>
+              <strong>
+                예상 {currency(summary.expectedQuantity)}개 · 현재{" "}
+                {currency(summary.stockQuantity)}개
+              </strong>
+              <em>
+                차이 {summary.differenceQuantity > 0 ? "+" : ""}
+                {currency(summary.differenceQuantity)}개
+              </em>
+            </div>
+          </div>
+          {flowSteps.length === 0 && (
+            <p className="cms-empty">
+              snapshot 이후 기록된 재고 이동이 없습니다.
+            </p>
+          )}
         </div>
-        <div>
-          <span>이후 이동</span>
-          <strong>
-            {summary.movementChangeQuantity > 0 ? "+" : ""}
-            {currency(summary.movementChangeQuantity)}개
-          </strong>
-          <em>{currency(summary.movementCount)}건</em>
-        </div>
-        <div>
-          <span>예상 재고</span>
-          <strong>{currency(summary.expectedQuantity)}개</strong>
-          <em>스냅샷 + 이동</em>
-        </div>
-        <div>
-          <span>현재 재고</span>
-          <strong>{currency(summary.stockQuantity)}개</strong>
-          <em>{summary.stockUpdatedAt}</em>
-        </div>
-        <div className={summary.differenceQuantity > 0 ? "is-plus" : "is-minus"}>
-          <span>차이</span>
-          <strong>
-            {summary.differenceQuantity > 0 ? "+" : ""}
-            {currency(summary.differenceQuantity)}개
-          </strong>
-          <em>예상 - 현재</em>
-        </div>
-      </div>
+      </section>
 
       <section className="cms-detail-section">
         <header>
@@ -16223,7 +16290,8 @@ function CmsStockSnapshotDiffDetailView({
               </strong>
               <span>{currency(item.stockQuantity)}개</span>
               <span>
-                적정 {item.fairStockQuantity === undefined
+                적정{" "}
+                {item.fairStockQuantity === undefined
                   ? "-"
                   : `${currency(item.fairStockQuantity)}개`}
               </span>
@@ -16232,56 +16300,6 @@ function CmsStockSnapshotDiffDetailView({
           ))}
           {detail.snapshotItems.length === 0 && (
             <p className="cms-empty">snapshot 원본 row가 없습니다.</p>
-          )}
-        </div>
-      </section>
-
-      <section className="cms-detail-section">
-        <header>
-          <strong>캡처 이후 재고 이동</strong>
-          <span>
-            snapshot 캡처 이후 기록된 movement입니다. 스냅샷 동기화 이력은
-            계산에서 제외됩니다.
-          </span>
-        </header>
-        <div className="cms-snapshot-timeline">
-          {timelineItems.map((movement) => {
-            const width = Math.max(
-              8,
-              Math.round((Math.abs(movement.changeQuantity) / maxAbsChange) * 100),
-            );
-            return (
-              <div
-                className={`cms-snapshot-timeline-row ${
-                  movement.changeQuantity >= 0 ? "is-plus" : "is-minus"
-                }`}
-                key={movement.id}
-              >
-                <time>{movement.createdAt}</time>
-                <div className="cms-snapshot-timeline-bar">
-                  <i style={{ width: `${width}%` }} />
-                </div>
-                <strong>{stockDecreaseMovementTypeLabel(movement.movementType)}</strong>
-                <b>
-                  {movement.changeQuantity > 0 ? "+" : ""}
-                  {currency(movement.changeQuantity)}개
-                </b>
-                <span>
-                  {currency(movement.beforeQuantity)} →{" "}
-                  {currency(movement.afterQuantity)}
-                  <em>
-                    {[movement.referenceType, movement.referenceId]
-                      .filter(Boolean)
-                      .join(" · ") || movement.reason}
-                  </em>
-                </span>
-              </div>
-            );
-          })}
-          {timelineItems.length === 0 && (
-            <p className="cms-empty">
-              snapshot 이후 기록된 재고 이동이 없습니다.
-            </p>
           )}
         </div>
       </section>
