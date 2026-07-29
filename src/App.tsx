@@ -8178,7 +8178,11 @@ type CmsDeductionStatus =
   | "FAILED"
   | "RESOLVED"
   | "PENDING";
-type CmsDeductionFilter = "ALL" | "SHORTAGE_ITEMS" | CmsDeductionStatus;
+type CmsDeductionFilter =
+  | "ALL"
+  | "SHORTAGE_ITEMS"
+  | "SUBSTITUTION_ITEMS"
+  | CmsDeductionStatus;
 type CmsStockControlledFilter =
   | "ALL"
   | "CONTROLLED"
@@ -9322,6 +9326,12 @@ function CmsApp({
         ? deductionRecords
         : deductionFilter === "SHORTAGE_ITEMS"
           ? deductionRecords.filter((record) => record.shortageQuantity > 0)
+          : deductionFilter === "SUBSTITUTION_ITEMS"
+            ? deductionRecords.filter(
+                (record) =>
+                  record.substitutionRole === "SUBSTITUTE" ||
+                  (record.substituteQuantity ?? 0) > 0,
+              )
           : deductionRecords.filter(
               (record) => record.status === deductionFilter,
             );
@@ -9346,6 +9356,10 @@ function CmsApp({
         ? prescriptionRecords
         : deductionFilter === "SHORTAGE_ITEMS"
           ? prescriptionRecords.filter((record) => record.shortageQuantity > 0)
+          : deductionFilter === "SUBSTITUTION_ITEMS"
+            ? prescriptionRecords.filter(
+                (record) => record.substitutionReplacementCount > 0,
+              )
           : prescriptionRecords.filter(
               (record) => record.status === deductionFilter,
             );
@@ -9663,7 +9677,9 @@ function CmsApp({
     };
   }, [masterPage, masterPageInfo, masters]);
 
-  const refreshCms = useCallback(async () => {
+  const refreshCms = useCallback(async (options?: {
+    prescriptionFilter?: CmsDeductionFilter;
+  }) => {
     if (!hasStoredAuthTokens()) {
       setAuthAccount(null);
       setApiState("unauthorized");
@@ -9928,6 +9944,11 @@ function CmsApp({
             prescriptionParams.set("endDate", prescriptionEndDate);
           }
           if (trimmed) prescriptionParams.set("keyword", trimmed);
+          const effectivePrescriptionFilter =
+            options?.prescriptionFilter ?? deductionFilter;
+          if (effectivePrescriptionFilter === "SUBSTITUTION_ITEMS") {
+            prescriptionParams.set("filter", "SUBSTITUTION_ITEMS");
+          }
           setPrescriptionSearchStatus("loading");
           const queryString = prescriptionParams.toString();
           const prescriptionResult = await optionalCmsApiFetch<unknown>(
@@ -10041,6 +10062,7 @@ function CmsApp({
     accountQuery,
     baropharmCookieDraft.pharmacyId,
     cmsFallback,
+    deductionFilter,
     includeInactive,
     masterPage,
     masterQuery,
@@ -11325,6 +11347,12 @@ function CmsApp({
               onFilter={(nextFilter) => {
                 setDeductionFilter(nextFilter);
                 setSelectedPrescriptionId("");
+                if (
+                  nextFilter === "SUBSTITUTION_ITEMS" ||
+                  deductionFilter === "SUBSTITUTION_ITEMS"
+                ) {
+                  void refreshCms({ prescriptionFilter: nextFilter });
+                }
               }}
               onQuery={setPrescriptionQuery}
               onSelectPrescription={setSelectedPrescriptionId}
@@ -17517,6 +17545,10 @@ function CmsPrescriptionSummaryPage({
       ? prescriptions
       : filter === "SHORTAGE_ITEMS"
         ? prescriptions.filter((record) => record.shortageQuantity > 0)
+        : filter === "SUBSTITUTION_ITEMS"
+          ? prescriptions.filter(
+              (record) => record.substitutionReplacementCount > 0,
+            )
         : prescriptions.filter((record) => record.status === filter);
   const visibleRecords = sortCmsPrescriptionRecords(
     filteredRecords,
@@ -17542,6 +17574,9 @@ function CmsPrescriptionSummaryPage({
   const shortageCount = prescriptions.filter(
     (record) => record.shortageQuantity > 0,
   ).length;
+  const substitutionPrescriptionCount = prescriptions.filter(
+    (record) => record.substitutionReplacementCount > 0,
+  ).length;
   const substitutionCount = prescriptions.reduce(
     (sum, record) => sum + record.substitutionReplacementCount,
     0,
@@ -17549,6 +17584,7 @@ function CmsPrescriptionSummaryPage({
   const filterItems: Array<[CmsDeductionFilter, string, number]> = [
     ["ALL", "전체", prescriptions.length],
     ["SHORTAGE_ITEMS", "초과 처방", shortageCount],
+    ["SUBSTITUTION_ITEMS", "대체 처방", substitutionPrescriptionCount],
     ["FAILED", "실패", failedCount],
     ["DEDUCTED", "자동 차감", deductedCount],
   ];
