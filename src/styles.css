@@ -4930,6 +4930,10 @@ body:has(.cms-shell) {
   grid-template-columns: 116px minmax(180px, 1fr) 174px auto;
 }
 
+.cms-stock-snapshot-diff-controls {
+  grid-template-columns: 116px minmax(180px, 1fr) auto;
+}
+
 .cms-stock-decrease-pharmacy {
   min-width: 0;
   height: 38px;
@@ -6212,6 +6216,80 @@ body:has(.cms-shell) {
   color: var(--red);
 }
 
+.cms-stock-snapshot-diff-table {
+  min-width: 940px;
+}
+
+.cms-stock-snapshot-diff-row {
+  display: grid;
+  width: 100%;
+  min-height: 60px;
+  grid-template-columns: 100px minmax(260px, 1fr) 110px 110px 110px 180px;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid #f4f5f6;
+  background: #fff;
+  padding: 0 18px;
+  text-align: left;
+}
+
+.cms-stock-snapshot-diff-row:last-child {
+  border-bottom: 0;
+}
+
+.cms-stock-snapshot-diff-row span,
+.cms-stock-snapshot-diff-row strong,
+.cms-stock-snapshot-diff-row b {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cms-stock-snapshot-diff-row span {
+  color: #5a646d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.cms-stock-snapshot-diff-row strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.cms-stock-snapshot-diff-row b {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 950;
+  text-align: right;
+}
+
+.cms-stock-snapshot-diff-row b.is-increase {
+  color: var(--blue);
+}
+
+.cms-stock-snapshot-diff-row b.is-decrease {
+  color: var(--red);
+}
+
+.cms-stock-snapshot-diff-row em {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cms-stock-snapshot-diff-row .cms-badge {
+  width: fit-content;
+  justify-self: start;
+}
+
 .cms-stock-decrease-row em {
   display: block;
   overflow: hidden;
@@ -6242,6 +6320,21 @@ body:has(.cms-shell) {
 .cms-badge.is-other {
   background: #edf8f2;
   color: #167248;
+}
+
+.cms-badge.is-snapshot-diff {
+  background: #eef4ff;
+  color: #1d56a5;
+}
+
+.cms-badge.is-snapshot-only {
+  background: #edf8f2;
+  color: #167248;
+}
+
+.cms-badge.is-stock-only {
+  background: #fff4ed;
+  color: #a24a13;
 }
 
 .cms-deduction-detail {

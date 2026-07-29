@@ -8051,6 +8051,7 @@ type CmsPage =
   | "accounts"
   | "inventory"
   | "inventory-decreases"
+  | "inventory-snapshot-diff"
   | "inventory-shortages"
   | "return-reviews"
   | "wholesaler"
@@ -8204,6 +8205,13 @@ type CmsStockDecreaseSearchStatus =
   | "loading"
   | "done"
   | "error";
+type CmsStockSnapshotDiffSearchStatus =
+  | "idle"
+  | "short"
+  | "loading"
+  | "done"
+  | "error";
+type CmsStockSnapshotDiffType = "DIFFERENT" | "SNAPSHOT_ONLY" | "STOCK_ONLY";
 type CmsPrescriptionSortKey =
   | "createdAt"
   | "drugName"
@@ -8315,6 +8323,20 @@ type CmsStockDecreaseRecord = {
   referenceId: string;
   detail: string;
   cancelled?: boolean;
+};
+
+type CmsStockSnapshotDiffRecord = {
+  id: string;
+  stockId?: string;
+  drugName: string;
+  insuranceCode: string;
+  stockQuantity: number;
+  snapshotQuantity: number;
+  differenceQuantity: number;
+  snapshotRows: number;
+  latestCapturedAt: string;
+  stockUpdatedAt: string;
+  diffType: CmsStockSnapshotDiffType;
 };
 
 type CmsDeductionRecord = {
@@ -9049,6 +9071,9 @@ function getCmsPage(path: string): CmsPage {
   if (segment === "inventory" && subSegment === "decreases") {
     return "inventory-decreases";
   }
+  if (segment === "inventory" && subSegment === "snapshot-diff") {
+    return "inventory-snapshot-diff";
+  }
   if (segment === "inventory" && subSegment === "returns") {
     return "return-reviews";
   }
@@ -9125,6 +9150,7 @@ function isRestrictedCmsPage(page: CmsPage) {
     page === "signup" ||
     page === "accounts" ||
     page === "inventory-decreases" ||
+    page === "inventory-snapshot-diff" ||
     page === "wholesaler" ||
     page === "purchase"
   );
@@ -9260,6 +9286,14 @@ function CmsApp({
     useState<CmsStockDecreaseCoverage>("needs-pharmacy");
   const [stockDecreaseSearchStatus, setStockDecreaseSearchStatus] =
     useState<CmsStockDecreaseSearchStatus>("idle");
+  const [stockSnapshotDiffRecords, setStockSnapshotDiffRecords] = useState<
+    CmsStockSnapshotDiffRecord[]
+  >([]);
+  const [stockSnapshotDiffPharmacyId, setStockSnapshotDiffPharmacyId] =
+    useState("");
+  const [stockSnapshotDiffQuery, setStockSnapshotDiffQuery] = useState("");
+  const [stockSnapshotDiffSearchStatus, setStockSnapshotDiffSearchStatus] =
+    useState<CmsStockSnapshotDiffSearchStatus>("idle");
   const [deductionFilter, setDeductionFilter] =
     useState<CmsDeductionFilter>("ALL");
   const [prescriptionQuery, setPrescriptionQuery] = useState("");
@@ -9872,6 +9906,33 @@ function CmsApp({
             );
           }
         }
+      } else if (targetPage === "inventory-snapshot-diff") {
+        const trimmedPharmacyId = stockSnapshotDiffPharmacyId.trim();
+        const trimmedQuery = stockSnapshotDiffQuery.trim();
+        const normalizedKeyword = normalizeSearchText(trimmedQuery);
+        if (!trimmedPharmacyId) {
+          setStockSnapshotDiffRecords([]);
+          setStockSnapshotDiffSearchStatus("idle");
+          setApiMessage("스냅샷과 비교할 약국 ID를 입력해 주세요.");
+        } else if (normalizedKeyword.length === 1) {
+          setStockSnapshotDiffSearchStatus("short");
+          setApiMessage("약품 검색어는 2글자 이상 입력해 주세요.");
+        } else {
+          const diffParams = new URLSearchParams({
+            pharmacyId: trimmedPharmacyId,
+          });
+          if (trimmedQuery) diffParams.set("keyword", trimmedQuery);
+          setStockSnapshotDiffSearchStatus("loading");
+          const response = await apiFetch<unknown>(
+            `/stocks/snapshot-differences?${diffParams}`,
+          );
+          setStockSnapshotDiffRecords(
+            arrayPayload(response)
+              .map(normalizeCmsStockSnapshotDiff)
+              .sort(sortCmsStockSnapshotDiffRecords),
+          );
+          setStockSnapshotDiffSearchStatus("done");
+        }
       } else if (targetPage === "inventory-shortages") {
         const trimmed = shortageQuery.trim();
         const normalizedKeyword = normalizeSearchText(trimmed);
@@ -10081,6 +10142,8 @@ function CmsApp({
     stockDecreasePharmacyId,
     stockDecreaseQuery,
     stockDecreaseStartDate,
+    stockSnapshotDiffPharmacyId,
+    stockSnapshotDiffQuery,
     stockControlledFilter,
     stockSortDirection,
     stockSortKey,
@@ -11257,6 +11320,17 @@ function CmsApp({
               onStartDate={setStockDecreaseStartDate}
             />
           )}
+          {visiblePage === "inventory-snapshot-diff" && (
+            <CmsStockSnapshotDiffPage
+              pharmacyId={stockSnapshotDiffPharmacyId}
+              query={stockSnapshotDiffQuery}
+              records={stockSnapshotDiffRecords}
+              searchStatus={stockSnapshotDiffSearchStatus}
+              onApplyFilters={() => void refreshCms()}
+              onPharmacyId={setStockSnapshotDiffPharmacyId}
+              onQuery={setStockSnapshotDiffQuery}
+            />
+          )}
           {visiblePage === "inventory-shortages" && (
             <CmsInventoryShortagePage
               detail={selectedShortageDetail}
@@ -11568,6 +11642,66 @@ function normalizeStockSnapshotSyncSummary(
       item.negativeDrugCount ?? item.negative_drug_count,
     ),
   };
+}
+
+function normalizeCmsStockSnapshotDiff(
+  raw: unknown,
+  index = 0,
+): CmsStockSnapshotDiffRecord {
+  const item = unwrapObjectPayload(raw);
+  const insuranceCode = optionalText(item.insuranceCode ?? item.insurance_code);
+  const stockId =
+    item.stockId === undefined && item.stock_id === undefined
+      ? undefined
+      : String(item.stockId ?? item.stock_id);
+  const diffType = optionalText(item.diffType ?? item.diff_type);
+  return {
+    id: `${insuranceCode || "snapshot-diff"}-${stockId ?? index}`,
+    stockId,
+    drugName:
+      optionalText(item.drugName ?? item.drug_name) ||
+      insuranceCode ||
+      "이름 없는 약품",
+    insuranceCode: insuranceCode ?? "",
+    stockQuantity: finiteNumber(item.stockQuantity ?? item.stock_quantity),
+    snapshotQuantity: finiteNumber(
+      item.snapshotQuantity ?? item.snapshot_quantity,
+    ),
+    differenceQuantity: finiteNumber(
+      item.differenceQuantity ?? item.difference_quantity,
+    ),
+    snapshotRows: finiteNumber(item.snapshotRows ?? item.snapshot_rows),
+    latestCapturedAt: formatTransactionAt(
+      item.latestCapturedAt ?? item.latest_captured_at,
+      "-",
+    ),
+    stockUpdatedAt: formatTransactionAt(
+      item.stockUpdatedAt ?? item.stock_updated_at,
+      "-",
+    ),
+    diffType:
+      diffType === "SNAPSHOT_ONLY" || diffType === "STOCK_ONLY"
+        ? diffType
+        : "DIFFERENT",
+  };
+}
+
+function sortCmsStockSnapshotDiffRecords(
+  a: CmsStockSnapshotDiffRecord,
+  b: CmsStockSnapshotDiffRecord,
+) {
+  const diff = Math.abs(b.differenceQuantity) - Math.abs(a.differenceQuantity);
+  if (diff !== 0) return diff;
+  return (
+    a.drugName.localeCompare(b.drugName, "ko") ||
+    a.insuranceCode.localeCompare(b.insuranceCode, "ko")
+  );
+}
+
+function stockSnapshotDiffTypeLabel(type: CmsStockSnapshotDiffType) {
+  if (type === "SNAPSHOT_ONLY") return "스냅샷만";
+  if (type === "STOCK_ONLY") return "현재 재고만";
+  return "수량 차이";
 }
 
 function isDeductionLikePayload(raw: unknown) {
@@ -13113,6 +13247,12 @@ function CmsSidebar({
             "/cms/inventory/decreases",
             barGraphIcon,
           ],
+          [
+            "inventory-snapshot-diff",
+            "스냅샷 비교",
+            "/cms/inventory/snapshot-diff",
+            barGraphIcon,
+          ],
         ] as Array<[CmsPage, string, string, string]>)
       : []),
     [
@@ -13195,6 +13335,7 @@ function CmsHeader({
     accounts: "계정 관리",
     inventory: "재고",
     "inventory-decreases": "차감 이력",
+    "inventory-snapshot-diff": "스냅샷 비교",
     "inventory-shortages": "초과 처방",
     "return-reviews": "반품 확인",
     wholesaler: "도매처 관리",
@@ -13209,6 +13350,7 @@ function CmsHeader({
     accounts: "root 계정으로 약국 계정 정보와 비밀번호를 관리합니다.",
     inventory: "보유 재고와 수량을 관리합니다.",
     "inventory-decreases": "약국별 처방/반품 차감 이력을 통합 확인합니다.",
+    "inventory-snapshot-diff": "에이전트 스냅샷과 현재 재고 수량 차이를 확인합니다.",
     "inventory-shortages": "초과 처방과 부족 수량을 확인합니다.",
     "return-reviews": "앱에서 확정되지 않은 반품을 확인하고 처리합니다.",
     wholesaler: "약국별 도매처 정보를 관리합니다.",
@@ -15571,6 +15713,177 @@ function CmsStockDecreaseHistoryPage({
                 <span>
                   {record.reason || "-"}
                   <em>{record.detail}</em>
+                </span>
+              </div>
+            ))}
+            {visibleRecords.length === 0 && (
+              <p className="cms-empty table-empty">{emptyMessage}</p>
+            )}
+          </div>
+        </div>
+        <CmsPagination {...pagination} />
+      </div>
+    </section>
+  );
+}
+
+function CmsStockSnapshotDiffPage({
+  pharmacyId,
+  query,
+  records,
+  searchStatus,
+  onApplyFilters,
+  onPharmacyId,
+  onQuery,
+}: {
+  pharmacyId: string;
+  query: string;
+  records: CmsStockSnapshotDiffRecord[];
+  searchStatus: CmsStockSnapshotDiffSearchStatus;
+  onApplyFilters: () => void;
+  onPharmacyId: (value: string) => void;
+  onQuery: (value: string) => void;
+}) {
+  const visibleRecords = useMemo(
+    () => [...records].sort(sortCmsStockSnapshotDiffRecords),
+    [records],
+  );
+  const snapshotMoreCount = visibleRecords.filter(
+    (record) => record.differenceQuantity > 0,
+  ).length;
+  const stockMoreCount = visibleRecords.filter(
+    (record) => record.differenceQuantity < 0,
+  ).length;
+  const totalAbsDiff = visibleRecords.reduce(
+    (sum, record) => sum + Math.abs(record.differenceQuantity),
+    0,
+  );
+  const snapshotRows = visibleRecords.reduce(
+    (sum, record) => sum + record.snapshotRows,
+    0,
+  );
+  const pagination = usePagination(
+    visibleRecords,
+    CMS_PAGE_SIZES.stockSnapshotDiffs,
+    `${records.length}|${query}|${pharmacyId}`,
+  );
+  const emptyMessage = !pharmacyId.trim()
+    ? "약국 ID를 입력하고 조회해 주세요."
+    : searchStatus === "loading"
+      ? "스냅샷 차이를 비교하는 중입니다."
+      : searchStatus === "error"
+        ? "스냅샷 차이를 불러오지 못했습니다."
+        : searchStatus === "short"
+          ? "검색어는 2글자 이상 입력해 주세요."
+          : "현재 재고와 스냅샷 수량 차이가 없습니다.";
+
+  return (
+    <section className="cms-content cms-list-page cms-stock-snapshot-diff-page">
+      <CmsKpiGrid columns={4}>
+        <CmsKpi label="차이 품목" value={`${visibleRecords.length}`} unit="종" />
+        <CmsKpi
+          label="스냅샷 많음"
+          value={`${snapshotMoreCount}`}
+          unit="종"
+          tone={snapshotMoreCount > 0 ? "blue" : undefined}
+        />
+        <CmsKpi
+          label="현재 재고 많음"
+          value={`${stockMoreCount}`}
+          unit="종"
+          tone={stockMoreCount > 0 ? "red" : undefined}
+        />
+        <CmsKpi
+          label="총 차이 수량"
+          value={currency(totalAbsDiff)}
+          unit="개"
+        />
+      </CmsKpiGrid>
+
+      <form
+        className="cms-prescription-list-controls cms-stock-snapshot-diff-controls"
+        onSubmit={(event) => {
+          event.preventDefault();
+          onApplyFilters();
+        }}
+      >
+        <label className="cms-input cms-stock-decrease-pharmacy">
+          <span>약국 ID</span>
+          <input
+            inputMode="numeric"
+            placeholder="필수"
+            value={pharmacyId}
+            onChange={(event) => onPharmacyId(event.target.value)}
+          />
+        </label>
+        <label className="cms-search">
+          <span className="search-icon" />
+          <input
+            placeholder="약품명 · 보험코드 검색"
+            value={query}
+            onChange={(event) => onQuery(event.target.value)}
+          />
+        </label>
+        <button className="cms-primary cms-toolbar-action" type="submit">
+          비교
+        </button>
+      </form>
+
+      <div className="cms-stock-decrease-notice is-ready">
+        <strong>스냅샷 비교</strong>
+        <span>
+          보험코드별 snapshot 합계와 현재 재고가 다른 품목만 표시합니다.
+          조회된 snapshot row {currency(snapshotRows)}건 기준입니다.
+        </span>
+      </div>
+
+      <div className="cms-table-card cms-stock-decrease-card">
+        <div className="cms-table-scroll">
+          <div className="cms-stock-snapshot-diff-table">
+            <div className="cms-stock-snapshot-diff-row cms-th">
+              <span>상태</span>
+              <span>약품</span>
+              <span>현재 재고</span>
+              <span>스냅샷</span>
+              <span>차이</span>
+              <span>기준 시간</span>
+            </div>
+            {pagination.items.map((record) => (
+              <div className="cms-stock-snapshot-diff-row" key={record.id}>
+                <span
+                  className={`cms-badge ${
+                    record.diffType === "SNAPSHOT_ONLY"
+                      ? "is-snapshot-only"
+                      : record.diffType === "STOCK_ONLY"
+                        ? "is-stock-only"
+                        : "is-snapshot-diff"
+                  }`}
+                >
+                  {stockSnapshotDiffTypeLabel(record.diffType)}
+                </span>
+                <strong>
+                  {record.drugName}
+                  <em>
+                    {formatInsuranceCodeForDisplay(record.insuranceCode) ||
+                      "보험코드 없음"}
+                    {record.stockId ? ` · stock#${record.stockId}` : ""}
+                  </em>
+                </strong>
+                <b>{currency(record.stockQuantity)}개</b>
+                <b>{currency(record.snapshotQuantity)}개</b>
+                <b
+                  className={
+                    record.differenceQuantity > 0
+                      ? "is-increase"
+                      : "is-decrease"
+                  }
+                >
+                  {record.differenceQuantity > 0 ? "+" : ""}
+                  {currency(record.differenceQuantity)}개
+                </b>
+                <span>
+                  스냅샷 {record.latestCapturedAt}
+                  <em>재고 {record.stockUpdatedAt}</em>
                 </span>
               </div>
             ))}
@@ -19594,6 +19907,7 @@ const CMS_PAGE_SIZES = {
   prescriptions: 12,
   purchaseHistories: 8,
   stockDecreases: 12,
+  stockSnapshotDiffs: 12,
   shortages: 10,
   syncJobs: 6,
   wholesaler: 12,
