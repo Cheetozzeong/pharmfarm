@@ -6408,6 +6408,15 @@ body:has(.cms-shell) {
   color: var(--red);
 }
 
+.cms-stock-flow-node.is-context > i {
+  background: #eef2f6;
+  color: #7a858d;
+}
+
+.cms-stock-flow-node.is-context > div {
+  background: #fafbfc;
+}
+
 .cms-stock-flow-node.is-start > i,
 .cms-stock-flow-node.is-final > i {
   background: var(--ink);

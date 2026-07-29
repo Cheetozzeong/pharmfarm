@@ -8371,6 +8371,7 @@ type CmsStockSnapshotMovementRecord = {
 type CmsStockSnapshotDiffDetail = {
   summary: CmsStockSnapshotDiffRecord;
   snapshotItems: CmsStockSnapshotItemRecord[];
+  previousMovements: CmsStockSnapshotMovementRecord[];
   movements: CmsStockSnapshotMovementRecord[];
 };
 
@@ -11879,6 +11880,12 @@ function normalizeCmsStockSnapshotDiffDetail(
       "snapshot_items",
       "items",
     ]).map(normalizeCmsStockSnapshotItem),
+    previousMovements: firstArrayPayload(item.previousMovements, [
+      "previousMovements",
+      "previous_movements",
+      "beforeMovements",
+      "before_movements",
+    ]).map(normalizeCmsStockSnapshotMovement),
     movements: firstArrayPayload(item.movements, [
       "movements",
       "movementHistories",
@@ -16189,10 +16196,47 @@ function CmsStockSnapshotDiffDetailView({
         <header>
           <strong>재고 변화 흐름</strong>
           <span>
-            스냅샷 수량에서 시작해 이후 재고 이동을 순서대로 더한 뒤 현재 재고와 비교합니다.
+            캡처 전 이력을 참고한 뒤, 스냅샷 수량에서 시작해 이후 재고 이동을 순서대로 더하고 현재 재고와 비교합니다.
           </span>
         </header>
         <div className="cms-stock-snapshot-flow">
+          {detail.previousMovements.map((movement) => {
+            const cause =
+              [movement.referenceType, movement.referenceId]
+                .filter(Boolean)
+                .join(" · ") || movement.reason;
+            return (
+              <div
+                className={`cms-stock-flow-node is-context ${
+                  movement.changeQuantity >= 0 ? "is-plus" : "is-minus"
+                }`}
+                key={`previous-${movement.id}`}
+              >
+                <i />
+                <div className="cms-stock-flow-content">
+                  <header>
+                    <strong>
+                      캡처 전 ·{" "}
+                      {stockDecreaseMovementTypeLabel(movement.movementType)}
+                    </strong>
+                    <time>{movement.createdAt}</time>
+                  </header>
+                  <p>{cause}</p>
+                  <div className="cms-stock-flow-change">
+                    <b>
+                      {movement.changeQuantity > 0 ? "+" : ""}
+                      {currency(movement.changeQuantity)}개
+                    </b>
+                    <span>
+                      기록 재고 {currency(movement.beforeQuantity)} →{" "}
+                      {currency(movement.afterQuantity)}
+                    </span>
+                    <span>스냅샷 기준 전 참고 이력</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
           <div className="cms-stock-flow-node is-start">
             <i />
             <div>
@@ -16257,13 +16301,13 @@ function CmsStockSnapshotDiffDetailView({
           >
             <i />
             <div>
-              <span>현재 재고 비교</span>
+              <span>기록되지 않은 차이</span>
               <strong>
                 예상 {currency(summary.expectedQuantity)}개 · 현재{" "}
                 {currency(summary.stockQuantity)}개
               </strong>
               <em>
-                차이 {summary.differenceQuantity > 0 ? "+" : ""}
+                movement를 모두 반영해도 차이 {summary.differenceQuantity > 0 ? "+" : ""}
                 {currency(summary.differenceQuantity)}개
               </em>
             </div>
