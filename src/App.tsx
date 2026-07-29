@@ -8342,6 +8342,38 @@ type CmsStockSnapshotDiffRecord = {
   diffType: CmsStockSnapshotDiffType;
 };
 
+type CmsStockSnapshotItemRecord = {
+  id: string;
+  stockNo: string;
+  stockQuantity: number;
+  fairStockQuantity?: number;
+  buyDate: string;
+  buyPrice?: number;
+  corporationCode: string;
+  capturedAt: string;
+  updatedAt: string;
+};
+
+type CmsStockSnapshotMovementRecord = {
+  id: string;
+  stockId?: string;
+  movementType: string;
+  beforeQuantity: number;
+  changeQuantity: number;
+  afterQuantity: number;
+  reason: string;
+  referenceType: string;
+  referenceId: string;
+  createdBy: string;
+  createdAt: string;
+};
+
+type CmsStockSnapshotDiffDetail = {
+  summary: CmsStockSnapshotDiffRecord;
+  snapshotItems: CmsStockSnapshotItemRecord[];
+  movements: CmsStockSnapshotMovementRecord[];
+};
+
 type CmsDeductionRecord = {
   id: string;
   pharmacyId?: string;
@@ -9109,6 +9141,14 @@ function getCmsReturnReviewId(path: string) {
   return decodeURIComponent(segments[3] ?? "");
 }
 
+function getCmsStockSnapshotDiffInsuranceCode(path: string) {
+  const segments = path.split("/").filter(Boolean);
+  if (segments[1] !== "inventory" || segments[2] !== "snapshot-diff") {
+    return "";
+  }
+  return decodeURIComponent(segments[3] ?? "");
+}
+
 const ROOT_CMS_LOGIN_ID = "root";
 
 function canAccessRootCms(account?: AuthAccount | null) {
@@ -9178,6 +9218,8 @@ function CmsApp({
   const page = getCmsPage(path);
   const shortageRouteId = getCmsShortageId(path);
   const returnReviewRouteId = getCmsReturnReviewId(path);
+  const stockSnapshotDiffRouteInsuranceCode =
+    getCmsStockSnapshotDiffInsuranceCode(path);
   const isCmsLoginRoute = path === "/cms/login";
   const [postLoginPath, setPostLoginPath] = useState(
     path === "/cms/login" ? "/cms" : path,
@@ -9297,6 +9339,10 @@ function CmsApp({
   const [stockSnapshotDiffQuery, setStockSnapshotDiffQuery] = useState("");
   const [stockSnapshotDiffSearchStatus, setStockSnapshotDiffSearchStatus] =
     useState<CmsStockSnapshotDiffSearchStatus>("idle");
+  const [stockSnapshotDiffDetail, setStockSnapshotDiffDetail] =
+    useState<CmsStockSnapshotDiffDetail | null>(null);
+  const [stockSnapshotDiffDetailLoading, setStockSnapshotDiffDetailLoading] =
+    useState(false);
   const [deductionFilter, setDeductionFilter] =
     useState<CmsDeductionFilter>("ALL");
   const [prescriptionQuery, setPrescriptionQuery] = useState("");
@@ -11164,11 +11210,72 @@ function CmsApp({
     }
   }
 
+  async function loadStockSnapshotDiffDetail(insuranceCode: string) {
+    const pharmacyId = stockSnapshotDiffPharmacyId.trim();
+    if (!pharmacyId || !insuranceCode) {
+      setStockSnapshotDiffDetail(null);
+      setApiState("connected");
+      setApiMessage("스냅샷 상세를 확인할 약국 ID를 먼저 입력해 주세요.");
+      return;
+    }
+
+    setStockSnapshotDiffDetailLoading(true);
+    try {
+      const params = new URLSearchParams({
+        pharmacyId,
+        insuranceCode,
+      });
+      const response = await apiFetch<unknown>(
+        `/stocks/snapshot-differences/detail?${params}`,
+      );
+      setStockSnapshotDiffDetail(normalizeCmsStockSnapshotDiffDetail(response));
+      setApiState("connected");
+    } catch (error) {
+      setStockSnapshotDiffDetail(null);
+      setApiState("connected");
+      setApiMessage("스냅샷 상세를 불러오지 못했습니다.");
+    } finally {
+      setStockSnapshotDiffDetailLoading(false);
+    }
+  }
+
   useEffect(() => {
     if (visiblePage !== "inventory-shortages" || !selectedShortage) return;
     if (selectedShortageDetail?.deduction.id === selectedShortage.id) return;
     void loadShortageDetail(selectedShortage);
   }, [selectedShortage?.id, selectedShortageDetail?.deduction.id, visiblePage]);
+
+  useEffect(() => {
+    if (
+      visiblePage !== "inventory-snapshot-diff" ||
+      !stockSnapshotDiffRouteInsuranceCode
+    ) {
+      setStockSnapshotDiffDetail(null);
+      return;
+    }
+    if (
+      stockSnapshotDiffDetail?.summary.insuranceCode ===
+      stockSnapshotDiffRouteInsuranceCode
+    ) {
+      return;
+    }
+    void loadStockSnapshotDiffDetail(stockSnapshotDiffRouteInsuranceCode);
+  }, [
+    stockSnapshotDiffDetail?.summary.insuranceCode,
+    stockSnapshotDiffPharmacyId,
+    stockSnapshotDiffRouteInsuranceCode,
+    visiblePage,
+  ]);
+
+  useEffect(() => {
+    if (
+      visiblePage === "inventory-snapshot-diff" &&
+      stockSnapshotDiffRouteInsuranceCode &&
+      stockSnapshotDiffPharmacyId.trim()
+    ) {
+      void refreshCms();
+    }
+  }, [stockSnapshotDiffRouteInsuranceCode, visiblePage]);
 
   if (apiState === "unauthorized" || (isCmsLoginRoute && !hasCmsSession)) {
     return (
@@ -11325,11 +11432,22 @@ function CmsApp({
           )}
           {visiblePage === "inventory-snapshot-diff" && (
             <CmsStockSnapshotDiffPage
+              detail={stockSnapshotDiffDetail}
+              detailLoading={stockSnapshotDiffDetailLoading}
               pharmacyId={stockSnapshotDiffPharmacyId}
               query={stockSnapshotDiffQuery}
               records={stockSnapshotDiffRecords}
+              routeInsuranceCode={stockSnapshotDiffRouteInsuranceCode}
               searchStatus={stockSnapshotDiffSearchStatus}
               onApplyFilters={() => void refreshCms()}
+              onCloseDetail={() => navigate("/cms/inventory/snapshot-diff")}
+              onOpenDetail={(record) =>
+                navigate(
+                  `/cms/inventory/snapshot-diff/${encodeURIComponent(
+                    record.insuranceCode,
+                  )}`,
+                )
+              }
               onPharmacyId={setStockSnapshotDiffPharmacyId}
               onQuery={setStockSnapshotDiffQuery}
             />
@@ -11693,6 +11811,79 @@ function normalizeCmsStockSnapshotDiff(
       diffType === "SNAPSHOT_ONLY" || diffType === "STOCK_ONLY"
         ? diffType
         : "DIFFERENT",
+  };
+}
+
+function normalizeCmsStockSnapshotItem(
+  raw: unknown,
+  index = 0,
+): CmsStockSnapshotItemRecord {
+  const item = unwrapObjectPayload(raw);
+  const stockNo = optionalText(item.stockNo ?? item.stock_no);
+  const fairStockQuantity =
+    item.fairStockQuantity === undefined && item.fair_stock_quantity === undefined
+      ? undefined
+      : finiteNumber(item.fairStockQuantity ?? item.fair_stock_quantity);
+  const buyPrice =
+    item.buyPrice === undefined && item.buy_price === undefined
+      ? undefined
+      : finiteNumber(item.buyPrice ?? item.buy_price);
+  return {
+    id: String(item.id ?? stockNo ?? index),
+    stockNo: stockNo ?? "-",
+    stockQuantity: finiteNumber(item.stockQuantity ?? item.stock_quantity),
+    fairStockQuantity,
+    buyDate: optionalText(item.buyDate ?? item.buy_date) ?? "-",
+    buyPrice,
+    corporationCode:
+      optionalText(item.corporationCode ?? item.corporation_code) ?? "-",
+    capturedAt: formatTransactionAt(
+      item.capturedAt ?? item.captured_at,
+      "-",
+    ),
+    updatedAt: formatTransactionAt(item.updatedAt ?? item.updated_at, "-"),
+  };
+}
+
+function normalizeCmsStockSnapshotMovement(
+  raw: unknown,
+  index = 0,
+): CmsStockSnapshotMovementRecord {
+  const item = unwrapObjectPayload(raw);
+  return {
+    id: String(item.id ?? index),
+    stockId:
+      item.stockId === undefined && item.stock_id === undefined
+        ? undefined
+        : String(item.stockId ?? item.stock_id),
+    movementType: optionalText(item.movementType ?? item.movement_type) ?? "",
+    beforeQuantity: finiteNumber(item.beforeQuantity ?? item.before_quantity),
+    changeQuantity: finiteNumber(item.changeQuantity ?? item.change_quantity),
+    afterQuantity: finiteNumber(item.afterQuantity ?? item.after_quantity),
+    reason: optionalText(item.reason) ?? "-",
+    referenceType: optionalText(item.referenceType ?? item.reference_type) ?? "",
+    referenceId: optionalText(item.referenceId ?? item.reference_id) ?? "",
+    createdBy: optionalText(item.createdBy ?? item.created_by) ?? "-",
+    createdAt: formatTransactionAt(item.createdAt ?? item.created_at, "-"),
+  };
+}
+
+function normalizeCmsStockSnapshotDiffDetail(
+  raw: unknown,
+): CmsStockSnapshotDiffDetail {
+  const item = unwrapObjectPayload(raw);
+  return {
+    summary: normalizeCmsStockSnapshotDiff(item.summary ?? item),
+    snapshotItems: firstArrayPayload(item.snapshotItems, [
+      "snapshotItems",
+      "snapshot_items",
+      "items",
+    ]).map(normalizeCmsStockSnapshotItem),
+    movements: firstArrayPayload(item.movements, [
+      "movements",
+      "movementHistories",
+      "histories",
+    ]).map(normalizeCmsStockSnapshotMovement),
   };
 }
 
@@ -15738,19 +15929,29 @@ function CmsStockDecreaseHistoryPage({
 }
 
 function CmsStockSnapshotDiffPage({
+  detail,
+  detailLoading,
   pharmacyId,
   query,
   records,
+  routeInsuranceCode,
   searchStatus,
   onApplyFilters,
+  onCloseDetail,
+  onOpenDetail,
   onPharmacyId,
   onQuery,
 }: {
+  detail: CmsStockSnapshotDiffDetail | null;
+  detailLoading: boolean;
   pharmacyId: string;
   query: string;
   records: CmsStockSnapshotDiffRecord[];
+  routeInsuranceCode: string;
   searchStatus: CmsStockSnapshotDiffSearchStatus;
   onApplyFilters: () => void;
+  onCloseDetail: () => void;
+  onOpenDetail: (record: CmsStockSnapshotDiffRecord) => void;
   onPharmacyId: (value: string) => void;
   onQuery: (value: string) => void;
 }) {
@@ -15777,6 +15978,12 @@ function CmsStockSnapshotDiffPage({
     CMS_PAGE_SIZES.stockSnapshotDiffs,
     `${records.length}|${query}|${pharmacyId}`,
   );
+  const activeDetail =
+    detail?.summary.insuranceCode === routeInsuranceCode ? detail : null;
+  const routeRecord = visibleRecords.find(
+    (record) => record.insuranceCode === routeInsuranceCode,
+  );
+  const activeSummary = activeDetail?.summary ?? routeRecord;
   const emptyMessage = !pharmacyId.trim()
     ? "약국 ID를 입력하고 조회해 주세요."
     : searchStatus === "loading"
@@ -15859,7 +16066,16 @@ function CmsStockSnapshotDiffPage({
               <span>기준 시간</span>
             </div>
             {pagination.items.map((record) => (
-              <div className="cms-stock-snapshot-diff-row" key={record.id}>
+              <button
+                className={`cms-stock-snapshot-diff-row is-clickable ${
+                  routeInsuranceCode === record.insuranceCode
+                    ? "is-selected"
+                    : ""
+                }`}
+                key={record.id}
+                type="button"
+                onClick={() => onOpenDetail(record)}
+              >
                 <span
                   className={`cms-badge ${
                     record.diffType === "SNAPSHOT_ONLY"
@@ -15905,7 +16121,7 @@ function CmsStockSnapshotDiffPage({
                     {record.stockUpdatedAt}
                   </em>
                 </span>
-              </div>
+              </button>
             ))}
             {visibleRecords.length === 0 && (
               <p className="cms-empty table-empty">{emptyMessage}</p>
@@ -15914,7 +16130,162 @@ function CmsStockSnapshotDiffPage({
         </div>
         <CmsPagination {...pagination} />
       </div>
+      {routeInsuranceCode && (
+        <CmsSheet
+          title={activeSummary?.drugName ?? "스냅샷 차이 상세"}
+          subtitle={
+            activeSummary
+              ? `${formatInsuranceCodeForDisplay(
+                  activeSummary.insuranceCode,
+                )} · ${stockSnapshotDiffTypeLabel(activeSummary.diffType)}`
+              : routeInsuranceCode
+          }
+          onClose={onCloseDetail}
+        >
+          <div className="cms-sheet-body cms-stock-snapshot-detail-body">
+            {!pharmacyId.trim() ? (
+              <p className="cms-empty">약국 ID를 입력하고 다시 조회해 주세요.</p>
+            ) : detailLoading ? (
+              <p className="cms-empty">상세 이력을 불러오는 중입니다.</p>
+            ) : activeDetail ? (
+              <CmsStockSnapshotDiffDetailView detail={activeDetail} />
+            ) : (
+              <p className="cms-empty">
+                상세 이력을 불러오지 못했습니다. 목록에서 다시 선택해 주세요.
+              </p>
+            )}
+          </div>
+        </CmsSheet>
+      )}
     </section>
+  );
+}
+
+function CmsStockSnapshotDiffDetailView({
+  detail,
+}: {
+  detail: CmsStockSnapshotDiffDetail;
+}) {
+  const { summary } = detail;
+  const timelineItems = detail.movements;
+  const maxAbsChange = Math.max(
+    1,
+    ...timelineItems.map((movement) => Math.abs(movement.changeQuantity)),
+  );
+
+  return (
+    <div className="cms-stock-snapshot-detail">
+      <div className="cms-stock-snapshot-flow">
+        <div>
+          <span>스냅샷</span>
+          <strong>{currency(summary.snapshotQuantity)}개</strong>
+          <em>{summary.latestCapturedAt}</em>
+        </div>
+        <div>
+          <span>이후 이동</span>
+          <strong>
+            {summary.movementChangeQuantity > 0 ? "+" : ""}
+            {currency(summary.movementChangeQuantity)}개
+          </strong>
+          <em>{currency(summary.movementCount)}건</em>
+        </div>
+        <div>
+          <span>예상 재고</span>
+          <strong>{currency(summary.expectedQuantity)}개</strong>
+          <em>스냅샷 + 이동</em>
+        </div>
+        <div>
+          <span>현재 재고</span>
+          <strong>{currency(summary.stockQuantity)}개</strong>
+          <em>{summary.stockUpdatedAt}</em>
+        </div>
+        <div className={summary.differenceQuantity > 0 ? "is-plus" : "is-minus"}>
+          <span>차이</span>
+          <strong>
+            {summary.differenceQuantity > 0 ? "+" : ""}
+            {currency(summary.differenceQuantity)}개
+          </strong>
+          <em>예상 - 현재</em>
+        </div>
+      </div>
+
+      <section className="cms-detail-section">
+        <header>
+          <strong>스냅샷 구성</strong>
+          <span>보험코드 기준으로 합산된 원본 snapshot row입니다.</span>
+        </header>
+        <div className="cms-snapshot-item-list">
+          {detail.snapshotItems.map((item) => (
+            <div className="cms-snapshot-item" key={item.id}>
+              <strong>
+                {item.stockNo}
+                <em>{item.capturedAt}</em>
+              </strong>
+              <span>{currency(item.stockQuantity)}개</span>
+              <span>
+                적정 {item.fairStockQuantity === undefined
+                  ? "-"
+                  : `${currency(item.fairStockQuantity)}개`}
+              </span>
+              <span>{item.buyDate}</span>
+            </div>
+          ))}
+          {detail.snapshotItems.length === 0 && (
+            <p className="cms-empty">snapshot 원본 row가 없습니다.</p>
+          )}
+        </div>
+      </section>
+
+      <section className="cms-detail-section">
+        <header>
+          <strong>캡처 이후 재고 이동</strong>
+          <span>
+            snapshot 캡처 이후 기록된 movement입니다. 스냅샷 동기화 이력은
+            계산에서 제외됩니다.
+          </span>
+        </header>
+        <div className="cms-snapshot-timeline">
+          {timelineItems.map((movement) => {
+            const width = Math.max(
+              8,
+              Math.round((Math.abs(movement.changeQuantity) / maxAbsChange) * 100),
+            );
+            return (
+              <div
+                className={`cms-snapshot-timeline-row ${
+                  movement.changeQuantity >= 0 ? "is-plus" : "is-minus"
+                }`}
+                key={movement.id}
+              >
+                <time>{movement.createdAt}</time>
+                <div className="cms-snapshot-timeline-bar">
+                  <i style={{ width: `${width}%` }} />
+                </div>
+                <strong>{stockDecreaseMovementTypeLabel(movement.movementType)}</strong>
+                <b>
+                  {movement.changeQuantity > 0 ? "+" : ""}
+                  {currency(movement.changeQuantity)}개
+                </b>
+                <span>
+                  {currency(movement.beforeQuantity)} →{" "}
+                  {currency(movement.afterQuantity)}
+                  <em>
+                    {[movement.referenceType, movement.referenceId]
+                      .filter(Boolean)
+                      .join(" · ") || movement.reason}
+                  </em>
+                </span>
+              </div>
+            );
+          })}
+          {timelineItems.length === 0 && (
+            <p className="cms-empty">
+              snapshot 이후 기록된 재고 이동이 없습니다.
+            </p>
+          )}
+        </div>
+      </section>
+    </div>
   );
 }
 
