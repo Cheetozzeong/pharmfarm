@@ -8332,7 +8332,10 @@ type CmsStockSnapshotDiffRecord = {
   insuranceCode: string;
   stockQuantity: number;
   snapshotQuantity: number;
+  movementChangeQuantity: number;
+  expectedQuantity: number;
   differenceQuantity: number;
+  movementCount: number;
   snapshotRows: number;
   latestCapturedAt: string;
   stockUpdatedAt: string;
@@ -11667,9 +11670,16 @@ function normalizeCmsStockSnapshotDiff(
     snapshotQuantity: finiteNumber(
       item.snapshotQuantity ?? item.snapshot_quantity,
     ),
+    movementChangeQuantity: finiteNumber(
+      item.movementChangeQuantity ?? item.movement_change_quantity,
+    ),
+    expectedQuantity: finiteNumber(
+      item.expectedQuantity ?? item.expected_quantity,
+    ),
     differenceQuantity: finiteNumber(
       item.differenceQuantity ?? item.difference_quantity,
     ),
+    movementCount: finiteNumber(item.movementCount ?? item.movement_count),
     snapshotRows: finiteNumber(item.snapshotRows ?? item.snapshot_rows),
     latestCapturedAt: formatTransactionAt(
       item.latestCapturedAt ?? item.latest_captured_at,
@@ -15748,7 +15758,7 @@ function CmsStockSnapshotDiffPage({
     () => [...records].sort(sortCmsStockSnapshotDiffRecords),
     [records],
   );
-  const snapshotMoreCount = visibleRecords.filter(
+  const expectedMoreCount = visibleRecords.filter(
     (record) => record.differenceQuantity > 0,
   ).length;
   const stockMoreCount = visibleRecords.filter(
@@ -15775,17 +15785,17 @@ function CmsStockSnapshotDiffPage({
         ? "스냅샷 차이를 불러오지 못했습니다."
         : searchStatus === "short"
           ? "검색어는 2글자 이상 입력해 주세요."
-          : "현재 재고와 스냅샷 수량 차이가 없습니다.";
+          : "히스토리 반영 후 현재 재고와 예상 재고 차이가 없습니다.";
 
   return (
     <section className="cms-content cms-list-page cms-stock-snapshot-diff-page">
       <CmsKpiGrid columns={4}>
         <CmsKpi label="차이 품목" value={`${visibleRecords.length}`} unit="종" />
         <CmsKpi
-          label="스냅샷 많음"
-          value={`${snapshotMoreCount}`}
+          label="예상 많음"
+          value={`${expectedMoreCount}`}
           unit="종"
-          tone={snapshotMoreCount > 0 ? "blue" : undefined}
+          tone={expectedMoreCount > 0 ? "blue" : undefined}
         />
         <CmsKpi
           label="현재 재고 많음"
@@ -15832,7 +15842,7 @@ function CmsStockSnapshotDiffPage({
       <div className="cms-stock-decrease-notice is-ready">
         <strong>스냅샷 비교</strong>
         <span>
-          보험코드별 snapshot 합계와 현재 재고가 다른 품목만 표시합니다.
+          snapshot 수량에 캡처 이후 재고 이동을 반영한 예상 재고와 현재 재고가 다른 품목만 표시합니다.
           조회된 snapshot row {currency(snapshotRows)}건 기준입니다.
         </span>
       </div>
@@ -15844,7 +15854,7 @@ function CmsStockSnapshotDiffPage({
               <span>상태</span>
               <span>약품</span>
               <span>현재 재고</span>
-              <span>스냅샷</span>
+              <span>예상 재고</span>
               <span>차이</span>
               <span>기준 시간</span>
             </div>
@@ -15870,7 +15880,14 @@ function CmsStockSnapshotDiffPage({
                   </em>
                 </strong>
                 <b>{currency(record.stockQuantity)}개</b>
-                <b>{currency(record.snapshotQuantity)}개</b>
+                <span>
+                  {currency(record.expectedQuantity)}개
+                  <em>
+                    스냅샷 {currency(record.snapshotQuantity)} · 이후{" "}
+                    {record.movementChangeQuantity > 0 ? "+" : ""}
+                    {currency(record.movementChangeQuantity)}개
+                  </em>
+                </span>
                 <b
                   className={
                     record.differenceQuantity > 0
@@ -15883,7 +15900,10 @@ function CmsStockSnapshotDiffPage({
                 </b>
                 <span>
                   스냅샷 {record.latestCapturedAt}
-                  <em>재고 {record.stockUpdatedAt}</em>
+                  <em>
+                    이후 이동 {currency(record.movementCount)}건 · 재고{" "}
+                    {record.stockUpdatedAt}
+                  </em>
                 </span>
               </div>
             ))}
