@@ -1477,6 +1477,11 @@ function normalizeBoolean(value: unknown) {
   return false;
 }
 
+function optionalBoolean(value: unknown) {
+  if (value === undefined || value === null) return undefined;
+  return normalizeBoolean(value);
+}
+
 function normalizeControlledDrug(
   raw: unknown,
   fallbackControlled = false,
@@ -8332,12 +8337,16 @@ type CmsStockSnapshotDiffRecord = {
   insuranceCode: string;
   stockQuantity: number;
   snapshotQuantity: number;
+  baselineQuantity: number;
   movementChangeQuantity: number;
   expectedQuantity: number;
   differenceQuantity: number;
   movementCount: number;
   snapshotRows: number;
   latestCapturedAt: string;
+  baselineAt: string;
+  baselineType: string;
+  baselineMovementId?: string;
   stockUpdatedAt: string;
   diffType: CmsStockSnapshotDiffType;
 };
@@ -8368,11 +8377,37 @@ type CmsStockSnapshotMovementRecord = {
   createdAt: string;
 };
 
+type CmsStockQuantityAuditRecord = {
+  id: string;
+  stockId: string;
+  auditType: string;
+  insuranceCode: string;
+  beforeInsuranceCode: string;
+  afterInsuranceCode: string;
+  beforeDrugName: string;
+  afterDrugName: string;
+  beforeQuantity?: number;
+  afterQuantity?: number;
+  changeQuantity: number;
+  beforeActive?: boolean;
+  afterActive?: boolean;
+  beforeVirtualStock?: boolean;
+  afterVirtualStock?: boolean;
+  beforeMatchStatus: string;
+  afterMatchStatus: string;
+  mysqlUser: string;
+  connectionId?: string;
+  matchedMovementId?: string;
+  createdAt: string;
+};
+
 type CmsStockSnapshotDiffDetail = {
   summary: CmsStockSnapshotDiffRecord;
   snapshotItems: CmsStockSnapshotItemRecord[];
   previousMovements: CmsStockSnapshotMovementRecord[];
   movements: CmsStockSnapshotMovementRecord[];
+  previousAudits: CmsStockQuantityAuditRecord[];
+  audits: CmsStockQuantityAuditRecord[];
 };
 
 type CmsDeductionRecord = {
@@ -11789,6 +11824,12 @@ function normalizeCmsStockSnapshotDiff(
     snapshotQuantity: finiteNumber(
       item.snapshotQuantity ?? item.snapshot_quantity,
     ),
+    baselineQuantity: finiteNumber(
+      item.baselineQuantity ??
+        item.baseline_quantity ??
+        item.snapshotQuantity ??
+        item.snapshot_quantity,
+    ),
     movementChangeQuantity: finiteNumber(
       item.movementChangeQuantity ?? item.movement_change_quantity,
     ),
@@ -11804,6 +11845,18 @@ function normalizeCmsStockSnapshotDiff(
       item.latestCapturedAt ?? item.latest_captured_at,
       "-",
     ),
+    baselineAt: formatTransactionAt(
+      item.baselineAt ?? item.baseline_at ?? item.latestCapturedAt,
+      "-",
+    ),
+    baselineType:
+      optionalText(item.baselineType ?? item.baseline_type) ||
+      "SNAPSHOT_CAPTURE",
+    baselineMovementId:
+      item.baselineMovementId === undefined &&
+      item.baseline_movement_id === undefined
+        ? undefined
+        : String(item.baselineMovementId ?? item.baseline_movement_id),
     stockUpdatedAt: formatTransactionAt(
       item.stockUpdatedAt ?? item.stock_updated_at,
       "-",
@@ -11869,6 +11922,63 @@ function normalizeCmsStockSnapshotMovement(
   };
 }
 
+function normalizeCmsStockQuantityAudit(
+  raw: unknown,
+  index = 0,
+): CmsStockQuantityAuditRecord {
+  const item = unwrapObjectPayload(raw);
+  const beforeQuantity =
+    item.beforeQuantity === undefined && item.before_quantity === undefined
+      ? undefined
+      : finiteNumber(item.beforeQuantity ?? item.before_quantity);
+  const afterQuantity =
+    item.afterQuantity === undefined && item.after_quantity === undefined
+      ? undefined
+      : finiteNumber(item.afterQuantity ?? item.after_quantity);
+  return {
+    id: String(item.id ?? index),
+    stockId: String(item.stockId ?? item.stock_id ?? ""),
+    auditType: optionalText(item.auditType ?? item.audit_type) ?? "",
+    insuranceCode:
+      optionalText(item.insuranceCode ?? item.insurance_code) ?? "",
+    beforeInsuranceCode:
+      optionalText(item.beforeInsuranceCode ?? item.before_insurance_code) ??
+      "",
+    afterInsuranceCode:
+      optionalText(item.afterInsuranceCode ?? item.after_insurance_code) ?? "",
+    beforeDrugName:
+      optionalText(item.beforeDrugName ?? item.before_drug_name) ?? "",
+    afterDrugName:
+      optionalText(item.afterDrugName ?? item.after_drug_name) ?? "",
+    beforeQuantity,
+    afterQuantity,
+    changeQuantity: finiteNumber(item.changeQuantity ?? item.change_quantity),
+    beforeActive: optionalBoolean(item.beforeActive ?? item.before_active),
+    afterActive: optionalBoolean(item.afterActive ?? item.after_active),
+    beforeVirtualStock: optionalBoolean(
+      item.beforeVirtualStock ?? item.before_virtual_stock,
+    ),
+    afterVirtualStock: optionalBoolean(
+      item.afterVirtualStock ?? item.after_virtual_stock,
+    ),
+    beforeMatchStatus:
+      optionalText(item.beforeMatchStatus ?? item.before_match_status) ?? "",
+    afterMatchStatus:
+      optionalText(item.afterMatchStatus ?? item.after_match_status) ?? "",
+    mysqlUser: optionalText(item.mysqlUser ?? item.mysql_user) ?? "",
+    connectionId:
+      item.connectionId === undefined && item.connection_id === undefined
+        ? undefined
+        : String(item.connectionId ?? item.connection_id),
+    matchedMovementId:
+      item.matchedMovementId === undefined &&
+      item.matched_movement_id === undefined
+        ? undefined
+        : String(item.matchedMovementId ?? item.matched_movement_id),
+    createdAt: formatTransactionAt(item.createdAt ?? item.created_at, "-"),
+  };
+}
+
 function normalizeCmsStockSnapshotDiffDetail(
   raw: unknown,
 ): CmsStockSnapshotDiffDetail {
@@ -11891,6 +12001,17 @@ function normalizeCmsStockSnapshotDiffDetail(
       "movementHistories",
       "histories",
     ]).map(normalizeCmsStockSnapshotMovement),
+    previousAudits: firstArrayPayload(item.previousAudits, [
+      "previousAudits",
+      "previous_audits",
+      "beforeAudits",
+      "before_audits",
+    ]).map(normalizeCmsStockQuantityAudit),
+    audits: firstArrayPayload(item.audits, [
+      "audits",
+      "quantityAudits",
+      "quantity_audits",
+    ]).map(normalizeCmsStockQuantityAudit),
   };
 }
 
@@ -11910,6 +12031,35 @@ function stockSnapshotDiffTypeLabel(type: CmsStockSnapshotDiffType) {
   if (type === "SNAPSHOT_ONLY") return "스냅샷만";
   if (type === "STOCK_ONLY") return "현재 재고만";
   return "수량 차이";
+}
+
+function stockSnapshotBaselineLabel(type: string) {
+  if (type === "STOCK_SNAPSHOT_SYNC") return "스냅샷 재동기화";
+  if (type === "STOCK_ONLY") return "현재 재고 기준";
+  return "스냅샷 캡처";
+}
+
+function stockQuantityAuditTypeLabel(type: string) {
+  switch (type.toUpperCase()) {
+    case "INSERT":
+      return "재고 row 생성";
+    case "DELETE":
+      return "재고 row 삭제";
+    case "QUANTITY_UPDATE":
+      return "DB 수량 변경";
+    case "QUANTITY_AND_PROFILE_UPDATE":
+      return "DB 수량/정보 변경";
+    case "STOCK_CODE_UPDATE":
+      return "보험코드 변경";
+    case "STOCK_PROFILE_UPDATE":
+      return "재고 정보 변경";
+    default:
+      return type || "DB 변경";
+  }
+}
+
+function optionalQuantityText(value?: number) {
+  return value === undefined ? "-" : currency(value);
 }
 
 function isDeductionLikePayload(raw: unknown) {
@@ -16056,8 +16206,8 @@ function CmsStockSnapshotDiffPage({
       <div className="cms-stock-decrease-notice is-ready">
         <strong>스냅샷 비교</strong>
         <span>
-          snapshot 수량에 캡처 이후 재고 이동을 반영한 예상 재고와 현재 재고가 다른 품목만 표시합니다.
-          조회된 snapshot row {currency(snapshotRows)}건 기준입니다.
+          최신 스냅샷 재동기화가 있으면 해당 시점부터, 없으면 snapshot 캡처 시점부터 재고 이동을 반영해
+          현재 재고와 다른 품목만 표시합니다. 조회된 snapshot row {currency(snapshotRows)}건 기준입니다.
         </span>
       </div>
 
@@ -16106,7 +16256,7 @@ function CmsStockSnapshotDiffPage({
                 <span>
                   {currency(record.expectedQuantity)}개
                   <em>
-                    스냅샷 {currency(record.snapshotQuantity)} · 이후{" "}
+                    기준 {currency(record.baselineQuantity)} · 이후{" "}
                     {record.movementChangeQuantity > 0 ? "+" : ""}
                     {currency(record.movementChangeQuantity)}개
                   </em>
@@ -16122,9 +16272,11 @@ function CmsStockSnapshotDiffPage({
                   {currency(record.differenceQuantity)}개
                 </b>
                 <span>
-                  스냅샷 {record.latestCapturedAt}
+                  {stockSnapshotBaselineLabel(record.baselineType)}{" "}
+                  {record.baselineAt}
                   <em>
-                    이후 이동 {currency(record.movementCount)}건 · 재고{" "}
+                    스냅샷 {record.latestCapturedAt} · 이후 이동{" "}
+                    {currency(record.movementCount)}건 · 재고{" "}
                     {record.stockUpdatedAt}
                   </em>
                 </span>
@@ -16175,7 +16327,8 @@ function CmsStockSnapshotDiffDetailView({
 }) {
   const { summary } = detail;
   const timelineItems = detail.movements;
-  let runningQuantity = summary.snapshotQuantity;
+  const baselineQuantity = summary.baselineQuantity;
+  let runningQuantity = baselineQuantity;
   const flowSteps = timelineItems.map((movement) => {
     const beforeExpected = runningQuantity;
     runningQuantity += movement.changeQuantity;
@@ -16185,6 +16338,9 @@ function CmsStockSnapshotDiffDetailView({
       afterExpected: runningQuantity,
     };
   });
+  const unmatchedAuditCount = detail.audits.filter(
+    (audit) => audit.changeQuantity !== 0 && !audit.matchedMovementId,
+  ).length;
   const maxAbsChange = Math.max(
     1,
     ...timelineItems.map((movement) => Math.abs(movement.changeQuantity)),
@@ -16196,9 +16352,35 @@ function CmsStockSnapshotDiffDetailView({
         <header>
           <strong>재고 변화 흐름</strong>
           <span>
-            캡처 전 이력을 참고한 뒤, 스냅샷 수량에서 시작해 이후 재고 이동을 순서대로 더하고 현재 재고와 비교합니다.
+            기준 수량에서 시작해 이후 재고 이동을 순서대로 더하고 현재 재고와 비교합니다.
           </span>
         </header>
+        <div className="cms-stock-snapshot-baseline">
+          <div>
+            <span>스냅샷 합계</span>
+            <strong>{currency(summary.snapshotQuantity)}개</strong>
+            <em>{summary.latestCapturedAt}</em>
+          </div>
+          <div>
+            <span>비교 기준</span>
+            <strong>{currency(baselineQuantity)}개</strong>
+            <em>
+              {stockSnapshotBaselineLabel(summary.baselineType)} ·{" "}
+              {summary.baselineAt}
+            </em>
+          </div>
+          <div>
+            <span>현재 / 예상</span>
+            <strong>
+              {currency(summary.stockQuantity)} /{" "}
+              {currency(summary.expectedQuantity)}개
+            </strong>
+            <em>
+              차이 {summary.differenceQuantity > 0 ? "+" : ""}
+              {currency(summary.differenceQuantity)}개
+            </em>
+          </div>
+        </div>
         <div className="cms-stock-snapshot-flow">
           {detail.previousMovements.map((movement) => {
             const cause =
@@ -16216,7 +16398,7 @@ function CmsStockSnapshotDiffDetailView({
                 <div className="cms-stock-flow-content">
                   <header>
                     <strong>
-                      캡처 전 ·{" "}
+                      기준 전 ·{" "}
                       {stockDecreaseMovementTypeLabel(movement.movementType)}
                     </strong>
                     <time>{movement.createdAt}</time>
@@ -16240,9 +16422,14 @@ function CmsStockSnapshotDiffDetailView({
           <div className="cms-stock-flow-node is-start">
             <i />
             <div>
-              <span>스냅샷 캡처</span>
-              <strong>{currency(summary.snapshotQuantity)}개</strong>
-              <em>{summary.latestCapturedAt}</em>
+              <span>{stockSnapshotBaselineLabel(summary.baselineType)}</span>
+              <strong>{currency(baselineQuantity)}개</strong>
+              <em>
+                {summary.baselineAt}
+                {summary.baselineMovementId
+                  ? ` · movement#${summary.baselineMovementId}`
+                  : ""}
+              </em>
             </div>
           </div>
           {flowSteps.map((movement, index) => {
@@ -16309,12 +16496,46 @@ function CmsStockSnapshotDiffDetailView({
               <em>
                 movement를 모두 반영해도 차이 {summary.differenceQuantity > 0 ? "+" : ""}
                 {currency(summary.differenceQuantity)}개
+                {unmatchedAuditCount > 0
+                  ? ` · movement 미연결 DB 변경 ${currency(
+                      unmatchedAuditCount,
+                    )}건`
+                  : ""}
               </em>
             </div>
           </div>
           {flowSteps.length === 0 && (
             <p className="cms-empty">
               snapshot 이후 기록된 재고 이동이 없습니다.
+            </p>
+          )}
+        </div>
+      </section>
+
+      <section className="cms-detail-section">
+        <header>
+          <strong>DB 실제 수량 변경</strong>
+          <span>
+            실제 재고 수량 컬럼 변경을 DB trigger로 남긴 audit입니다. movement가 연결되지 않은 행이 누락 경로 후보입니다.
+          </span>
+        </header>
+        <div className="cms-stock-audit-list">
+          {detail.previousAudits.map((audit) => (
+            <CmsStockQuantityAuditCard
+              audit={audit}
+              context
+              key={`previous-audit-${audit.id}`}
+            />
+          ))}
+          {detail.audits.map((audit) => (
+            <CmsStockQuantityAuditCard
+              audit={audit}
+              key={`audit-${audit.id}`}
+            />
+          ))}
+          {detail.previousAudits.length === 0 && detail.audits.length === 0 && (
+            <p className="cms-empty">
+              아직 DB 수량 변경 audit이 없습니다. 배포 후 trigger가 설치된 시점부터 기록됩니다.
             </p>
           )}
         </div>
@@ -16347,6 +16568,85 @@ function CmsStockSnapshotDiffDetailView({
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function CmsStockQuantityAuditCard({
+  audit,
+  context = false,
+}: {
+  audit: CmsStockQuantityAuditRecord;
+  context?: boolean;
+}) {
+  const tone =
+    audit.changeQuantity < 0
+      ? "is-minus"
+      : audit.changeQuantity > 0
+        ? "is-plus"
+        : "is-neutral";
+  const movementStatus =
+    audit.changeQuantity === 0
+      ? "수량 변화 없음"
+      : audit.matchedMovementId
+        ? `movement#${audit.matchedMovementId} 연결`
+        : "movement 미연결";
+  const profileChanges = [
+    audit.beforeInsuranceCode &&
+    audit.afterInsuranceCode &&
+    audit.beforeInsuranceCode !== audit.afterInsuranceCode
+      ? `${audit.beforeInsuranceCode} → ${audit.afterInsuranceCode}`
+      : "",
+    audit.beforeMatchStatus &&
+    audit.afterMatchStatus &&
+    audit.beforeMatchStatus !== audit.afterMatchStatus
+      ? `${audit.beforeMatchStatus} → ${audit.afterMatchStatus}`
+      : "",
+    audit.beforeActive !== undefined &&
+    audit.afterActive !== undefined &&
+    audit.beforeActive !== audit.afterActive
+      ? `active ${audit.beforeActive ? "Y" : "N"} → ${
+          audit.afterActive ? "Y" : "N"
+        }`
+      : "",
+    audit.beforeVirtualStock !== undefined &&
+    audit.afterVirtualStock !== undefined &&
+    audit.beforeVirtualStock !== audit.afterVirtualStock
+      ? `virtual ${audit.beforeVirtualStock ? "Y" : "N"} → ${
+          audit.afterVirtualStock ? "Y" : "N"
+        }`
+      : "",
+  ].filter(Boolean);
+
+  return (
+    <div
+      className={`cms-stock-audit-card ${tone} ${
+        context ? "is-context" : ""
+      } ${audit.changeQuantity !== 0 && !audit.matchedMovementId ? "is-unmatched" : ""}`}
+    >
+      <header>
+        <strong>
+          {context ? "기준 전 · " : ""}
+          {stockQuantityAuditTypeLabel(audit.auditType)}
+        </strong>
+        <time>{audit.createdAt}</time>
+      </header>
+      <div className="cms-stock-audit-change">
+        <b>
+          {audit.changeQuantity > 0 ? "+" : ""}
+          {currency(audit.changeQuantity)}개
+        </b>
+        <span>
+          DB 수량 {optionalQuantityText(audit.beforeQuantity)} →{" "}
+          {optionalQuantityText(audit.afterQuantity)}
+        </span>
+        <em>{movementStatus}</em>
+      </div>
+      <p>
+        stock#{audit.stockId || "-"} · {audit.mysqlUser || "DB 사용자 미기록"}
+        {audit.connectionId ? ` · conn#${audit.connectionId}` : ""}
+      </p>
+      {profileChanges.length > 0 && <p>{profileChanges.join(" · ")}</p>}
     </div>
   );
 }
