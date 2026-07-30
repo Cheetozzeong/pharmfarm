@@ -589,9 +589,7 @@ function isNativeAppShell() {
 }
 
 function getNativeBarcodeTypes(scanCodeMode: ScanCodeMode) {
-  return scanCodeMode === "barcode"
-    ? ["ean13", "itf14"]
-    : ["datamatrix", "qr"];
+  return scanCodeMode === "barcode" ? ["ean13", "itf14"] : ["datamatrix", "qr"];
 }
 
 function postNativeScannerMessage(
@@ -4366,7 +4364,8 @@ function MobileApp() {
     async (qr: QrFields) => {
       const hasDuplicateCheckSn = hasPhysicalSn(qr.sn);
       const alreadyReceived = traces.some(
-        (trace) => hasDuplicateCheckSn && trace.pc === qr.pc && trace.sn === qr.sn,
+        (trace) =>
+          hasDuplicateCheckSn && trace.pc === qr.pc && trace.sn === qr.sn,
       );
       const duplicated = receiptQueue.some(
         (item) =>
@@ -4591,10 +4590,7 @@ function MobileApp() {
   );
 
   const handlePayload = useCallback(
-    (
-      payload: string,
-      forcedScanCodeMode?: ScanCodeMode,
-    ): ScanHandleResult => {
+    (payload: string, forcedScanCodeMode?: ScanCodeMode): ScanHandleResult => {
       const effectiveScanCodeMode = forcedScanCodeMode ?? scanCodeMode;
       const qr =
         effectiveScanCodeMode === "barcode"
@@ -4653,7 +4649,8 @@ function MobileApp() {
       }
       const hasDuplicateCheckSn = hasPhysicalSn(qr.sn);
       const alreadyReceived = traces.some(
-        (trace) => hasDuplicateCheckSn && trace.pc === qr.pc && trace.sn === qr.sn,
+        (trace) =>
+          hasDuplicateCheckSn && trace.pc === qr.pc && trace.sn === qr.sn,
       );
       const duplicated = receiptQueue.some(
         (item) =>
@@ -4727,10 +4724,7 @@ function MobileApp() {
       if (!value) return;
 
       const now = Date.now();
-      if (
-        scanCodeMode === "barcode" &&
-        now < rejectedBarcodeUntilRef.current
-      ) {
+      if (scanCodeMode === "barcode" && now < rejectedBarcodeUntilRef.current) {
         return;
       }
 
@@ -6410,8 +6404,8 @@ function WholesalerScreen({
             <span>도매처 변경 확인</span>
             <strong>입고 목록 {preservedQueueCount}건에 적용할까요?</strong>
             <p>
-              입력한 약품은 삭제되지 않고, 선택한 도매처가 현재 입고 목록
-              전체에 적용됩니다.
+              입력한 약품은 삭제되지 않고, 선택한 도매처가 현재 입고 목록 전체에
+              적용됩니다.
             </p>
             <div className="wholesaler-change-summary">
               {currentWholesalerName && (
@@ -6484,7 +6478,7 @@ function ReceiptReviewScreen({
         note={selectedWholesaler?.name ?? ""}
         onBack={onBack}
       />
-      <section className="scroll-body">
+      <section className="scroll-body receipt-review-body">
         <div className="metrics is-three">
           <Metric
             label="입고 가능"
@@ -6675,7 +6669,7 @@ function ReceiptMatchScreen({
         }
         onBack={onBack}
       />
-      <section className="scroll-body">
+      <section className="scroll-body receipt-match-body">
         {queue.length > 0 ? (
           <>
             <div
@@ -6771,7 +6765,7 @@ function ReceiptMatchScreen({
             테스트 SN 재생성
           </button>
         )}
-        {nonEmptyGroups.length > 1 && (
+        {/* {nonEmptyGroups.length > 1 && (
           <div className="receipt-step-actions">
             <button
               className="secondary-btn"
@@ -6792,30 +6786,32 @@ function ReceiptMatchScreen({
               다음 단계
             </button>
           </div>
-        )}
+        )} */}
         {issueCount > 0 && (
           <p className="receipt-bottom-warning">{commitBlockedReason}</p>
         )}
         {submitErrorMessage && (
           <p className="receipt-bottom-error">{submitErrorMessage}</p>
         )}
-        {issueCount > 0 && (
-          <button className="secondary-btn" type="button" onClick={onIssues}>
-            미해결 이슈 보기
+        <div style={{ display: "flex", gap: "10px" }}>
+          {issueCount > 0 && (
+            <button className="secondary-btn" type="button" onClick={onIssues}>
+              미해결 이슈 보기
+            </button>
+          )}
+          <button
+            className="primary-btn"
+            type="button"
+            disabled={queue.length === 0 || commitDisabled}
+            onClick={onCommit}
+          >
+            {commitDisabled
+              ? "해결 후 입고 확정"
+              : issueCount > 0
+                ? `${eligibleCount}건만 입고 확정`
+                : `${eligibleCount}건 입고 확정`}
           </button>
-        )}
-        <button
-          className="primary-btn"
-          type="button"
-          disabled={queue.length === 0 || commitDisabled}
-          onClick={onCommit}
-        >
-          {commitDisabled
-            ? "해결 후 입고 확정"
-            : issueCount > 0
-              ? `${eligibleCount}건만 입고 확정`
-              : `${eligibleCount}건 입고 확정`}
-        </button>
+        </div>
       </BottomBar>
       <ReceiptCandidateSheet
         sheet={candidateSheet}
@@ -6869,7 +6865,7 @@ function ReceiptIssuesScreen({
   return (
     <>
       <Header title="미해결 이슈" note={`${items.length}건`} onBack={onBack} />
-      <section className="scroll-body">
+      <section className="scroll-body receipt-issues-body">
         {items.length > 0 ? (
           <div className="receipt-fix-list">
             {items.map((item) => (
@@ -9437,8 +9433,7 @@ function CmsApp({
     wholesalers.find((wholesaler) => wholesaler.id === selectedWholesalerId) ??
     wholesalers[0];
   const selectedAccount =
-    accounts.find((account) => account.id === selectedAccountId) ??
-    accounts[0];
+    accounts.find((account) => account.id === selectedAccountId) ?? accounts[0];
   const filteredDeductionRecords = useMemo(() => {
     const filtered =
       deductionFilter === "ALL"
@@ -9451,9 +9446,9 @@ function CmsApp({
                   record.substitutionRole === "SUBSTITUTE" ||
                   (record.substituteQuantity ?? 0) > 0,
               )
-          : deductionRecords.filter(
-              (record) => record.status === deductionFilter,
-            );
+            : deductionRecords.filter(
+                (record) => record.status === deductionFilter,
+              );
     return sortCmsDeductionRecords(
       filtered,
       prescriptionSortKey,
@@ -9479,9 +9474,9 @@ function CmsApp({
             ? prescriptionRecords.filter(
                 (record) => record.substitutionReplacementCount > 0,
               )
-          : prescriptionRecords.filter(
-              (record) => record.status === deductionFilter,
-            );
+            : prescriptionRecords.filter(
+                (record) => record.status === deductionFilter,
+              );
     return sortCmsPrescriptionRecords(
       filtered,
       prescriptionSortKey,
@@ -9796,445 +9791,452 @@ function CmsApp({
     };
   }, [masterPage, masterPageInfo, masters]);
 
-  const refreshCms = useCallback(async (options?: {
-    prescriptionFilter?: CmsDeductionFilter;
-  }) => {
-    if (!hasStoredAuthTokens()) {
-      setAuthAccount(null);
-      setApiState("unauthorized");
-      setApiMessage("관리자 로그인이 필요합니다.");
-      setCmsReady(true);
-      return false;
-    }
+  const refreshCms = useCallback(
+    async (options?: { prescriptionFilter?: CmsDeductionFilter }) => {
+      if (!hasStoredAuthTokens()) {
+        setAuthAccount(null);
+        setApiState("unauthorized");
+        setApiMessage("관리자 로그인이 필요합니다.");
+        setCmsReady(true);
+        return false;
+      }
 
-    setApiState("checking");
-    try {
-      const accountResponse = await apiFetch<unknown>("/auth/me");
-      const nextAccount = storeAuthAccount(
-        normalizeAuthAccount(
-          accountResponse,
-          getStoredAccessToken() ?? undefined,
-        ),
-      );
-      setAuthAccount(nextAccount);
+      setApiState("checking");
+      try {
+        const accountResponse = await apiFetch<unknown>("/auth/me");
+        const nextAccount = storeAuthAccount(
+          normalizeAuthAccount(
+            accountResponse,
+            getStoredAccessToken() ?? undefined,
+          ),
+        );
+        setAuthAccount(nextAccount);
 
-      const targetPage = canAccessCmsPage(nextAccount, page)
-        ? page
-        : "dashboard";
-      const throwRejected = (results: PromiseSettledResult<unknown>[]) => {
-        const rejected = results.find(
-          (result): result is PromiseRejectedResult =>
-            result.status === "rejected",
-        );
-        if (rejected) throw rejected.reason;
-      };
-
-      if (targetPage === "dashboard") {
-        const dashboardResult = await optionalCmsApiFetch<unknown>("/dashboard");
-        setDashboardData(
-          dashboardResult ? normalizeCmsDashboard(dashboardResult) : null,
-        );
-        setDeductionRecords([]);
-      } else if (targetPage === "master") {
-        const masterParams = new URLSearchParams();
-        masterParams.set("page", String(Math.max(0, masterPage - 1)));
-        masterParams.set("size", String(CMS_PAGE_SIZES.master));
-        if (masterQuery.trim()) {
-          masterParams.set("keyword", masterQuery.trim());
-        }
-        if (includeInactive) masterParams.set("includeInactive", "true");
-        const response = await apiFetch<unknown>(
-          `/drug-masters${masterParams.toString() ? `?${masterParams}` : ""}`,
-        );
-        const pageResponse = normalizeCmsPageResponse(
-          response,
-          CMS_PAGE_SIZES.master,
-        );
-        setMasters(pageResponse.items.map(normalizeCmsMaster));
-        setMasterPageInfo(pageResponse.pageInfo);
-      } else if (targetPage === "accounts") {
-        const accountParams = new URLSearchParams();
-        if (accountQuery.trim()) {
-          accountParams.set("keyword", accountQuery.trim());
-        }
-        const response = await apiFetch<unknown>(
-          `/auth/admin/accounts${accountParams.toString() ? `?${accountParams}` : ""}`,
-        );
-        const results = arrayPayload(response).map(normalizeCmsAccount);
-        setAccounts(results);
-        setSelectedAccountId((current) =>
-          results.some((account) => account.id === current)
-            ? current
-            : (results[0]?.id ?? ""),
-        );
-      } else if (targetPage === "inventory") {
-        const trimmed = stockQuery.trim();
-        const normalizedKeyword = normalizeSearchText(trimmed);
-        if (normalizedKeyword.length === 1) {
-          setCmsStockSearchStatus("short");
-          setApiMessage("재고 검색어는 2글자 이상 입력해 주세요.");
-        } else {
-          const stockParams = new URLSearchParams({
-            sortBy: stockSortKey,
-            sortDirection: stockSortDirection,
-          });
-          if (trimmed) stockParams.set("keyword", trimmed);
-          if (stockControlledFilter === "CONTROLLED") {
-            stockParams.set("controlledOnly", "true");
-          }
-          setCmsStockSearchStatus("loading");
-          const response = await apiFetch<unknown>(`/stocks?${stockParams}`);
-          const results = sortStockItems(
-            filterStocksByControlledFilter(
-              arrayPayload(response).map(normalizeStock),
-              stockControlledFilter,
-            ),
-            stockSortKey,
-            stockSortDirection,
+        const targetPage = canAccessCmsPage(nextAccount, page)
+          ? page
+          : "dashboard";
+        const throwRejected = (results: PromiseSettledResult<unknown>[]) => {
+          const rejected = results.find(
+            (result): result is PromiseRejectedResult =>
+              result.status === "rejected",
           );
-          setStocks(results);
-          setSelectedStockId((current) =>
-            results.some((stock) => stock.id === current)
+          if (rejected) throw rejected.reason;
+        };
+
+        if (targetPage === "dashboard") {
+          const dashboardResult =
+            await optionalCmsApiFetch<unknown>("/dashboard");
+          setDashboardData(
+            dashboardResult ? normalizeCmsDashboard(dashboardResult) : null,
+          );
+          setDeductionRecords([]);
+        } else if (targetPage === "master") {
+          const masterParams = new URLSearchParams();
+          masterParams.set("page", String(Math.max(0, masterPage - 1)));
+          masterParams.set("size", String(CMS_PAGE_SIZES.master));
+          if (masterQuery.trim()) {
+            masterParams.set("keyword", masterQuery.trim());
+          }
+          if (includeInactive) masterParams.set("includeInactive", "true");
+          const response = await apiFetch<unknown>(
+            `/drug-masters${masterParams.toString() ? `?${masterParams}` : ""}`,
+          );
+          const pageResponse = normalizeCmsPageResponse(
+            response,
+            CMS_PAGE_SIZES.master,
+          );
+          setMasters(pageResponse.items.map(normalizeCmsMaster));
+          setMasterPageInfo(pageResponse.pageInfo);
+        } else if (targetPage === "accounts") {
+          const accountParams = new URLSearchParams();
+          if (accountQuery.trim()) {
+            accountParams.set("keyword", accountQuery.trim());
+          }
+          const response = await apiFetch<unknown>(
+            `/auth/admin/accounts${accountParams.toString() ? `?${accountParams}` : ""}`,
+          );
+          const results = arrayPayload(response).map(normalizeCmsAccount);
+          setAccounts(results);
+          setSelectedAccountId((current) =>
+            results.some((account) => account.id === current)
               ? current
               : (results[0]?.id ?? ""),
           );
-          setCmsStockSearchStatus("done");
-        }
-      } else if (targetPage === "inventory-decreases") {
-        const trimmedPharmacyId = stockDecreasePharmacyId.trim();
-        const trimmedQuery = stockDecreaseQuery.trim();
-        const normalizedKeyword = normalizeSearchText(trimmedQuery);
-        if (!trimmedPharmacyId) {
-          setStockDecreaseRecords([]);
-          setStockDecreaseSearchStatus("idle");
-          setStockDecreaseCoverage("needs-pharmacy");
-          setApiMessage("차감 이력을 확인할 약국 ID를 입력해 주세요.");
-        } else if (normalizedKeyword.length === 1) {
-          setStockDecreaseSearchStatus("short");
-          setApiMessage("약품 검색어는 2글자 이상 입력해 주세요.");
-        } else {
-          const decreaseParams = new URLSearchParams({
-            pharmacyId: trimmedPharmacyId,
-            sortBy: "createdAt",
-            sortDirection: "desc",
-          });
-          if (trimmedQuery) decreaseParams.set("keyword", trimmedQuery);
-          if (stockDecreaseStartDate) {
-            decreaseParams.set("startDate", stockDecreaseStartDate);
+        } else if (targetPage === "inventory") {
+          const trimmed = stockQuery.trim();
+          const normalizedKeyword = normalizeSearchText(trimmed);
+          if (normalizedKeyword.length === 1) {
+            setCmsStockSearchStatus("short");
+            setApiMessage("재고 검색어는 2글자 이상 입력해 주세요.");
+          } else {
+            const stockParams = new URLSearchParams({
+              sortBy: stockSortKey,
+              sortDirection: stockSortDirection,
+            });
+            if (trimmed) stockParams.set("keyword", trimmed);
+            if (stockControlledFilter === "CONTROLLED") {
+              stockParams.set("controlledOnly", "true");
+            }
+            setCmsStockSearchStatus("loading");
+            const response = await apiFetch<unknown>(`/stocks?${stockParams}`);
+            const results = sortStockItems(
+              filterStocksByControlledFilter(
+                arrayPayload(response).map(normalizeStock),
+                stockControlledFilter,
+              ),
+              stockSortKey,
+              stockSortDirection,
+            );
+            setStocks(results);
+            setSelectedStockId((current) =>
+              results.some((stock) => stock.id === current)
+                ? current
+                : (results[0]?.id ?? ""),
+            );
+            setCmsStockSearchStatus("done");
           }
-          if (stockDecreaseEndDate) {
-            decreaseParams.set("endDate", stockDecreaseEndDate);
-          }
-          setStockDecreaseSearchStatus("loading");
-          const movementValue = await optionalCmsApiFetch<unknown>(
-            `/stock-movements/decreases?${decreaseParams}`,
-          );
+        } else if (targetPage === "inventory-decreases") {
+          const trimmedPharmacyId = stockDecreasePharmacyId.trim();
+          const trimmedQuery = stockDecreaseQuery.trim();
+          const normalizedKeyword = normalizeSearchText(trimmedQuery);
+          if (!trimmedPharmacyId) {
+            setStockDecreaseRecords([]);
+            setStockDecreaseSearchStatus("idle");
+            setStockDecreaseCoverage("needs-pharmacy");
+            setApiMessage("차감 이력을 확인할 약국 ID를 입력해 주세요.");
+          } else if (normalizedKeyword.length === 1) {
+            setStockDecreaseSearchStatus("short");
+            setApiMessage("약품 검색어는 2글자 이상 입력해 주세요.");
+          } else {
+            const decreaseParams = new URLSearchParams({
+              pharmacyId: trimmedPharmacyId,
+              sortBy: "createdAt",
+              sortDirection: "desc",
+            });
+            if (trimmedQuery) decreaseParams.set("keyword", trimmedQuery);
+            if (stockDecreaseStartDate) {
+              decreaseParams.set("startDate", stockDecreaseStartDate);
+            }
+            if (stockDecreaseEndDate) {
+              decreaseParams.set("endDate", stockDecreaseEndDate);
+            }
+            setStockDecreaseSearchStatus("loading");
+            const movementValue = await optionalCmsApiFetch<unknown>(
+              `/stock-movements/decreases?${decreaseParams}`,
+            );
 
-          if (movementValue) {
-            const nextRecords = sortCmsStockDecreaseRecords(
-              stockMovementPayload(movementValue)
-                .map(normalizeCmsStockMovementDecrease)
-                .filter(
+            if (movementValue) {
+              const nextRecords = sortCmsStockDecreaseRecords(
+                stockMovementPayload(movementValue)
+                  .map(normalizeCmsStockMovementDecrease)
+                  .filter(
+                    (record) =>
+                      (!record.pharmacyId ||
+                        record.pharmacyId === trimmedPharmacyId) &&
+                      stockDecreaseMatchesQuery(record, trimmedQuery),
+                  ),
+              );
+              setStockDecreaseRecords(nextRecords);
+              setStockDecreaseCoverage("ready");
+              setStockDecreaseSearchStatus("done");
+            } else {
+              const [deductionResult, returnResult] = await Promise.allSettled([
+                optionalCmsApiFetch<unknown>(
+                  `/prescription-deductions?${decreaseParams}`,
+                ),
+                optionalCmsApiFetch<unknown>(
+                  `/returns/histories?${decreaseParams}`,
+                ),
+              ]);
+              throwRejected([deductionResult, returnResult]);
+
+              const deductionValue =
+                deductionResult.status === "fulfilled"
+                  ? deductionResult.value
+                  : null;
+              const returnValue =
+                returnResult.status === "fulfilled" ? returnResult.value : null;
+              const sourceFailures = [deductionValue, returnValue].filter(
+                (value) => value === null,
+              ).length;
+              const deductions = deductionValue
+                ? deductionPayload(deductionValue).map(normalizeCmsDeduction)
+                : [];
+              const histories = returnValue
+                ? returnHistoryPayload(returnValue).map(
+                    normalizeCmsReturnHistory,
+                  )
+                : [];
+              const nextRecords = sortCmsStockDecreaseRecords(
+                [
+                  ...deductions.flatMap(stockDecreaseRecordsFromDeduction),
+                  ...histories.map(stockDecreaseRecordFromReturnHistory),
+                ].filter(
                   (record) =>
                     (!record.pharmacyId ||
                       record.pharmacyId === trimmedPharmacyId) &&
                     stockDecreaseMatchesQuery(record, trimmedQuery),
                 ),
-            );
-            setStockDecreaseRecords(nextRecords);
-            setStockDecreaseCoverage("ready");
-            setStockDecreaseSearchStatus("done");
+              );
+
+              setStockDecreaseRecords(nextRecords);
+              setStockDecreaseCoverage(
+                sourceFailures === 2 ? "unavailable" : "partial",
+              );
+              setStockDecreaseSearchStatus(
+                sourceFailures === 2 ? "error" : "done",
+              );
+            }
+          }
+        } else if (targetPage === "inventory-snapshot-diff") {
+          const trimmedPharmacyId = stockSnapshotDiffPharmacyId.trim();
+          const trimmedQuery = stockSnapshotDiffQuery.trim();
+          const normalizedKeyword = normalizeSearchText(trimmedQuery);
+          if (!trimmedPharmacyId) {
+            setStockSnapshotDiffRecords([]);
+            setStockSnapshotDiffSearchStatus("idle");
+            setApiMessage("스냅샷과 비교할 약국 ID를 입력해 주세요.");
+          } else if (normalizedKeyword.length === 1) {
+            setStockSnapshotDiffSearchStatus("short");
+            setApiMessage("약품 검색어는 2글자 이상 입력해 주세요.");
           } else {
-            const [deductionResult, returnResult] = await Promise.allSettled([
-              optionalCmsApiFetch<unknown>(
-                `/prescription-deductions?${decreaseParams}`,
-              ),
-              optionalCmsApiFetch<unknown>(
-                `/returns/histories?${decreaseParams}`,
-              ),
-            ]);
-            throwRejected([deductionResult, returnResult]);
-
-            const deductionValue =
-              deductionResult.status === "fulfilled"
-                ? deductionResult.value
-                : null;
-            const returnValue =
-              returnResult.status === "fulfilled" ? returnResult.value : null;
-            const sourceFailures = [deductionValue, returnValue].filter(
-              (value) => value === null,
-            ).length;
-            const deductions = deductionValue
-              ? deductionPayload(deductionValue).map(normalizeCmsDeduction)
-              : [];
-            const histories = returnValue
-              ? returnHistoryPayload(returnValue).map(normalizeCmsReturnHistory)
-              : [];
-            const nextRecords = sortCmsStockDecreaseRecords(
-              [
-                ...deductions.flatMap(stockDecreaseRecordsFromDeduction),
-                ...histories.map(stockDecreaseRecordFromReturnHistory),
-              ].filter(
-                (record) =>
-                  (!record.pharmacyId ||
-                    record.pharmacyId === trimmedPharmacyId) &&
-                  stockDecreaseMatchesQuery(record, trimmedQuery),
-              ),
-            );
-
-            setStockDecreaseRecords(nextRecords);
-            setStockDecreaseCoverage(
-              sourceFailures === 2 ? "unavailable" : "partial",
-            );
-            setStockDecreaseSearchStatus(
-              sourceFailures === 2 ? "error" : "done",
-            );
-          }
-        }
-      } else if (targetPage === "inventory-snapshot-diff") {
-        const trimmedPharmacyId = stockSnapshotDiffPharmacyId.trim();
-        const trimmedQuery = stockSnapshotDiffQuery.trim();
-        const normalizedKeyword = normalizeSearchText(trimmedQuery);
-        if (!trimmedPharmacyId) {
-          setStockSnapshotDiffRecords([]);
-          setStockSnapshotDiffSearchStatus("idle");
-          setApiMessage("스냅샷과 비교할 약국 ID를 입력해 주세요.");
-        } else if (normalizedKeyword.length === 1) {
-          setStockSnapshotDiffSearchStatus("short");
-          setApiMessage("약품 검색어는 2글자 이상 입력해 주세요.");
-        } else {
-          const diffParams = new URLSearchParams({
-            pharmacyId: trimmedPharmacyId,
-          });
-          if (trimmedQuery) diffParams.set("keyword", trimmedQuery);
-          setStockSnapshotDiffSearchStatus("loading");
-          const response = await apiFetch<unknown>(
-            `/stocks/snapshot-differences?${diffParams}`,
-          );
-          setStockSnapshotDiffRecords(
-            arrayPayload(response)
-              .map(normalizeCmsStockSnapshotDiff)
-              .sort(sortCmsStockSnapshotDiffRecords),
-          );
-          setStockSnapshotDiffSearchStatus("done");
-        }
-      } else if (targetPage === "inventory-shortages") {
-        const trimmed = shortageQuery.trim();
-        const normalizedKeyword = normalizeSearchText(trimmed);
-        if (normalizedKeyword.length === 1) {
-          setShortageSearchStatus("short");
-          setApiMessage("초과 처방 검색어는 2글자 이상 입력해 주세요.");
-        } else {
-          const shortageParams = new URLSearchParams({
-            sortBy: shortageSortKey,
-            sortDirection: shortageSortDirection,
-          });
-          if (shortageStartDate)
-            shortageParams.set("startDate", shortageStartDate);
-          if (shortageEndDate) shortageParams.set("endDate", shortageEndDate);
-          if (trimmed) shortageParams.set("keyword", trimmed);
-          setShortageSearchStatus("loading");
-          const response = await optionalCmsApiFetch<unknown>(
-            `/prescription-shortages?${shortageParams}`,
-          );
-          setDeductionRecords(
-            response
-              ? deductionPayload(response).map(normalizeCmsDeduction)
-              : [],
-          );
-          setShortageSearchStatus("done");
-        }
-      } else if (targetPage === "return-reviews") {
-        const [reviewResult, historyResult, stockResult] =
-          await Promise.allSettled([
-            apiFetch<unknown>("/returns/reviews"),
-            apiFetch<unknown>("/returns/histories"),
-            apiFetch<unknown>(
-              "/stocks?includeZero=false&sortBy=name&sortDirection=asc",
-            ),
-          ]);
-        throwRejected([reviewResult, historyResult, stockResult]);
-
-        if (reviewResult.status === "fulfilled") {
-          setReturnReviews(
-            returnReviewPayload(reviewResult.value).map(
-              normalizeCmsReturnReview,
-            ),
-          );
-        }
-        if (historyResult.status === "fulfilled") {
-          setReturnHistories(
-            returnHistoryPayload(historyResult.value).map(
-              normalizeCmsReturnHistory,
-            ),
-          );
-        }
-        if (stockResult.status === "fulfilled") {
-          setStocks(arrayPayload(stockResult.value).map(normalizeStock));
-        }
-      } else if (targetPage === "prescriptions") {
-        const trimmed = prescriptionQuery.trim();
-        const normalizedKeyword = normalizeSearchText(trimmed);
-        if (normalizedKeyword.length === 1) {
-          setPrescriptionSearchStatus("short");
-          setApiMessage("처방 검색어는 2글자 이상 입력해 주세요.");
-        } else {
-          const prescriptionParams = new URLSearchParams({
-            sortBy: prescriptionSortKey,
-            sortDirection: prescriptionSortDirection,
-          });
-          if (prescriptionStartDate) {
-            prescriptionParams.set("startDate", prescriptionStartDate);
-          }
-          if (prescriptionEndDate) {
-            prescriptionParams.set("endDate", prescriptionEndDate);
-          }
-          if (trimmed) prescriptionParams.set("keyword", trimmed);
-          const effectivePrescriptionFilter =
-            options?.prescriptionFilter ?? deductionFilter;
-          if (effectivePrescriptionFilter === "SUBSTITUTION_ITEMS") {
-            prescriptionParams.set("filter", "SUBSTITUTION_ITEMS");
-          }
-          setPrescriptionSearchStatus("loading");
-          const queryString = prescriptionParams.toString();
-          const prescriptionResult = await optionalCmsApiFetch<unknown>(
-            `/prescription-overviews?${queryString}`,
-          );
-          if (prescriptionResult) {
-            setPrescriptionRecords(
-              prescriptionPayload(prescriptionResult).map(
-                normalizeCmsPrescriptionRecord,
-              ),
-            );
-          } else {
-            const [deductionResult, shortageResult] = await Promise.allSettled([
-              apiFetch<unknown>(`/prescription-deductions?${queryString}`),
-              optionalCmsApiFetch<unknown>(
-                `/prescription-shortages?${queryString}`,
-              ),
-            ]);
-            throwRejected([deductionResult, shortageResult]);
-
-            const deductions =
-              deductionResult.status === "fulfilled"
-                ? deductionPayload(deductionResult.value).map(
-                    normalizeCmsDeduction,
-                  )
-                : [];
-            const shortages =
-              shortageResult.status === "fulfilled" && shortageResult.value
-                ? deductionPayload(shortageResult.value).map(
-                    normalizeCmsDeduction,
-                  )
-                : [];
-            const merged = mergeDeductionRecords(deductions, shortages);
-            setDeductionRecords(merged);
-            setPrescriptionRecords(
-              createPrescriptionRecordsFromDeductions(merged),
-            );
-          }
-          setPrescriptionSearchStatus("done");
-        }
-      } else if (targetPage === "purchase") {
-        const targetPharmacyId = baropharmCookieDraft.pharmacyId.trim();
-        const pharmacyParams = targetPharmacyId
-          ? `?${new URLSearchParams({ pharmacyId: targetPharmacyId })}`
-          : "";
-        const cookieRequest = targetPharmacyId
-          ? apiFetch<unknown>(
-              `/baropharm/cookie?${new URLSearchParams({
-                pharmacyId: targetPharmacyId,
-              })}`,
-            )
-          : Promise.resolve({
-              registered: false,
-              status: "UNKNOWN",
-              maskedCookie: "",
-              message: "대상 약국 ID를 입력해 주세요.",
+            const diffParams = new URLSearchParams({
+              pharmacyId: trimmedPharmacyId,
             });
-        const [cookieResult, purchaseResult, syncResult] =
-          await Promise.allSettled([
-            cookieRequest,
-            targetPharmacyId
-              ? apiFetch<unknown>(`/purchase-histories${pharmacyParams}`)
-              : Promise.resolve([]),
-            targetPharmacyId
-              ? apiFetch<unknown>(
-                  `/purchase-histories/sync-jobs${pharmacyParams}`,
-                )
-              : Promise.resolve([]),
-          ]);
-        throwRejected([cookieResult, purchaseResult, syncResult]);
+            if (trimmedQuery) diffParams.set("keyword", trimmedQuery);
+            setStockSnapshotDiffSearchStatus("loading");
+            const response = await apiFetch<unknown>(
+              `/stocks/snapshot-differences?${diffParams}`,
+            );
+            setStockSnapshotDiffRecords(
+              arrayPayload(response)
+                .map(normalizeCmsStockSnapshotDiff)
+                .sort(sortCmsStockSnapshotDiffRecords),
+            );
+            setStockSnapshotDiffSearchStatus("done");
+          }
+        } else if (targetPage === "inventory-shortages") {
+          const trimmed = shortageQuery.trim();
+          const normalizedKeyword = normalizeSearchText(trimmed);
+          if (normalizedKeyword.length === 1) {
+            setShortageSearchStatus("short");
+            setApiMessage("초과 처방 검색어는 2글자 이상 입력해 주세요.");
+          } else {
+            const shortageParams = new URLSearchParams({
+              sortBy: shortageSortKey,
+              sortDirection: shortageSortDirection,
+            });
+            if (shortageStartDate)
+              shortageParams.set("startDate", shortageStartDate);
+            if (shortageEndDate) shortageParams.set("endDate", shortageEndDate);
+            if (trimmed) shortageParams.set("keyword", trimmed);
+            setShortageSearchStatus("loading");
+            const response = await optionalCmsApiFetch<unknown>(
+              `/prescription-shortages?${shortageParams}`,
+            );
+            setDeductionRecords(
+              response
+                ? deductionPayload(response).map(normalizeCmsDeduction)
+                : [],
+            );
+            setShortageSearchStatus("done");
+          }
+        } else if (targetPage === "return-reviews") {
+          const [reviewResult, historyResult, stockResult] =
+            await Promise.allSettled([
+              apiFetch<unknown>("/returns/reviews"),
+              apiFetch<unknown>("/returns/histories"),
+              apiFetch<unknown>(
+                "/stocks?includeZero=false&sortBy=name&sortDirection=asc",
+              ),
+            ]);
+          throwRejected([reviewResult, historyResult, stockResult]);
 
-        if (cookieResult.status === "fulfilled") {
-          setCookieState(normalizeCmsCookie(cookieResult.value));
+          if (reviewResult.status === "fulfilled") {
+            setReturnReviews(
+              returnReviewPayload(reviewResult.value).map(
+                normalizeCmsReturnReview,
+              ),
+            );
+          }
+          if (historyResult.status === "fulfilled") {
+            setReturnHistories(
+              returnHistoryPayload(historyResult.value).map(
+                normalizeCmsReturnHistory,
+              ),
+            );
+          }
+          if (stockResult.status === "fulfilled") {
+            setStocks(arrayPayload(stockResult.value).map(normalizeStock));
+          }
+        } else if (targetPage === "prescriptions") {
+          const trimmed = prescriptionQuery.trim();
+          const normalizedKeyword = normalizeSearchText(trimmed);
+          if (normalizedKeyword.length === 1) {
+            setPrescriptionSearchStatus("short");
+            setApiMessage("처방 검색어는 2글자 이상 입력해 주세요.");
+          } else {
+            const prescriptionParams = new URLSearchParams({
+              sortBy: prescriptionSortKey,
+              sortDirection: prescriptionSortDirection,
+            });
+            if (prescriptionStartDate) {
+              prescriptionParams.set("startDate", prescriptionStartDate);
+            }
+            if (prescriptionEndDate) {
+              prescriptionParams.set("endDate", prescriptionEndDate);
+            }
+            if (trimmed) prescriptionParams.set("keyword", trimmed);
+            const effectivePrescriptionFilter =
+              options?.prescriptionFilter ?? deductionFilter;
+            if (effectivePrescriptionFilter === "SUBSTITUTION_ITEMS") {
+              prescriptionParams.set("filter", "SUBSTITUTION_ITEMS");
+            }
+            setPrescriptionSearchStatus("loading");
+            const queryString = prescriptionParams.toString();
+            const prescriptionResult = await optionalCmsApiFetch<unknown>(
+              `/prescription-overviews?${queryString}`,
+            );
+            if (prescriptionResult) {
+              setPrescriptionRecords(
+                prescriptionPayload(prescriptionResult).map(
+                  normalizeCmsPrescriptionRecord,
+                ),
+              );
+            } else {
+              const [deductionResult, shortageResult] =
+                await Promise.allSettled([
+                  apiFetch<unknown>(`/prescription-deductions?${queryString}`),
+                  optionalCmsApiFetch<unknown>(
+                    `/prescription-shortages?${queryString}`,
+                  ),
+                ]);
+              throwRejected([deductionResult, shortageResult]);
+
+              const deductions =
+                deductionResult.status === "fulfilled"
+                  ? deductionPayload(deductionResult.value).map(
+                      normalizeCmsDeduction,
+                    )
+                  : [];
+              const shortages =
+                shortageResult.status === "fulfilled" && shortageResult.value
+                  ? deductionPayload(shortageResult.value).map(
+                      normalizeCmsDeduction,
+                    )
+                  : [];
+              const merged = mergeDeductionRecords(deductions, shortages);
+              setDeductionRecords(merged);
+              setPrescriptionRecords(
+                createPrescriptionRecordsFromDeductions(merged),
+              );
+            }
+            setPrescriptionSearchStatus("done");
+          }
+        } else if (targetPage === "purchase") {
+          const targetPharmacyId = baropharmCookieDraft.pharmacyId.trim();
+          const pharmacyParams = targetPharmacyId
+            ? `?${new URLSearchParams({ pharmacyId: targetPharmacyId })}`
+            : "";
+          const cookieRequest = targetPharmacyId
+            ? apiFetch<unknown>(
+                `/baropharm/cookie?${new URLSearchParams({
+                  pharmacyId: targetPharmacyId,
+                })}`,
+              )
+            : Promise.resolve({
+                registered: false,
+                status: "UNKNOWN",
+                maskedCookie: "",
+                message: "대상 약국 ID를 입력해 주세요.",
+              });
+          const [cookieResult, purchaseResult, syncResult] =
+            await Promise.allSettled([
+              cookieRequest,
+              targetPharmacyId
+                ? apiFetch<unknown>(`/purchase-histories${pharmacyParams}`)
+                : Promise.resolve([]),
+              targetPharmacyId
+                ? apiFetch<unknown>(
+                    `/purchase-histories/sync-jobs${pharmacyParams}`,
+                  )
+                : Promise.resolve([]),
+            ]);
+          throwRejected([cookieResult, purchaseResult, syncResult]);
+
+          if (cookieResult.status === "fulfilled") {
+            setCookieState(normalizeCmsCookie(cookieResult.value));
+          }
+          if (purchaseResult.status === "fulfilled") {
+            setPurchaseHistories(
+              arrayPayload(purchaseResult.value).map(normalizeCmsPurchase),
+            );
+          }
+          if (syncResult.status === "fulfilled") {
+            setSyncJobs(
+              arrayPayload(syncResult.value).map(normalizeCmsSyncJob),
+            );
+          }
+        } else if (targetPage === "wholesaler") {
+          if (normalizeSearchText(wholesalerQuery).length >= 2) {
+            const params = new URLSearchParams({ keyword: wholesalerQuery });
+            const response = await apiFetch<unknown>(`/wholesalers?${params}`);
+            const results = arrayPayload(response).map(normalizeWholesaler);
+            setWholesalers(results);
+            setSelectedWholesalerId((current) =>
+              results.some((wholesaler) => wholesaler.id === current)
+                ? current
+                : (results[0]?.id ?? ""),
+            );
+            setCmsWholesalerSearchStatus("done");
+          } else {
+            setWholesalers([]);
+            setSelectedWholesalerId("");
+            setCmsWholesalerSearchStatus("idle");
+          }
         }
-        if (purchaseResult.status === "fulfilled") {
-          setPurchaseHistories(
-            arrayPayload(purchaseResult.value).map(normalizeCmsPurchase),
-          );
-        }
-        if (syncResult.status === "fulfilled") {
-          setSyncJobs(arrayPayload(syncResult.value).map(normalizeCmsSyncJob));
-        }
-      } else if (targetPage === "wholesaler") {
-        if (normalizeSearchText(wholesalerQuery).length >= 2) {
-          const params = new URLSearchParams({ keyword: wholesalerQuery });
-          const response = await apiFetch<unknown>(`/wholesalers?${params}`);
-          const results = arrayPayload(response).map(normalizeWholesaler);
-          setWholesalers(results);
-          setSelectedWholesalerId((current) =>
-            results.some((wholesaler) => wholesaler.id === current)
-              ? current
-              : (results[0]?.id ?? ""),
-          );
-          setCmsWholesalerSearchStatus("done");
-        } else {
-          setWholesalers([]);
-          setSelectedWholesalerId("");
-          setCmsWholesalerSearchStatus("idle");
-        }
+
+        setApiState("connected");
+        setApiMessage("현재 화면 데이터 갱신 완료");
+        setCmsReady(true);
+        return true;
+      } catch (error) {
+        cmsFallback(error);
+        return false;
       }
-
-      setApiState("connected");
-      setApiMessage("현재 화면 데이터 갱신 완료");
-      setCmsReady(true);
-      return true;
-    } catch (error) {
-      cmsFallback(error);
-      return false;
-    }
-  }, [
-    accountQuery,
-    baropharmCookieDraft.pharmacyId,
-    cmsFallback,
-    deductionFilter,
-    includeInactive,
-    masterPage,
-    masterQuery,
-    page,
-    prescriptionEndDate,
-    prescriptionQuery,
-    prescriptionSortDirection,
-    prescriptionSortKey,
-    prescriptionStartDate,
-    shortageEndDate,
-    shortageQuery,
-    shortageSortDirection,
-    shortageSortKey,
-    shortageStartDate,
-    stockDecreaseEndDate,
-    stockDecreasePharmacyId,
-    stockDecreaseQuery,
-    stockDecreaseStartDate,
-    stockSnapshotDiffPharmacyId,
-    stockSnapshotDiffQuery,
-    stockControlledFilter,
-    stockSortDirection,
-    stockSortKey,
-    stockQuery,
-    wholesalerQuery,
-  ]);
+    },
+    [
+      accountQuery,
+      baropharmCookieDraft.pharmacyId,
+      cmsFallback,
+      deductionFilter,
+      includeInactive,
+      masterPage,
+      masterQuery,
+      page,
+      prescriptionEndDate,
+      prescriptionQuery,
+      prescriptionSortDirection,
+      prescriptionSortKey,
+      prescriptionStartDate,
+      shortageEndDate,
+      shortageQuery,
+      shortageSortDirection,
+      shortageSortKey,
+      shortageStartDate,
+      stockDecreaseEndDate,
+      stockDecreasePharmacyId,
+      stockDecreaseQuery,
+      stockDecreaseStartDate,
+      stockSnapshotDiffPharmacyId,
+      stockSnapshotDiffQuery,
+      stockControlledFilter,
+      stockSortDirection,
+      stockSortKey,
+      stockQuery,
+      wholesalerQuery,
+    ],
+  );
 
   useEffect(() => {
     void refreshCms();
@@ -11875,7 +11877,8 @@ function normalizeCmsStockSnapshotItem(
   const item = unwrapObjectPayload(raw);
   const stockNo = optionalText(item.stockNo ?? item.stock_no);
   const fairStockQuantity =
-    item.fairStockQuantity === undefined && item.fair_stock_quantity === undefined
+    item.fairStockQuantity === undefined &&
+    item.fair_stock_quantity === undefined
       ? undefined
       : finiteNumber(item.fairStockQuantity ?? item.fair_stock_quantity);
   const buyPrice =
@@ -11891,10 +11894,7 @@ function normalizeCmsStockSnapshotItem(
     buyPrice,
     corporationCode:
       optionalText(item.corporationCode ?? item.corporation_code) ?? "-",
-    capturedAt: formatTransactionAt(
-      item.capturedAt ?? item.captured_at,
-      "-",
-    ),
+    capturedAt: formatTransactionAt(item.capturedAt ?? item.captured_at, "-"),
     updatedAt: formatTransactionAt(item.updatedAt ?? item.updated_at, "-"),
   };
 }
@@ -11915,7 +11915,8 @@ function normalizeCmsStockSnapshotMovement(
     changeQuantity: finiteNumber(item.changeQuantity ?? item.change_quantity),
     afterQuantity: finiteNumber(item.afterQuantity ?? item.after_quantity),
     reason: optionalText(item.reason) ?? "-",
-    referenceType: optionalText(item.referenceType ?? item.reference_type) ?? "",
+    referenceType:
+      optionalText(item.referenceType ?? item.reference_type) ?? "",
     referenceId: optionalText(item.referenceId ?? item.reference_id) ?? "",
     createdBy: optionalText(item.createdBy ?? item.created_by) ?? "-",
     createdAt: formatTransactionAt(item.createdAt ?? item.created_at, "-"),
@@ -13708,7 +13709,8 @@ function CmsHeader({
     accounts: "root 계정으로 약국 계정 정보와 비밀번호를 관리합니다.",
     inventory: "보유 재고와 수량을 관리합니다.",
     "inventory-decreases": "약국별 처방/반품 차감 이력을 통합 확인합니다.",
-    "inventory-snapshot-diff": "에이전트 스냅샷과 현재 재고 수량 차이를 확인합니다.",
+    "inventory-snapshot-diff":
+      "에이전트 스냅샷과 현재 재고 수량 차이를 확인합니다.",
     "inventory-shortages": "초과 처방과 부족 수량을 확인합니다.",
     "return-reviews": "앱에서 확정되지 않은 반품을 확인하고 처리합니다.",
     wholesaler: "약국별 도매처 정보를 관리합니다.",
@@ -14569,8 +14571,7 @@ function createFallbackDashboardData({
   syncJobs: CmsSyncJob[];
 }): CmsDashboardData {
   const failedDeductions = deductionRecords.filter(
-    (record) =>
-      record.status === "FAILED",
+    (record) => record.status === "FAILED",
   ).length;
   const shortageRecords = deductionRecords.filter(
     (record) => record.shortageQuantity > 0,
@@ -14722,10 +14723,12 @@ function CmsMasterPage({
           <div className="cms-pills">
             <span>전체 {pagination.totalItems}</span>
             <span>
-              현재 정상 {masters.filter((item) => item.status === "NORMAL").length}
+              현재 정상{" "}
+              {masters.filter((item) => item.status === "NORMAL").length}
             </span>
             <span>
-              현재 보정 {masters.filter((item) => item.status !== "NORMAL").length}
+              현재 보정{" "}
+              {masters.filter((item) => item.status !== "NORMAL").length}
             </span>
           </div>
           <label className="cms-search">
@@ -15310,7 +15313,9 @@ function CmsInventoryPage({
                     </span>
                   )}
                 </div>
-                <span>{formatInsuranceCodeForDisplay(stock.insuranceCode)}</span>
+                <span>
+                  {formatInsuranceCodeForDisplay(stock.insuranceCode)}
+                </span>
                 <span>{currency(stock.price)}원</span>
                 <span>{stock.quantity}</span>
                 <span>{currency(stock.quantity * stock.price)}원</span>
@@ -15650,7 +15655,9 @@ function CmsInventoryPage({
                 </div>
                 <CmsField
                   label="보험코드"
-                  value={formatInsuranceCodeForDisplay(sheetStock.insuranceCode)}
+                  value={formatInsuranceCodeForDisplay(
+                    sheetStock.insuranceCode,
+                  )}
                 />
                 <CmsField
                   label="현재 재고"
@@ -15916,7 +15923,8 @@ function CmsStockDecreaseHistoryPage({
   }> = [
     { count: records.length, label: "전체", value: "ALL" },
     {
-      count: records.filter((record) => record.source === "PRESCRIPTION").length,
+      count: records.filter((record) => record.source === "PRESCRIPTION")
+        .length,
       label: "처방",
       value: "PRESCRIPTION",
     },
@@ -15947,7 +15955,11 @@ function CmsStockDecreaseHistoryPage({
   return (
     <section className="cms-content cms-list-page cms-stock-decrease-page">
       <CmsKpiGrid columns={5}>
-        <CmsKpi label="조회 이력" value={`${visibleRecords.length}`} unit="건" />
+        <CmsKpi
+          label="조회 이력"
+          value={`${visibleRecords.length}`}
+          unit="건"
+        />
         <CmsKpi
           label="순 감소 수량"
           value={currency(totalDecreaseQuantity)}
@@ -16063,7 +16075,10 @@ function CmsStockDecreaseHistoryPage({
                 <span>
                   {record.referenceId || "-"}
                   <em>
-                    {[record.referenceType, record.stockId ? `stock#${record.stockId}` : ""]
+                    {[
+                      record.referenceType,
+                      record.stockId ? `stock#${record.stockId}` : "",
+                    ]
                       .filter(Boolean)
                       .join(" · ")}
                   </em>
@@ -16154,7 +16169,11 @@ function CmsStockSnapshotDiffPage({
   return (
     <section className="cms-content cms-list-page cms-stock-snapshot-diff-page">
       <CmsKpiGrid columns={4}>
-        <CmsKpi label="차이 품목" value={`${visibleRecords.length}`} unit="종" />
+        <CmsKpi
+          label="차이 품목"
+          value={`${visibleRecords.length}`}
+          unit="종"
+        />
         <CmsKpi
           label="예상 많음"
           value={`${expectedMoreCount}`}
@@ -16167,11 +16186,7 @@ function CmsStockSnapshotDiffPage({
           unit="종"
           tone={stockMoreCount > 0 ? "red" : undefined}
         />
-        <CmsKpi
-          label="총 차이 수량"
-          value={currency(totalAbsDiff)}
-          unit="개"
-        />
+        <CmsKpi label="총 차이 수량" value={currency(totalAbsDiff)} unit="개" />
       </CmsKpiGrid>
 
       <form
@@ -16206,8 +16221,9 @@ function CmsStockSnapshotDiffPage({
       <div className="cms-stock-decrease-notice is-ready">
         <strong>스냅샷 비교</strong>
         <span>
-          최신 스냅샷 재동기화가 있으면 해당 시점부터, 없으면 snapshot 캡처 시점부터 재고 이동을 반영해
-          현재 재고와 다른 품목만 표시합니다. 조회된 snapshot row {currency(snapshotRows)}건 기준입니다.
+          최신 스냅샷 재동기화가 있으면 해당 시점부터, 없으면 snapshot 캡처
+          시점부터 재고 이동을 반영해 현재 재고와 다른 품목만 표시합니다. 조회된
+          snapshot row {currency(snapshotRows)}건 기준입니다.
         </span>
       </div>
 
@@ -16303,7 +16319,9 @@ function CmsStockSnapshotDiffPage({
         >
           <div className="cms-sheet-body cms-stock-snapshot-detail-body">
             {!pharmacyId.trim() ? (
-              <p className="cms-empty">약국 ID를 입력하고 다시 조회해 주세요.</p>
+              <p className="cms-empty">
+                약국 ID를 입력하고 다시 조회해 주세요.
+              </p>
             ) : detailLoading ? (
               <p className="cms-empty">상세 이력을 불러오는 중입니다.</p>
             ) : activeDetail ? (
@@ -16352,7 +16370,8 @@ function CmsStockSnapshotDiffDetailView({
         <header>
           <strong>재고 변화 흐름</strong>
           <span>
-            기준 수량에서 시작해 이후 재고 이동을 순서대로 더하고 현재 재고와 비교합니다.
+            기준 수량에서 시작해 이후 재고 이동을 순서대로 더하고 현재 재고와
+            비교합니다.
           </span>
         </header>
         <div className="cms-stock-snapshot-baseline">
@@ -16435,7 +16454,9 @@ function CmsStockSnapshotDiffDetailView({
           {flowSteps.map((movement, index) => {
             const width = Math.max(
               10,
-              Math.round((Math.abs(movement.changeQuantity) / maxAbsChange) * 100),
+              Math.round(
+                (Math.abs(movement.changeQuantity) / maxAbsChange) * 100,
+              ),
             );
             const cause =
               [movement.referenceType, movement.referenceId]
@@ -16494,7 +16515,8 @@ function CmsStockSnapshotDiffDetailView({
                 {currency(summary.stockQuantity)}개
               </strong>
               <em>
-                movement를 모두 반영해도 차이 {summary.differenceQuantity > 0 ? "+" : ""}
+                movement를 모두 반영해도 차이{" "}
+                {summary.differenceQuantity > 0 ? "+" : ""}
                 {currency(summary.differenceQuantity)}개
                 {unmatchedAuditCount > 0
                   ? ` · movement 미연결 DB 변경 ${currency(
@@ -16516,7 +16538,8 @@ function CmsStockSnapshotDiffDetailView({
         <header>
           <strong>DB 실제 수량 변경</strong>
           <span>
-            실제 재고 수량 컬럼 변경을 DB trigger로 남긴 audit입니다. movement가 연결되지 않은 행이 누락 경로 후보입니다.
+            실제 재고 수량 컬럼 변경을 DB trigger로 남긴 audit입니다. movement가
+            연결되지 않은 행이 누락 경로 후보입니다.
           </span>
         </header>
         <div className="cms-stock-audit-list">
@@ -16535,7 +16558,8 @@ function CmsStockSnapshotDiffDetailView({
           ))}
           {detail.previousAudits.length === 0 && detail.audits.length === 0 && (
             <p className="cms-empty">
-              아직 DB 수량 변경 audit이 없습니다. 배포 후 trigger가 설치된 시점부터 기록됩니다.
+              아직 DB 수량 변경 audit이 없습니다. 배포 후 trigger가 설치된
+              시점부터 기록됩니다.
             </p>
           )}
         </div>
@@ -18615,7 +18639,7 @@ function CmsPrescriptionSummaryPage({
           ? prescriptions.filter(
               (record) => record.substitutionReplacementCount > 0,
             )
-        : prescriptions.filter((record) => record.status === filter);
+          : prescriptions.filter((record) => record.status === filter);
   const visibleRecords = sortCmsPrescriptionRecords(
     filteredRecords,
     sortKey,
