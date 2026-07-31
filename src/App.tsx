@@ -86,6 +86,7 @@ type PriceMaster = {
   spec: string;
   unit: string;
   maxPrice: number;
+  productTotalQuantity: number;
 };
 
 type StockCandidate = {
@@ -1632,6 +1633,13 @@ function normalizePriceMaster(raw: unknown, index: number): PriceMaster {
         item["상한금액표 금액"] ??
         0,
     ),
+    productTotalQuantity: Number(
+      item.productTotalQuantity ??
+        item.totalQuantity ??
+        item.packageQuantity ??
+        item["제품총수량"] ??
+        0,
+    ),
   };
 }
 
@@ -1682,7 +1690,7 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
       firstPrice?.productName ??
       "미확인 약품",
   );
-  const productTotalQuantity = Number(
+  const baseProductTotalQuantity = Number(
     item.totalQuantity ??
       item.productTotalQuantity ??
       item.packageQuantity ??
@@ -1692,7 +1700,7 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
   const hasDrugMaster = Boolean(
     rawDrugMasterId ||
     insuranceCode ||
-    productTotalQuantity > 0 ||
+    baseProductTotalQuantity > 0 ||
     (name && name !== "미확인 약품"),
   );
   const responsePcOnlyUninsured = normalizeBoolean(item.pcOnlyUninsured);
@@ -1709,6 +1717,10 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
   const selectedPrice =
     exactPrice ??
     (effectivePriceMasters.length === 1 ? firstEffectivePrice : undefined);
+  const productTotalQuantity =
+    selectedPrice && selectedPrice.productTotalQuantity > 0
+      ? selectedPrice.productTotalQuantity
+      : baseProductTotalQuantity;
   const knownInsuranceWithoutPriceMaster =
     !selectedPrice &&
     effectivePriceMasters.length === 0 &&
@@ -3284,6 +3296,7 @@ function previewPriceMaster(
     maxPrice,
     productCode,
     productName,
+    productTotalQuantity: 30,
     spec: "30정",
     unit: "정",
   };
@@ -4269,6 +4282,10 @@ function MobileApp() {
               priceMasterId: price.id,
               name: price.productName,
               price: price.maxPrice,
+              productTotalQuantity:
+                price.productTotalQuantity > 0
+                  ? price.productTotalQuantity
+                  : item.drug.productTotalQuantity,
               matchStatus:
                 item.drug.matchStatus === "NAME_MATCH"
                   ? "NAME_MATCH"
@@ -7276,7 +7293,13 @@ function ReceiptCandidateSheet({
                     <span>{candidate.productCode}</span>
                     <strong>{candidate.productName}</strong>
                     <em>
-                      {[candidate.spec, candidate.unit]
+                      {[
+                        candidate.spec,
+                        candidate.unit,
+                        candidate.productTotalQuantity > 0
+                          ? `총수량 ${candidate.productTotalQuantity}`
+                          : "",
+                      ]
                         .filter(Boolean)
                         .join(" · ")}
                       {candidate.maxPrice > 0
