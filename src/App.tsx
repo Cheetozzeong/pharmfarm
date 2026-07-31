@@ -7022,7 +7022,9 @@ function ReceiptMatchItem({
     (candidate) => candidate.id === item.drug.selectedStockId,
   );
   const hasSelectedStockCandidate = Boolean(selectedStockCandidate);
+  const knownInsuranceFallback = isKnownInsuranceReceiptItem(item);
   const needsVirtualFields =
+    !knownInsuranceFallback &&
     !item.drug.priceMasterId &&
     !hasPriceCandidates &&
     !hasSelectedStockCandidate;
@@ -7089,6 +7091,9 @@ function ReceiptMatchItem({
         <p className="candidate-help">
           {item.drug.receiptNotice ?? pcOnlyUninsuredReceiptNotice}
         </p>
+      )}
+      {knownInsuranceFallback && item.drug.receiptNotice && (
+        <p className="candidate-help">{item.drug.receiptNotice}</p>
       )}
       {showStockCandidates && (
         <ReceiptCandidateTrigger
