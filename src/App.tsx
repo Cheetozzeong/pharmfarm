@@ -1709,6 +1709,12 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
   const selectedPrice =
     exactPrice ??
     (effectivePriceMasters.length === 1 ? firstEffectivePrice : undefined);
+  const knownInsuranceWithoutPriceMaster =
+    !selectedPrice &&
+    effectivePriceMasters.length === 0 &&
+    hasDrugMaster &&
+    !pcOnlyUninsured &&
+    isMeaningfulInsuranceCode(insuranceCode, qr.pc);
   const matchStatus: MatchStatus = selectedPrice
     ? exactPrice
       ? "NORMAL"
@@ -1717,7 +1723,9 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
       ? "NAME_MATCH"
       : !hasDrugMaster
         ? "MISSING"
-        : "VIRTUAL";
+        : knownInsuranceWithoutPriceMaster
+          ? "NORMAL"
+          : "VIRTUAL";
   const selectedStockCandidate = selectedPrice
     ? undefined
     : (stockCandidates.find(
@@ -1753,15 +1761,39 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
       selectedStockCandidate?.price ??
       Number(item.price ?? item.maxPrice ?? 0),
     matchStatus,
-    virtualDrugName: selectedPrice
+    virtualDrugName: selectedPrice || knownInsuranceWithoutPriceMaster
       ? ""
       : (selectedStockCandidate?.name ?? name),
-    virtualInsuranceCode: selectedPrice ? "" : virtualInsuranceCode,
+    virtualInsuranceCode:
+      selectedPrice || knownInsuranceWithoutPriceMaster
+        ? ""
+        : virtualInsuranceCode,
     pcOnlyUninsured,
-    receiptNotice: pcOnlyUninsured ? pcOnlyUninsuredReceiptNotice : undefined,
+    receiptNotice: pcOnlyUninsured
+      ? pcOnlyUninsuredReceiptNotice
+      : knownInsuranceWithoutPriceMaster
+        ? "2번 기준 데이터는 없지만 1번 기준 보험코드로 입고합니다."
+        : undefined,
     insuranceCodeExists:
-      selectedStockCandidate || pcOnlyUninsured ? false : null,
+      selectedStockCandidate || pcOnlyUninsured || knownInsuranceWithoutPriceMaster
+        ? false
+        : null,
   };
+}
+
+function isKnownInsuranceReceiptDrug(drug: DrugMaster, pc: string) {
+  return Boolean(
+    drug.matchStatus === "NORMAL" &&
+      !drug.priceMasterId &&
+      !drug.selectedStockId &&
+      !drug.pcOnlyUninsured &&
+      (drug.priceMasters?.length ?? 0) === 0 &&
+      isMeaningfulInsuranceCode(drug.insuranceCode, pc),
+  );
+}
+
+function isKnownInsuranceReceiptItem(item: ReceiptQueueItem) {
+  return isKnownInsuranceReceiptDrug(item.drug, item.qr.pc);
 }
 
 function normalizeMatchStatus(value: unknown): MatchStatus {
@@ -1807,6 +1839,7 @@ function getReceiptIssueReason(
   }
 
   if (item.drug.priceMasterId || item.drug.selectedStockId) return "";
+  if (isKnownInsuranceReceiptItem(item)) return "";
 
   const virtualName = (item.drug.virtualDrugName ?? item.drug.name).trim();
   if (item.drug.pcOnlyUninsured) {
@@ -3827,6 +3860,7 @@ function MobileApp() {
 
     for (const item of receiptQueue) {
       if (item.drug.priceMasterId || item.drug.selectedStockId) continue;
+      if (isKnownInsuranceReceiptItem(item)) continue;
 
       const code = normalizeInsuranceCode(
         item.drug.virtualInsuranceCode || item.drug.insuranceCode,
@@ -3840,7 +3874,13 @@ function MobileApp() {
 
   const isVirtualInsuranceCodeDuplicatedInQueue = useCallback(
     (item: ReceiptQueueItem) => {
-      if (item.drug.pcOnlyUninsured || item.drug.selectedStockId) return false;
+      if (
+        item.drug.pcOnlyUninsured ||
+        item.drug.selectedStockId ||
+        isKnownInsuranceReceiptItem(item)
+      ) {
+        return false;
+      }
 
       const code = normalizeInsuranceCode(
         item.drug.virtualInsuranceCode || item.drug.insuranceCode,
@@ -3875,6 +3915,7 @@ function MobileApp() {
             item.id !== itemId &&
             !item.drug.priceMasterId &&
             !item.drug.selectedStockId &&
+            !isKnownInsuranceReceiptItem(item) &&
             normalizeInsuranceCode(
               item.drug.virtualInsuranceCode || item.drug.insuranceCode,
             ) === insuranceCode,
@@ -5277,6 +5318,10 @@ function MobileApp() {
             receiptMatchPreview && !keepManualVirtualInput
               ? await validateReceiptQr(item.qr)
               : item.drug;
+          const knownInsuranceFallback = isKnownInsuranceReceiptDrug(
+            drug,
+            item.qr.pc,
+          );
 
           return {
             pc: item.qr.pc,
@@ -5287,10 +5332,10 @@ function MobileApp() {
             insuranceCode: drug.insuranceCode || undefined,
             stockId: optionalId(drug.selectedStockId),
             priceMasterId: optionalId(drug.priceMasterId),
-            virtualDrugName: drug.priceMasterId
+            virtualDrugName: drug.priceMasterId || knownInsuranceFallback
               ? null
               : drug.virtualDrugName || drug.name,
-            virtualInsuranceCode: drug.priceMasterId
+            virtualInsuranceCode: drug.priceMasterId || knownInsuranceFallback
               ? null
               : drug.virtualInsuranceCode || drug.insuranceCode,
           };
@@ -7948,7 +7993,12 @@ function receiptDrugDetail(item: ReceiptQueueItem) {
   const parts = [`SN ${item.qr.sn || "-"}`];
   const candidateCount = item.drug.priceMasters?.length ?? 0;
 
-  if (item.drug.priceMasterId) {
+  if (isKnownInsuranceReceiptItem(item)) {
+    parts.push(
+      formatInsuranceCodeForDisplay(item.drug.insuranceCode) || "보험코드 없음",
+    );
+    parts.push("2번 기준 미등록");
+  } else if (item.drug.priceMasterId) {
     parts.push(
       formatInsuranceCodeForDisplay(item.drug.insuranceCode) || "보험코드 없음",
     );
