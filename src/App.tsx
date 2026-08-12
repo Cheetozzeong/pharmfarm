@@ -107,6 +107,7 @@ type DrugMaster = {
   priceMasters?: PriceMaster[];
   stockCandidates?: StockCandidate[];
   name: string;
+  scannedProductTotalQuantity?: number;
   productTotalQuantity: number;
   price: number;
   matchStatus: MatchStatus;
@@ -1717,10 +1718,14 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
   const selectedPrice =
     exactPrice ??
     (effectivePriceMasters.length === 1 ? firstEffectivePrice : undefined);
+  const selectedPriceProductTotalQuantity =
+    selectedPrice?.productTotalQuantity ?? 0;
   const productTotalQuantity =
-    selectedPrice && selectedPrice.productTotalQuantity > 0
-      ? selectedPrice.productTotalQuantity
-      : baseProductTotalQuantity;
+    baseProductTotalQuantity > 0
+      ? baseProductTotalQuantity
+      : selectedPriceProductTotalQuantity > 0
+        ? selectedPriceProductTotalQuantity
+        : 0;
   const knownInsuranceWithoutPriceMaster =
     !selectedPrice &&
     effectivePriceMasters.length === 0 &&
@@ -1767,6 +1772,8 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
     priceMasters: effectivePriceMasters,
     stockCandidates,
     name: selectedPrice?.productName ?? selectedStockCandidate?.name ?? name,
+    scannedProductTotalQuantity:
+      baseProductTotalQuantity > 0 ? baseProductTotalQuantity : undefined,
     productTotalQuantity,
     price:
       selectedPrice?.maxPrice ??
@@ -2689,6 +2696,45 @@ function uniquePriceMasters(prices: PriceMaster[], selectedId?: string) {
   }
 
   return Array.from(unique.values());
+}
+
+type ReceiptQuantityOption = {
+  detail: string;
+  key: string;
+  label: string;
+  quantity: number;
+};
+
+function addReceiptQuantityOption(
+  options: ReceiptQuantityOption[],
+  option: ReceiptQuantityOption,
+) {
+  if (option.quantity <= 0) return;
+  if (options.some((current) => current.quantity === option.quantity)) return;
+  options.push(option);
+}
+
+function receiptQuantityOptions(item: ReceiptQueueItem): ReceiptQuantityOption[] {
+  const options: ReceiptQuantityOption[] = [];
+  const scannedQuantity = item.drug.scannedProductTotalQuantity ?? 0;
+  const selectedPrice = (item.drug.priceMasters ?? []).find(
+    (candidate) => candidate.id === item.drug.priceMasterId,
+  );
+
+  addReceiptQuantityOption(options, {
+    detail: "QR 포장",
+    key: "scanned",
+    label: "표준코드 기준",
+    quantity: scannedQuantity,
+  });
+  addReceiptQuantityOption(options, {
+    detail: formatInsuranceCodeForDisplay(selectedPrice?.productCode ?? ""),
+    key: "price",
+    label: "보험코드 기준",
+    quantity: selectedPrice?.productTotalQuantity ?? 0,
+  });
+
+  return options.length > 1 ? options : [];
 }
 
 function createId(prefix: string) {
@@ -4272,6 +4318,13 @@ function MobileApp() {
             (candidate) => candidate.id === priceMasterId,
           );
           if (!price) return item;
+          const scannedQuantity = item.drug.scannedProductTotalQuantity ?? 0;
+          const productTotalQuantity =
+            scannedQuantity > 0
+              ? scannedQuantity
+              : price.productTotalQuantity > 0
+                ? price.productTotalQuantity
+                : item.drug.productTotalQuantity;
 
           return {
             ...item,
@@ -4282,10 +4335,7 @@ function MobileApp() {
               priceMasterId: price.id,
               name: price.productName,
               price: price.maxPrice,
-              productTotalQuantity:
-                price.productTotalQuantity > 0
-                  ? price.productTotalQuantity
-                  : item.drug.productTotalQuantity,
+              productTotalQuantity,
               matchStatus:
                 item.drug.matchStatus === "NAME_MATCH"
                   ? "NAME_MATCH"
@@ -4298,6 +4348,26 @@ function MobileApp() {
             },
           };
         }),
+      );
+    },
+    [],
+  );
+
+  const selectReceiptProductTotalQuantity = useCallback(
+    (itemId: string, productTotalQuantity: number) => {
+      setReceiptSubmitError("");
+      setReceiptQueue((current) =>
+        current.map((item) =>
+          item.id === itemId
+            ? {
+                ...item,
+                drug: {
+                  ...item.drug,
+                  productTotalQuantity,
+                },
+              }
+            : item,
+        ),
       );
     },
     [],
@@ -5349,6 +5419,7 @@ function MobileApp() {
             insuranceCode: drug.insuranceCode || undefined,
             stockId: optionalId(drug.selectedStockId),
             priceMasterId: optionalId(drug.priceMasterId),
+            productTotalQuantity: drug.productTotalQuantity,
             virtualDrugName: drug.priceMasterId || knownInsuranceFallback
               ? null
               : drug.virtualDrugName || drug.name,
@@ -5646,6 +5717,7 @@ function MobileApp() {
               : undefined
           }
           onSelectPrice={selectReceiptPriceMaster}
+          onSelectQuantity={selectReceiptProductTotalQuantity}
           onSelectStock={selectReceiptStockCandidate}
           onVirtualCode={(itemId, value) =>
             patchReceiptDrug(itemId, {
@@ -5677,6 +5749,7 @@ function MobileApp() {
           onGenerateVirtual={generateVirtualForReceiptItem}
           onRemove={removeReceiptItem}
           onSelectPrice={selectReceiptPriceMaster}
+          onSelectQuantity={selectReceiptProductTotalQuantity}
           onSelectStock={selectReceiptStockCandidate}
           onVirtualCode={(itemId, value) =>
             patchReceiptDrug(itemId, {
@@ -6637,6 +6710,7 @@ function ReceiptMatchScreen({
   onIssues,
   onRegeneratePreviewSerials,
   onSelectPrice,
+  onSelectQuantity,
   onSelectStock,
   onVirtualCode,
   onVirtualName,
@@ -6654,6 +6728,7 @@ function ReceiptMatchScreen({
   onIssues: () => void;
   onRegeneratePreviewSerials?: () => void;
   onSelectPrice: (itemId: string, priceMasterId: string) => void;
+  onSelectQuantity: (itemId: string, productTotalQuantity: number) => void;
   onSelectStock: (itemId: string, stockId: string) => void;
   onVirtualCode: (itemId: string, value: string) => void;
   onVirtualName: (itemId: string, value: string) => void;
@@ -6800,6 +6875,7 @@ function ReceiptMatchScreen({
                       }
                       onVirtualCode={onVirtualCode}
                       onVirtualName={onVirtualName}
+                      onSelectQuantity={onSelectQuantity}
                     />
                   ))}
                 </div>
@@ -6902,6 +6978,7 @@ function ReceiptIssuesScreen({
   onGenerateVirtual,
   onRemove,
   onSelectPrice,
+  onSelectQuantity,
   onSelectStock,
   onVirtualCode,
   onVirtualName,
@@ -6916,6 +6993,7 @@ function ReceiptIssuesScreen({
   onGenerateVirtual: (itemId: string) => void;
   onRemove: (itemId: string) => void;
   onSelectPrice: (itemId: string, priceMasterId: string) => void;
+  onSelectQuantity: (itemId: string, productTotalQuantity: number) => void;
   onSelectStock: (itemId: string, stockId: string) => void;
   onVirtualCode: (itemId: string, value: string) => void;
   onVirtualName: (itemId: string, value: string) => void;
@@ -6954,6 +7032,7 @@ function ReceiptIssuesScreen({
                 }
                 onVirtualCode={onVirtualCode}
                 onVirtualName={onVirtualName}
+                onSelectQuantity={onSelectQuantity}
               />
             ))}
           </div>
@@ -7006,6 +7085,7 @@ function ReceiptMatchItem({
   onRemove,
   onOpenPriceCandidates,
   onOpenStockCandidates,
+  onSelectQuantity,
   onVirtualCode,
   onVirtualName,
 }: {
@@ -7022,6 +7102,7 @@ function ReceiptMatchItem({
     item: ReceiptQueueItem,
     candidates: StockCandidate[],
   ) => void;
+  onSelectQuantity: (itemId: string, productTotalQuantity: number) => void;
   onVirtualCode: (itemId: string, value: string) => void;
   onVirtualName: (itemId: string, value: string) => void;
 }) {
@@ -7051,6 +7132,7 @@ function ReceiptMatchItem({
     selectedStockCandidate?.insuranceCode ??
     item.drug.virtualInsuranceCode ??
     item.drug.insuranceCode;
+  const quantityOptions = receiptQuantityOptions(item);
   const issueReason = getIssueReason(item);
 
   return (
@@ -7103,6 +7185,13 @@ function ReceiptMatchItem({
         <p className="candidate-help">
           후보 목록에서 실제 입고할 약 정보를 선택하면 이슈가 해결됩니다.
         </p>
+      )}
+      {quantityOptions.length > 0 && (
+        <ReceiptQuantitySelector
+          item={item}
+          options={quantityOptions}
+          onSelectQuantity={onSelectQuantity}
+        />
       )}
       {isPcOnlyUninsured && (
         <p className="candidate-help">
@@ -7208,6 +7297,40 @@ function ReceiptMatchItem({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function ReceiptQuantitySelector({
+  item,
+  options,
+  onSelectQuantity,
+}: {
+  item: ReceiptQueueItem;
+  options: ReceiptQuantityOption[];
+  onSelectQuantity: (itemId: string, productTotalQuantity: number) => void;
+}) {
+  return (
+    <div className="receipt-quantity-choice" role="group" aria-label="입고 수량">
+      <span>입고 수량</span>
+      <div>
+        {options.map((option) => {
+          const selected = item.drug.productTotalQuantity === option.quantity;
+          return (
+            <button
+              key={option.key}
+              className={selected ? "is-selected" : ""}
+              type="button"
+              aria-pressed={selected}
+              onClick={() => onSelectQuantity(item.id, option.quantity)}
+            >
+              <strong>+{option.quantity}</strong>
+              <em>{option.label}</em>
+              {option.detail && <small>{option.detail}</small>}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }
