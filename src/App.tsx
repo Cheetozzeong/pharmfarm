@@ -9621,7 +9621,11 @@ function CmsApp({
   const [mergeInsuranceCode, setMergeInsuranceCode] = useState("");
   const [prescriptionId, setPrescriptionId] = useState("");
   const canAccessMasterData = canAccessMasterDataCms(authAccount);
-  const visiblePage = canAccessCmsPage(authAccount, page) ? page : "dashboard";
+  const isCmsAccessCheckPending = apiState === "checking" && !authAccount;
+  const visiblePage =
+    isCmsAccessCheckPending || canAccessCmsPage(authAccount, page)
+      ? page
+      : "dashboard";
   const previousVisiblePageRef = useRef(visiblePage);
   const previousShortageRouteIdRef = useRef(shortageRouteId);
   const previousReturnReviewRouteIdRef = useRef(returnReviewRouteId);
@@ -9872,7 +9876,12 @@ function CmsApp({
   }, [apiState, isCmsLoginRoute, navigate, path]);
 
   useEffect(() => {
-    if (!isCmsLoginRoute || !hasCmsSession || apiState === "unauthorized") {
+    if (
+      !isCmsLoginRoute ||
+      !hasCmsSession ||
+      apiState === "checking" ||
+      apiState === "unauthorized"
+    ) {
       return;
     }
 
@@ -9894,6 +9903,7 @@ function CmsApp({
   useEffect(() => {
     if (
       isCmsLoginRoute ||
+      apiState === "checking" ||
       apiState === "unauthorized" ||
       canAccessCmsPage(authAccount, page)
     ) {
