@@ -1042,6 +1042,7 @@ CMS 대시보드는 API 응답 중 개발자용 연동 상태를 화면 전면�
 | Method | Path                                                 | 설명                                                          |
 | ------ | ---------------------------------------------------- | ------------------------------------------------------------- |
 | POST   | `/api/v1/pharmfarm/receipts/validate-qr`             | QR 1건의 `pc`로 1번/2번 기준 데이터 후보 조회. 재고 변경 없음 |
+| GET    | `/api/v1/pharmfarm/receipts`                         | 로그인 약국 기준 입고/반품 추적 데이터 조회. 약명, 보험코드, `PC`, `SN`, 도매처, 기간 검색 지원 |
 | GET    | `/api/v1/pharmfarm/insurance-codes/exists`           | 보험코드 중복 여부 확인                                       |
 | POST   | `/api/v1/pharmfarm/insurance-codes/generate-virtual` | 로그인 약국 기준 임의 보험코드 생성                           |
 | POST   | `/api/v1/pharmfarm/receipts`                         | 도매처, QR 정보, 확정 약 정보를 받아 입고 처리                |

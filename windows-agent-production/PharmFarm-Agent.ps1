@@ -17,6 +17,7 @@ $SentDir = Join-Path $InstallRoot "sent"
 $DeadDir = Join-Path $InstallRoot "dead-letter"
 $LogDir = Join-Path $InstallRoot "logs"
 $StateFile = Join-Path $InstallRoot "agent.state.json"
+$CommandStateFile = Join-Path $InstallRoot "agent.command-state.json"
 $BootstrapStateFile = Join-Path $InstallRoot "bootstrap.state.json"
 $ControlledDrugReferenceFile = Join-Path $InstallRoot "controlled-drug-reference.csv"
 $SyncStateDir = Join-Path $InstallRoot "sync-state"
@@ -25,7 +26,13 @@ $ControlledDrugReferenceCache = $null
 $Initialized = $false
 $LastReferenceSyncAt = $null
 $LastPrescriptionFullScanAt = $null
-$AgentVersion = "1.1.6-ps"
+$LastRemoteCommandPollAt = $null
+$LastHeartbeatAt = $null
+$LastSqlOkAt = $null
+$LastApiOkAt = $null
+$RemoteCommandPollingUnavailable = $false
+$HeartbeatUnavailable = $false
+$AgentVersion = "1.2.0-ps"
 
 function Ensure-Directory {
   param([string]$Path)
@@ -332,6 +339,7 @@ function Invoke-SqlQuery {
     $adapter = New-Object System.Data.SqlClient.SqlDataAdapter $command
     $table = New-Object System.Data.DataTable
     [void]$adapter.Fill($table)
+    $script:LastSqlOkAt = Get-AgentTimestamp
     return ,$table
   } finally {
     $connection.Close()
@@ -351,6 +359,43 @@ function Convert-AgentText {
   }
 
   return $Value.ToString().Trim()
+}
+
+function Get-AgentObjectValue {
+  param(
+    [object]$Object,
+    [string]$Name,
+    $DefaultValue = $null
+  )
+
+  if ($null -eq $Object -or $null -eq $Object.PSObject -or $null -eq $Object.PSObject.Properties[$Name]) {
+    if ($Object -is [System.Collections.IDictionary] -and $Object.Contains($Name)) {
+      return $Object[$Name]
+    }
+
+    return $DefaultValue
+  }
+
+  return $Object.PSObject.Properties[$Name].Value
+}
+
+function Set-AgentObjectProperty {
+  param(
+    [object]$Object,
+    [string]$Name,
+    $Value
+  )
+
+  if ($Object -is [System.Collections.IDictionary]) {
+    $Object[$Name] = $Value
+    return
+  }
+
+  if ($null -eq $Object.PSObject.Properties[$Name]) {
+    $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value
+  } else {
+    $Object.PSObject.Properties[$Name].Value = $Value
+  }
 }
 
 function Get-ControlledDrugReferencePath {
@@ -1427,7 +1472,7 @@ function Queue-AgentTableSync {
 
   $deltaSyncEnabled = $Config.deltaSyncOnStart -ne $false
 
-  if ($State.$StateKey -eq $true -and !$deltaSyncEnabled) {
+  if ((Get-AgentObjectValue -Object $State -Name $StateKey -DefaultValue $false) -eq $true -and !$deltaSyncEnabled) {
     return
   }
 
@@ -1458,8 +1503,8 @@ function Queue-AgentTableSync {
 
     Write-SyncHashes -Kind $Kind -Hashes $hashes
 
-    $State.$StateKey = $true
     $State.updatedAt = Get-AgentTimestamp
+    Set-AgentObjectProperty -Object $State -Name $StateKey -Value $true
     Write-JsonFile -Path $BootstrapStateFile -Value $State -Depth 8
     Write-AgentLog "bootstrap $Kind complete rows=$totalRows changed=$changedTotal"
   } catch {
@@ -1480,7 +1525,7 @@ function Queue-AgentRowsSync {
 
   $deltaSyncEnabled = $Config.deltaSyncOnStart -ne $false
 
-  if ($State.$StateKey -eq $true -and !$deltaSyncEnabled) {
+  if ((Get-AgentObjectValue -Object $State -Name $StateKey -DefaultValue $false) -eq $true -and !$deltaSyncEnabled) {
     return
   }
 
@@ -1511,8 +1556,8 @@ function Queue-AgentRowsSync {
 
     Write-SyncHashes -Kind $Kind -Hashes $hashes
 
-    $State.$StateKey = $true
     $State.updatedAt = Get-AgentTimestamp
+    Set-AgentObjectProperty -Object $State -Name $StateKey -Value $true
     Write-JsonFile -Path $BootstrapStateFile -Value $State -Depth 8
     Write-AgentLog "bootstrap $Kind static complete rows=$totalRows changed=$changedTotal"
   } catch {
@@ -1534,6 +1579,7 @@ function Invoke-BootstrapSync {
       wholesalerCompleted = $false
       purchaseCompleted = $false
       controlledDrugReferenceCompleted = $false
+      controlledDrugProductInfoCompleted = $false
       controlledDrugCompleted = $false
       controlledDrugMasterCompleted = $false
       drugPriceCompleted = $false
@@ -1542,7 +1588,7 @@ function Invoke-BootstrapSync {
     }
   }
 
-  foreach ($stateKey in @("drugMasterCompleted", "stockProbeCompleted", "stockCompleted", "barcodeCompleted", "wholesalerCompleted", "purchaseCompleted", "controlledDrugReferenceCompleted", "controlledDrugCompleted", "controlledDrugMasterCompleted", "drugPriceCompleted", "drugUnitCompleted")) {
+  foreach ($stateKey in @("drugMasterCompleted", "stockProbeCompleted", "stockCompleted", "barcodeCompleted", "wholesalerCompleted", "purchaseCompleted", "controlledDrugReferenceCompleted", "controlledDrugProductInfoCompleted", "controlledDrugCompleted", "controlledDrugMasterCompleted", "drugPriceCompleted", "drugUnitCompleted")) {
     if ($null -eq $state.PSObject.Properties[$stateKey]) {
       $state | Add-Member -NotePropertyName $stateKey -NotePropertyValue $false
     }
@@ -2016,6 +2062,7 @@ function Submit-Envelope {
   try {
     Write-AgentLog "submit start event=$($Envelope.eventId) url=$url bytes=$($body.Length) items=$itemCount pharmacyId=$($Config.pharmacyId)"
     [void](Invoke-RestMethod -Method Post -Uri $url -ContentType "application/json; charset=utf-8" -Headers $headers -Body $body -TimeoutSec 20)
+    $script:LastApiOkAt = Get-AgentTimestamp
     return @{ ok = $true; retry = $false; status = 200; message = "sent" }
   } catch {
     $statusCode = $null
@@ -2108,6 +2155,634 @@ function Flush-Queue {
   }
 }
 
+function Get-AgentHttpStatusCodeFromError {
+  param($ErrorRecord)
+
+  try {
+    if ($ErrorRecord.Exception.Response) {
+      return [int]$ErrorRecord.Exception.Response.StatusCode
+    }
+  } catch {
+    return $null
+  }
+
+  return $null
+}
+
+function Join-AgentApiUrl {
+  param(
+    [object]$Config,
+    [string]$Path
+  )
+
+  $safePath = $Path
+  if ([string]::IsNullOrWhiteSpace($safePath)) {
+    $safePath = "/"
+  }
+
+  if (!$safePath.StartsWith("/")) {
+    $safePath = "/" + $safePath
+  }
+
+  return $Config.apiBase.TrimEnd("/") + $safePath
+}
+
+function Test-AgentConfigEnabled {
+  param(
+    [object]$Config,
+    [string]$Name,
+    [bool]$DefaultValue = $true
+  )
+
+  $value = Get-AgentObjectValue -Object $Config -Name $Name -DefaultValue $null
+  if ($null -eq $value) {
+    return $DefaultValue
+  }
+
+  if ($value -is [bool]) {
+    return $value
+  }
+
+  $text = $value.ToString().Trim().ToLowerInvariant()
+  return !($text -in @("false", "0", "no", "off", "disabled"))
+}
+
+function Get-AgentConfigInt {
+  param(
+    [object]$Config,
+    [string]$Name,
+    [int]$DefaultValue,
+    [int]$MinValue,
+    [int]$MaxValue
+  )
+
+  $value = Get-AgentObjectValue -Object $Config -Name $Name -DefaultValue $DefaultValue
+  $number = $DefaultValue
+
+  try {
+    $number = [int]$value
+  } catch {
+    $number = $DefaultValue
+  }
+
+  if ($number -lt $MinValue) {
+    return $MinValue
+  }
+
+  if ($number -gt $MaxValue) {
+    return $MaxValue
+  }
+
+  return $number
+}
+
+function Read-AgentCommandState {
+  $state = Read-JsonFile $CommandStateFile
+
+  if ($null -eq $state) {
+    $state = [pscustomobject][ordered]@{
+      commands = [pscustomobject][ordered]@{}
+      updatedAt = Get-AgentTimestamp
+    }
+  }
+
+  if ($null -eq $state.PSObject.Properties["commands"] -or $null -eq $state.commands) {
+    Set-AgentObjectProperty -Object $state -Name "commands" -Value ([pscustomobject][ordered]@{})
+  }
+
+  return $state
+}
+
+function Write-AgentCommandState {
+  param([object]$State)
+
+  Set-AgentObjectProperty -Object $State -Name "updatedAt" -Value (Get-AgentTimestamp)
+  Write-JsonFile -Path $CommandStateFile -Value $State -Depth 16
+}
+
+function Get-AgentCommandStateEntry {
+  param(
+    [object]$State,
+    [string]$CommandId
+  )
+
+  if ([string]::IsNullOrWhiteSpace($CommandId) -or $null -eq $State -or $null -eq $State.commands) {
+    return $null
+  }
+
+  $property = $State.commands.PSObject.Properties[$CommandId]
+  if ($null -eq $property) {
+    return $null
+  }
+
+  return $property.Value
+}
+
+function Set-AgentCommandStateEntry {
+  param(
+    [string]$CommandId,
+    [string]$CommandType,
+    [string]$Status,
+    [string]$Message,
+    $Result = $null
+  )
+
+  if ([string]::IsNullOrWhiteSpace($CommandId)) {
+    return
+  }
+
+  $state = Read-AgentCommandState
+  $entry = [pscustomobject][ordered]@{
+    commandId = $CommandId
+    commandType = $CommandType
+    status = $Status
+    message = $Message
+    result = $Result
+    updatedAt = Get-AgentTimestamp
+  }
+
+  Set-AgentObjectProperty -Object $state.commands -Name $CommandId -Value $entry
+  Write-AgentCommandState -State $state
+}
+
+function Remove-AgentSyncHash {
+  param([string]$Kind)
+
+  $path = Get-SyncStatePath $Kind
+  if (Test-Path -LiteralPath $path) {
+    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+  }
+}
+
+function Set-AgentBootstrapStateFlags {
+  param([string[]]$StateKeys)
+
+  $state = Read-JsonFile $BootstrapStateFile
+  if ($null -eq $state) {
+    $state = [pscustomobject][ordered]@{}
+  }
+
+  foreach ($key in $StateKeys) {
+    if (![string]::IsNullOrWhiteSpace($key)) {
+      Set-AgentObjectProperty -Object $state -Name $key -Value $false
+    }
+  }
+
+  Set-AgentObjectProperty -Object $state -Name "manualSyncRequestedAt" -Value (Get-AgentTimestamp)
+  Set-AgentObjectProperty -Object $state -Name "updatedAt" -Value (Get-AgentTimestamp)
+  Write-JsonFile -Path $BootstrapStateFile -Value $state -Depth 8
+}
+
+function Reset-AgentReferenceSyncState {
+  param([string[]]$Kinds)
+
+  Ensure-Directory $SyncStateDir
+  $stateKeys = New-Object System.Collections.Generic.List[string]
+
+  foreach ($kind in $Kinds) {
+    switch ($kind) {
+      "drug-master" {
+        Remove-AgentSyncHash "drug-master"
+        [void]$stateKeys.Add("drugMasterCompleted")
+      }
+      "stock" {
+        Remove-AgentSyncHash "stock"
+        [void]$stateKeys.Add("stockCompleted")
+      }
+      "barcode" {
+        Remove-AgentSyncHash "barcode"
+        [void]$stateKeys.Add("barcodeCompleted")
+      }
+      "wholesaler" {
+        Remove-AgentSyncHash "wholesaler"
+        [void]$stateKeys.Add("wholesalerCompleted")
+      }
+      "purchase" {
+        Remove-AgentSyncHash "purchase"
+        [void]$stateKeys.Add("purchaseCompleted")
+      }
+      "controlled-drug" {
+        foreach ($controlledKind in @("controlled-drug", "controlled-drug-product-info", "controlled-drug-master")) {
+          Remove-AgentSyncHash $controlledKind
+        }
+        foreach ($stateKey in @("controlledDrugReferenceCompleted", "controlledDrugProductInfoCompleted", "controlledDrugCompleted", "controlledDrugMasterCompleted")) {
+          [void]$stateKeys.Add($stateKey)
+        }
+      }
+      "drug-price" {
+        Remove-AgentSyncHash "drug-price"
+        [void]$stateKeys.Add("drugPriceCompleted")
+      }
+      "drug-unit" {
+        Remove-AgentSyncHash "drug-unit"
+        [void]$stateKeys.Add("drugUnitCompleted")
+      }
+    }
+  }
+
+  Set-AgentBootstrapStateFlags -StateKeys $stateKeys.ToArray()
+}
+
+function Copy-AgentConfig {
+  param([object]$Config)
+
+  $copy = [pscustomobject][ordered]@{}
+  foreach ($property in $Config.PSObject.Properties) {
+    Set-AgentObjectProperty -Object $copy -Name $property.Name -Value $property.Value
+  }
+
+  return $copy
+}
+
+function New-AgentBootstrapConfigForKinds {
+  param(
+    [object]$Config,
+    [string[]]$Kinds
+  )
+
+  $copy = Copy-AgentConfig -Config $Config
+  foreach ($flag in @("bootstrapDrugMaster", "bootstrapStock", "bootstrapStocks", "bootstrapBarcode", "bootstrapBarcodes", "bootstrapWholesaler", "bootstrapWholesalers", "bootstrapPurchase", "bootstrapPurchases", "bootstrapControlledDrug", "bootstrapControlledDrugs", "bootstrapDrugPrice", "bootstrapDrugPrices", "bootstrapDrugUnit", "bootstrapDrugUnits")) {
+    Set-AgentObjectProperty -Object $copy -Name $flag -Value $false
+  }
+
+  Set-AgentObjectProperty -Object $copy -Name "deltaSyncOnStart" -Value $true
+
+  foreach ($kind in $Kinds) {
+    switch ($kind) {
+      "drug-master" { Set-AgentObjectProperty -Object $copy -Name "bootstrapDrugMaster" -Value $true }
+      "stock" { Set-AgentObjectProperty -Object $copy -Name "bootstrapStock" -Value $true }
+      "barcode" { Set-AgentObjectProperty -Object $copy -Name "bootstrapBarcode" -Value $true }
+      "wholesaler" { Set-AgentObjectProperty -Object $copy -Name "bootstrapWholesaler" -Value $true }
+      "purchase" { Set-AgentObjectProperty -Object $copy -Name "bootstrapPurchase" -Value $true }
+      "controlled-drug" { Set-AgentObjectProperty -Object $copy -Name "bootstrapControlledDrug" -Value $true }
+      "drug-price" { Set-AgentObjectProperty -Object $copy -Name "bootstrapDrugPrice" -Value $true }
+      "drug-unit" { Set-AgentObjectProperty -Object $copy -Name "bootstrapDrugUnit" -Value $true }
+    }
+  }
+
+  return $copy
+}
+
+function Invoke-AgentReferenceCommand {
+  param(
+    [object]$Config,
+    [string[]]$Kinds
+  )
+
+  Reset-AgentReferenceSyncState -Kinds $Kinds
+  $syncConfig = New-AgentBootstrapConfigForKinds -Config $Config -Kinds $Kinds
+  Invoke-BootstrapSync $syncConfig
+  Flush-Queue $syncConfig
+
+  return [ordered]@{
+    kinds = $Kinds
+    queueCount = (Get-QueueFiles).Count
+  }
+}
+
+function Get-AgentCommandId {
+  param([object]$Command)
+
+  $commandId = Convert-AgentText (Get-AgentObjectValue -Object $Command -Name "commandId" -DefaultValue "")
+  if ([string]::IsNullOrWhiteSpace($commandId)) {
+    $commandId = Convert-AgentText (Get-AgentObjectValue -Object $Command -Name "id" -DefaultValue "")
+  }
+
+  return $commandId
+}
+
+function Get-AgentCommandType {
+  param([object]$Command)
+
+  $commandType = Convert-AgentText (Get-AgentObjectValue -Object $Command -Name "type" -DefaultValue "")
+  if ([string]::IsNullOrWhiteSpace($commandType)) {
+    $commandType = Convert-AgentText (Get-AgentObjectValue -Object $Command -Name "commandType" -DefaultValue "")
+  }
+
+  return $commandType
+}
+
+function Convert-AgentCommandResponse {
+  param($Response)
+
+  if ($null -eq $Response) {
+    return @()
+  }
+
+  if ($Response -is [System.Array]) {
+    return @($Response | Where-Object { $null -ne $_ })
+  }
+
+  foreach ($propertyName in @("commands", "items", "data")) {
+    $value = Get-AgentObjectValue -Object $Response -Name $propertyName -DefaultValue $null
+    if ($null -ne $value) {
+      return @($value | Where-Object { $null -ne $_ })
+    }
+  }
+
+  if (![string]::IsNullOrWhiteSpace((Get-AgentCommandId -Command $Response))) {
+    return @($Response)
+  }
+
+  return @()
+}
+
+function Get-AgentRemoteCommands {
+  param([object]$Config)
+
+  if ($script:RemoteCommandPollingUnavailable) {
+    return @()
+  }
+
+  $path = Convert-AgentText (Get-AgentObjectValue -Object $Config -Name "remoteCommandPath" -DefaultValue "/agent/commands")
+  $limit = Get-AgentConfigInt -Config $Config -Name "remoteCommandLimit" -DefaultValue 5 -MinValue 1 -MaxValue 20
+  $separator = "?"
+  if ($path.Contains("?")) {
+    $separator = "&"
+  }
+  $url = (Join-AgentApiUrl -Config $Config -Path $path) + $separator + "limit=$limit"
+  $headers = New-RequestHeaders -Config $Config -BodyText ""
+
+  try {
+    $response = Invoke-RestMethod -Method Get -Uri $url -Headers $headers -TimeoutSec 15
+    $script:LastApiOkAt = Get-AgentTimestamp
+    return Convert-AgentCommandResponse -Response $response
+  } catch {
+    $statusCode = Get-AgentHttpStatusCodeFromError $_
+    $message = Convert-LogText $_.Exception.Message
+
+    if ($statusCode -eq 404) {
+      $script:RemoteCommandPollingUnavailable = $true
+      Write-AgentLog "remote command polling disabled because endpoint returned 404 url=$url" "WARN"
+      return @()
+    }
+
+    Write-AgentLog "remote command poll failed status=$statusCode error=$message" "WARN"
+    return @()
+  }
+}
+
+function Submit-AgentCommandStatus {
+  param(
+    [object]$Config,
+    [string]$CommandId,
+    [string]$CommandType,
+    [string]$Status,
+    [string]$Message,
+    $Result = $null
+  )
+
+  if ([string]::IsNullOrWhiteSpace($CommandId)) {
+    return $false
+  }
+
+  $escapedCommandId = [System.Uri]::EscapeDataString($CommandId)
+  $path = "/agent/commands/$escapedCommandId/result"
+  $payload = [ordered]@{
+    pharmacyId = Convert-NullableInt $Config.pharmacyId
+    deviceId = $Config.deviceId
+    deviceName = $Config.deviceName
+    agentVersion = $AgentVersion
+    commandId = $CommandId
+    commandType = $CommandType
+    status = $Status
+    message = Convert-LogText $Message 1000
+    result = $Result
+    updatedAt = Get-AgentTimestamp
+  }
+  $json = $payload | ConvertTo-Json -Depth 20 -Compress
+  $headers = New-RequestHeaders -Config $Config -BodyText $json
+
+  try {
+    [void](Invoke-RestMethod -Method Post -Uri (Join-AgentApiUrl -Config $Config -Path $path) -ContentType "application/json; charset=utf-8" -Headers $headers -Body ([Text.Encoding]::UTF8.GetBytes($json)) -TimeoutSec 15)
+    $script:LastApiOkAt = Get-AgentTimestamp
+    return $true
+  } catch {
+    $statusCode = Get-AgentHttpStatusCodeFromError $_
+    Write-AgentLog "remote command status submit failed commandId=$CommandId status=$Status httpStatus=$statusCode error=$($_.Exception.Message)" "WARN"
+    return $false
+  }
+}
+
+function Submit-AgentHeartbeat {
+  param(
+    [object]$Config,
+    [switch]$Force
+  )
+
+  if ($script:HeartbeatUnavailable -and !$Force) {
+    return [ordered]@{
+      submitted = $false
+      skipped = "endpoint-unavailable"
+    }
+  }
+
+  $localState = Read-JsonFile $StateFile
+  $hostName = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { "" }
+  $payload = [ordered]@{
+    agentVersion = $AgentVersion
+    pharmacyId = Convert-NullableInt $Config.pharmacyId
+    deviceId = $Config.deviceId
+    deviceName = $Config.deviceName
+    hostNameHash = Get-Sha256Hex $hostName
+    lastSqlOkAt = $script:LastSqlOkAt
+    lastApiOkAt = $script:LastApiOkAt
+    pendingQueueCount = (Get-QueueFiles).Count
+    status = Get-AgentObjectValue -Object $localState -Name "status" -DefaultValue "OK"
+    message = Get-AgentObjectValue -Object $localState -Name "message" -DefaultValue ""
+    capturedAt = Get-AgentTimestamp
+  }
+  $json = $payload | ConvertTo-Json -Depth 12 -Compress
+  $headers = New-RequestHeaders -Config $Config -BodyText $json
+
+  try {
+    [void](Invoke-RestMethod -Method Post -Uri (Join-AgentApiUrl -Config $Config -Path "/agent/heartbeat") -ContentType "application/json; charset=utf-8" -Headers $headers -Body ([Text.Encoding]::UTF8.GetBytes($json)) -TimeoutSec 15)
+    $now = Get-AgentTimestamp
+    $script:LastApiOkAt = $now
+    $script:LastHeartbeatAt = $now
+    return [ordered]@{
+      submitted = $true
+      queueCount = $payload.pendingQueueCount
+      submittedAt = $now
+    }
+  } catch {
+    $statusCode = Get-AgentHttpStatusCodeFromError $_
+    if ($statusCode -eq 404) {
+      $script:HeartbeatUnavailable = $true
+      Write-AgentLog "heartbeat disabled because endpoint returned 404" "WARN"
+    } else {
+      Write-AgentLog "heartbeat failed status=$statusCode error=$($_.Exception.Message)" "WARN"
+    }
+
+    return [ordered]@{
+      submitted = $false
+      status = $statusCode
+      error = Convert-LogText $_.Exception.Message
+    }
+  }
+}
+
+function Invoke-AgentCommandAction {
+  param(
+    [object]$Config,
+    [object]$Command,
+    [string]$CommandId,
+    [string]$CommandType
+  )
+
+  $normalizedType = $CommandType.Trim().ToUpperInvariant().Replace("-", "_")
+
+  switch ($normalizedType) {
+    "RESYNC_TODAY_PRESCRIPTIONS" {
+      $summary = Queue-TodayPrescriptionOverwrite -Config $Config -ResyncRequestId $CommandId
+      return [ordered]@{ status = "COMPLETED"; message = "today prescriptions queued"; result = $summary }
+    }
+    "SYNC_REFERENCE_DATA" {
+      $result = Invoke-AgentReferenceCommand -Config $Config -Kinds @("drug-master", "stock", "barcode", "wholesaler", "controlled-drug", "drug-price", "drug-unit")
+      return [ordered]@{ status = "COMPLETED"; message = "reference data sync queued"; result = $result }
+    }
+    "RESYNC_REFERENCE_DATA" {
+      $result = Invoke-AgentReferenceCommand -Config $Config -Kinds @("drug-master", "stock", "barcode", "wholesaler", "controlled-drug", "drug-price", "drug-unit")
+      return [ordered]@{ status = "COMPLETED"; message = "reference data sync queued"; result = $result }
+    }
+    "SYNC_DRUG_MASTERS" {
+      $result = Invoke-AgentReferenceCommand -Config $Config -Kinds @("drug-master")
+      return [ordered]@{ status = "COMPLETED"; message = "drug master sync queued"; result = $result }
+    }
+    "SYNC_STOCKS" {
+      $result = Invoke-AgentReferenceCommand -Config $Config -Kinds @("stock")
+      return [ordered]@{ status = "COMPLETED"; message = "stock sync queued"; result = $result }
+    }
+    "SYNC_BARCODES" {
+      $result = Invoke-AgentReferenceCommand -Config $Config -Kinds @("barcode")
+      return [ordered]@{ status = "COMPLETED"; message = "barcode sync queued"; result = $result }
+    }
+    "SYNC_WHOLESALERS" {
+      $result = Invoke-AgentReferenceCommand -Config $Config -Kinds @("wholesaler")
+      return [ordered]@{ status = "COMPLETED"; message = "wholesaler sync queued"; result = $result }
+    }
+    "SYNC_PURCHASES" {
+      $result = Invoke-AgentReferenceCommand -Config $Config -Kinds @("purchase")
+      return [ordered]@{ status = "COMPLETED"; message = "purchase sync queued"; result = $result }
+    }
+    "SYNC_CONTROLLED_DRUGS" {
+      $result = Invoke-AgentReferenceCommand -Config $Config -Kinds @("controlled-drug")
+      return [ordered]@{ status = "COMPLETED"; message = "controlled-drug sync queued"; result = $result }
+    }
+    "RESYNC_CONTROLLED_DRUGS" {
+      $result = Invoke-AgentReferenceCommand -Config $Config -Kinds @("controlled-drug")
+      return [ordered]@{ status = "COMPLETED"; message = "controlled-drug sync queued"; result = $result }
+    }
+    "SYNC_DRUG_PRICES" {
+      $result = Invoke-AgentReferenceCommand -Config $Config -Kinds @("drug-price")
+      return [ordered]@{ status = "COMPLETED"; message = "drug price sync queued"; result = $result }
+    }
+    "SYNC_DRUG_UNITS" {
+      $result = Invoke-AgentReferenceCommand -Config $Config -Kinds @("drug-unit")
+      return [ordered]@{ status = "COMPLETED"; message = "drug unit sync queued"; result = $result }
+    }
+    "HEARTBEAT_NOW" {
+      $result = Submit-AgentHeartbeat -Config $Config -Force
+      return [ordered]@{ status = "COMPLETED"; message = "heartbeat submitted"; result = $result }
+    }
+    default {
+      return [ordered]@{
+        status = "REJECTED"
+        message = "unsupported command type: $CommandType"
+        result = [ordered]@{
+          supportedTypes = @("RESYNC_TODAY_PRESCRIPTIONS", "SYNC_REFERENCE_DATA", "SYNC_DRUG_MASTERS", "SYNC_STOCKS", "SYNC_BARCODES", "SYNC_WHOLESALERS", "SYNC_PURCHASES", "SYNC_CONTROLLED_DRUGS", "SYNC_DRUG_PRICES", "SYNC_DRUG_UNITS", "HEARTBEAT_NOW")
+        }
+      }
+    }
+  }
+}
+
+function Invoke-AgentRemoteCommand {
+  param(
+    [object]$Config,
+    [object]$Command
+  )
+
+  $commandId = Get-AgentCommandId -Command $Command
+  $commandType = Get-AgentCommandType -Command $Command
+
+  if ([string]::IsNullOrWhiteSpace($commandId) -or [string]::IsNullOrWhiteSpace($commandType)) {
+    Write-AgentLog "remote command skipped because commandId/type is missing" "WARN"
+    return
+  }
+
+  $state = Read-AgentCommandState
+  $previous = Get-AgentCommandStateEntry -State $state -CommandId $commandId
+  $previousStatus = if ($null -ne $previous) { Convert-AgentText (Get-AgentObjectValue -Object $previous -Name "status" -DefaultValue "") } else { "" }
+  if ($null -ne $previous -and ($previousStatus -in @("COMPLETED", "FAILED", "REJECTED"))) {
+    $previousMessage = Convert-AgentText (Get-AgentObjectValue -Object $previous -Name "message" -DefaultValue "")
+    $previousResult = Get-AgentObjectValue -Object $previous -Name "result" -DefaultValue $null
+    Write-AgentLog "remote command duplicate result replay commandId=$commandId status=$previousStatus"
+    [void](Submit-AgentCommandStatus -Config $Config -CommandId $commandId -CommandType $commandType -Status $previousStatus -Message $previousMessage -Result $previousResult)
+    return
+  }
+
+  Write-AgentLog "remote command start commandId=$commandId type=$commandType"
+  Set-AgentCommandStateEntry -CommandId $commandId -CommandType $commandType -Status "STARTED" -Message "started"
+  [void](Submit-AgentCommandStatus -Config $Config -CommandId $commandId -CommandType $commandType -Status "STARTED" -Message "started")
+
+  try {
+    $actionResult = Invoke-AgentCommandAction -Config $Config -Command $Command -CommandId $commandId -CommandType $commandType
+    $status = Convert-AgentText (Get-AgentObjectValue -Object $actionResult -Name "status" -DefaultValue "COMPLETED")
+    $message = Convert-AgentText (Get-AgentObjectValue -Object $actionResult -Name "message" -DefaultValue "completed")
+    $result = Get-AgentObjectValue -Object $actionResult -Name "result" -DefaultValue $null
+
+    Set-AgentCommandStateEntry -CommandId $commandId -CommandType $commandType -Status $status -Message $message -Result $result
+    [void](Submit-AgentCommandStatus -Config $Config -CommandId $commandId -CommandType $commandType -Status $status -Message $message -Result $result)
+    Write-AgentLog "remote command complete commandId=$commandId type=$commandType status=$status message=$message"
+  } catch {
+    $message = Convert-LogText $_.Exception.Message 1000
+    Set-AgentCommandStateEntry -CommandId $commandId -CommandType $commandType -Status "FAILED" -Message $message
+    [void](Submit-AgentCommandStatus -Config $Config -CommandId $commandId -CommandType $commandType -Status "FAILED" -Message $message)
+    Write-AgentLog "remote command failed commandId=$commandId type=$commandType error=$message" "ERROR"
+  }
+}
+
+function Invoke-AgentCommandPollIfDue {
+  param([object]$Config)
+
+  if (!(Test-AgentConfigEnabled -Config $Config -Name "remoteCommandsEnabled" -DefaultValue $true)) {
+    return
+  }
+
+  $intervalSeconds = Get-AgentConfigInt -Config $Config -Name "remoteCommandPollIntervalSeconds" -DefaultValue 30 -MinValue 10 -MaxValue 3600
+  if ($null -ne $script:LastRemoteCommandPollAt -and ((Get-Date) - $script:LastRemoteCommandPollAt).TotalSeconds -lt $intervalSeconds) {
+    return
+  }
+
+  $script:LastRemoteCommandPollAt = Get-Date
+  $commands = @(Get-AgentRemoteCommands -Config $Config)
+  foreach ($command in $commands) {
+    Invoke-AgentRemoteCommand -Config $Config -Command $command
+  }
+}
+
+function Invoke-AgentHeartbeatIfDue {
+  param([object]$Config)
+
+  if (!(Test-AgentConfigEnabled -Config $Config -Name "heartbeatEnabled" -DefaultValue $true)) {
+    return
+  }
+
+  $intervalSeconds = Get-AgentConfigInt -Config $Config -Name "heartbeatIntervalSeconds" -DefaultValue 60 -MinValue 30 -MaxValue 3600
+  if ($null -ne $script:LastHeartbeatAt) {
+    try {
+      if (((Get-Date) - ([DateTime]::Parse($script:LastHeartbeatAt))).TotalSeconds -lt $intervalSeconds) {
+        return
+      }
+    } catch {
+      # Invalid heartbeat state is ignored and refreshed immediately.
+    }
+  }
+
+  [void](Submit-AgentHeartbeat -Config $Config)
+}
+
 function Write-State {
   param(
     [object]$Config,
@@ -2124,6 +2799,10 @@ function Write-State {
     pharmacyId = $Config.pharmacyId
     deviceId = $Config.deviceId
     queueCount = $queueCount
+    agentVersion = $AgentVersion
+    lastSqlOkAt = $script:LastSqlOkAt
+    lastApiOkAt = $script:LastApiOkAt
+    lastHeartbeatAt = $script:LastHeartbeatAt
     updatedAt = Get-AgentTimestamp
   }
 
@@ -2131,9 +2810,15 @@ function Write-State {
 }
 
 function Queue-TodayPrescriptionOverwrite {
-  param([object]$Config)
+  param(
+    [object]$Config,
+    [string]$ResyncRequestId = ""
+  )
 
-  $requestId = [Guid]::NewGuid().ToString("N")
+  $requestId = $ResyncRequestId
+  if ([string]::IsNullOrWhiteSpace($requestId)) {
+    $requestId = [Guid]::NewGuid().ToString("N")
+  }
   $prescriptionHashes = Read-SyncHashes "prescription-live"
   $queued = 0
   $skipped = 0
@@ -2174,6 +2859,13 @@ function Queue-TodayPrescriptionOverwrite {
     Flush-Queue $Config
     Write-State -Config $Config -Status "OK" -Message "today prescription overwrite queued=$queued skipped=$skipped"
     Write-AgentLog "today prescription overwrite complete queued=$queued skipped=$skipped requestId=$requestId"
+    return [ordered]@{
+      requestId = $requestId
+      scanned = $rows.Count
+      queued = $queued
+      skipped = $skipped
+      queueCount = (Get-QueueFiles).Count
+    }
   } catch {
     Write-AgentLog "today prescription overwrite error $($_.Exception.Message)" "ERROR"
     Write-State -Config $Config -Status "ERROR" -Message $_.Exception.Message
@@ -2329,9 +3021,12 @@ try {
   Invoke-BootstrapSync $config
   Flush-Queue $config
   $script:LastReferenceSyncAt = Get-Date
+  Invoke-AgentHeartbeatIfDue $config
 
   do {
     Watch-Once $config
+    Invoke-AgentCommandPollIfDue $config
+    Invoke-AgentHeartbeatIfDue $config
 
     if ($null -ne $script:LastReferenceSyncAt -and ((Get-Date) - $script:LastReferenceSyncAt).TotalMinutes -ge $referenceSyncIntervalMinutes) {
       Write-AgentLog "reference delta sync due intervalMinutes=$referenceSyncIntervalMinutes"

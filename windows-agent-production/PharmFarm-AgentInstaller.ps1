@@ -148,6 +148,12 @@ function Write-Config {
     bootstrapChunkSize = 500
     deltaSyncOnStart = $true
     referenceSyncIntervalMinutes = 1440
+    remoteCommandsEnabled = $true
+    remoteCommandPollIntervalSeconds = 30
+    remoteCommandLimit = 5
+    remoteCommandPath = "/agent/commands"
+    heartbeatEnabled = $true
+    heartbeatIntervalSeconds = 60
     createdAt = (Get-Date).ToUniversalTime().ToString("o")
   }
 

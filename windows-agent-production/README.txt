@@ -43,6 +43,11 @@ Runtime folders:
   logs        Daily log files
   sync-state  Local row hashes used to send only changed reference rows and changed prescription snapshots
 
+Runtime state files:
+
+  agent.state.json          Local status shown by the tray icon
+  agent.command-state.json  Recently handled remote commands, used to avoid duplicate execution
+
 Default SQL Server:
 
   .\EPHARM_DB
@@ -71,6 +76,37 @@ Prescription substitution rows:
 - If an already-seen prescription's PRESCRIPT_EDB/prsdrug snapshot changes later, the agent sends it again with syncMode=LIVE and overwriteExisting=true so the server can replace the stored prescription lines.
 - The recent prescription watch window defaults to 32 rows. Add prescriptionScanRows to agent.config.json to adjust it; values are clamped between 8 and 500.
 - The agent also rescans all of today's prescriptions every 5 minutes by default. Set prescriptionFullScanIntervalMinutes to 0 to disable it, or 1-1440 to adjust the interval.
+
+Remote web commands:
+
+- Agent version 1.2.0-ps can poll the PharmFarm API for remote commands.
+- Default polling: GET /agent/commands?limit=5 every 30 seconds.
+- The request includes the existing agent headers: X-PharmFarm-Agent-Version, X-PharmFarm-Device-Id, X-PharmFarm-Pharmacy-Id, and HMAC headers when agentSecret is configured.
+- The server may return an array, or an object with commands/items/data.
+- Each command must include commandId or id, and type or commandType.
+- The agent posts STARTED, COMPLETED, FAILED, or REJECTED to POST /agent/commands/{commandId}/result.
+- If the command endpoint returns 404, command polling is disabled until the agent restarts. This allows deploying the agent before the backend endpoint is available without repeated log noise.
+- Duplicate commandId values are not executed twice. The agent stores the final local result in agent.command-state.json and replays the result to the server if the same command is returned again.
+
+Supported remote command types:
+
+  RESYNC_TODAY_PRESCRIPTIONS
+  SYNC_REFERENCE_DATA
+  SYNC_DRUG_MASTERS
+  SYNC_STOCKS
+  SYNC_BARCODES
+  SYNC_WHOLESALERS
+  SYNC_PURCHASES
+  SYNC_CONTROLLED_DRUGS
+  SYNC_DRUG_PRICES
+  SYNC_DRUG_UNITS
+  HEARTBEAT_NOW
+
+Heartbeat:
+
+- Default heartbeat: POST /agent/heartbeat every 60 seconds.
+- Payload includes agentVersion, pharmacyId, deviceId, deviceName, hostNameHash, lastSqlOkAt, lastApiOkAt, pendingQueueCount, status, message, and capturedAt.
+- If the heartbeat endpoint returns 404, heartbeat is disabled until the agent restarts.
 
 Recommended operation:
 

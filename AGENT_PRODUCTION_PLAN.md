@@ -305,6 +305,7 @@ heartbeat payload:
 - 처방 약품 전용 수신 API
 - eventId unique 처리
 - heartbeat 수신 API
+- 에이전트 원격 명령 API
 - 에이전트 상태 테이블
 - 약국/기기별 접근 권한
 - 원문 저장 차단 또는 별도 debug flag
@@ -314,9 +315,55 @@ heartbeat payload:
 
 - `pharmfarm_agent_device`
 - `pharmfarm_agent_heartbeat`
+- `pharmfarm_agent_command`
 - `pharmfarm_agent_event`
 - `pharmfarm_prescription`
 - `pharmfarm_prescription_drug`
+
+원격 명령 API 초안:
+
+`GET /api/v1/pharmfarm/agent/commands?limit=5`
+
+응답 예시:
+
+```json
+{
+  "commands": [
+    {
+      "commandId": "cmd_20260813_001",
+      "type": "RESYNC_TODAY_PRESCRIPTIONS",
+      "params": {},
+      "requestedAt": "2026-08-13T00:00:00Z",
+      "expiresAt": "2026-08-13T00:10:00Z"
+    }
+  ]
+}
+```
+
+`POST /api/v1/pharmfarm/agent/commands/{commandId}/result`
+
+상태값:
+
+- `STARTED`
+- `COMPLETED`
+- `FAILED`
+- `REJECTED`
+
+명령은 `commandId` 기준으로 멱등 처리한다. 서버는 이미 완료/실패/거부된 명령을 pending으로 다시 내려주지 않는 것이 기본이며, 에이전트도 같은 `commandId`의 최종 결과를 로컬에 보존해 중복 실행을 막는다.
+
+1.2.0-ps 에이전트 지원 명령:
+
+- `RESYNC_TODAY_PRESCRIPTIONS`
+- `SYNC_REFERENCE_DATA`
+- `SYNC_DRUG_MASTERS`
+- `SYNC_STOCKS`
+- `SYNC_BARCODES`
+- `SYNC_WHOLESALERS`
+- `SYNC_PURCHASES`
+- `SYNC_CONTROLLED_DRUGS`
+- `SYNC_DRUG_PRICES`
+- `SYNC_DRUG_UNITS`
+- `HEARTBEAT_NOW`
 
 ## 12. 프론트에서 필요한 작업
 
@@ -401,7 +448,10 @@ heartbeat payload:
 - [ ] 서버 idempotency key 설계
 - [ ] 에이전트 설치 토큰 설계
 - [ ] HMAC 인증 방식 추가
-- [ ] heartbeat API 추가
+- [x] PowerShell 에이전트 heartbeat 전송 추가
+- [ ] 서버 heartbeat API 추가
+- [x] PowerShell 에이전트 원격 명령 polling 추가
+- [ ] 서버 원격 명령 API 추가
 - [ ] 에이전트 상태 UI 추가
 - [ ] 기존 `/samples` 기반 흐름에서 전용 처방 API로 이전
 - [ ] PowerShell 진단 모드와 운영 모드 분리

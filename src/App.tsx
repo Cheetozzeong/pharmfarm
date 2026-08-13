@@ -515,6 +515,45 @@ const initialTraces: ReceiptTrace[] = [
   },
 ];
 
+const demoCmsReceiptHistories: CmsReceiptHistory[] = [
+  {
+    id: "R-1001",
+    pc: "8806400017004",
+    sn: "SN8842",
+    lot: "LOT202606",
+    exp: "2027-12-31",
+    drugName: "타이레놀정 500mg",
+    insuranceCode: "640001700",
+    productTotalQuantity: 30,
+    returnedQuantity: 0,
+    returnableQuantity: 30,
+    wholesalerId: "10",
+    wholesalerName: "한미약품 A도매",
+    receivedAt: "2026.08.13 09:24",
+    createdAt: "2026.08.13 09:24",
+    createdBy: "데모 계정",
+    status: "RETURNABLE",
+  },
+  {
+    id: "R-1002",
+    pc: "669803820",
+    sn: "SN9231",
+    lot: "DIA2607",
+    exp: "2028-07-31",
+    drugName: "구주디아제팜주사",
+    insuranceCode: "669803820",
+    productTotalQuantity: 10,
+    returnedQuantity: 2,
+    returnableQuantity: 8,
+    wholesalerId: "30",
+    wholesalerName: "백제약품",
+    receivedAt: "2026.08.12 16:05",
+    createdAt: "2026.08.12 16:05",
+    createdBy: "데모 계정",
+    status: "RETURNABLE",
+  },
+];
+
 const demoPurchaseHistories: SellerCandidate[] = [
   {
     id: "100",
@@ -2642,6 +2681,12 @@ function returnHistorySourceText(history: CmsReturnHistory) {
   if (history.stockItemId) return "QR/SN 반품";
   if (history.purchaseHistoryId) return "구매 이력";
   return "반품 처리";
+}
+
+function receiptHistoryStatusBadgeClass(status: CmsReceiptHistory["status"]) {
+  if (status === "RETURNABLE") return "normal";
+  if (status === "RETURNED") return "name";
+  return "missing";
 }
 
 function returnReviewWholesalerCandidates(summary: string) {
@@ -8256,6 +8301,7 @@ type CmsPage =
   | "inventory-snapshot-diff"
   | "inventory-shortages"
   | "return-reviews"
+  | "receipts"
   | "wholesaler"
   | "prescriptions"
   | "purchase";
@@ -8332,6 +8378,29 @@ type CmsPurchaseHistory = {
   productName: string;
   quantity: number;
   source: string;
+};
+
+type CmsReceiptHistory = {
+  id: string;
+  pharmacyId?: string;
+  pharmacyName?: string;
+  stockId?: string;
+  stockItemId?: string;
+  pc: string;
+  sn: string;
+  lot: string;
+  exp: string;
+  drugName: string;
+  insuranceCode: string;
+  productTotalQuantity: number;
+  returnedQuantity: number;
+  returnableQuantity: number;
+  wholesalerId?: string;
+  wholesalerName: string;
+  receivedAt: string;
+  createdAt: string;
+  createdBy: string;
+  status: "RETURNABLE" | "RETURNED" | "UNKNOWN";
 };
 
 type CmsAccountStatus = "ACTIVE" | "INACTIVE" | "LOCKED";
@@ -9345,6 +9414,9 @@ function getCmsPage(path: string): CmsPage {
   if (segment === "inventory" && subSegment === "returns") {
     return "return-reviews";
   }
+  if (segment === "inventory" && subSegment === "receipts") {
+    return "receipts";
+  }
   if (
     segment === "master" ||
     segment === "import" ||
@@ -9354,6 +9426,7 @@ function getCmsPage(path: string): CmsPage {
     segment === "wholesaler" ||
     segment === "dispense" ||
     segment === "prescriptions" ||
+    segment === "receipts" ||
     segment === "purchase"
   ) {
     if (segment === "dispense") return "prescriptions";
@@ -9536,6 +9609,9 @@ function CmsApp({
   const [purchaseHistories, setPurchaseHistories] = useState<
     CmsPurchaseHistory[]
   >([]);
+  const [receiptHistories, setReceiptHistories] = useState<
+    CmsReceiptHistory[]
+  >([]);
   const [syncJobs, setSyncJobs] = useState<CmsSyncJob[]>([]);
   const [deductionRecords, setDeductionRecords] = useState<
     CmsDeductionRecord[]
@@ -9590,6 +9666,15 @@ function CmsApp({
   const [prescriptionSortDirection, setPrescriptionSortDirection] =
     useState<CmsStockSortDirection>("desc");
   const [prescriptionSearchStatus, setPrescriptionSearchStatus] =
+    useState<CmsPrescriptionSearchStatus>("idle");
+  const [receiptQuery, setReceiptQuery] = useState("");
+  const [receiptStartDate, setReceiptStartDate] = useState(
+    () => recentWeekDateRange().startDate,
+  );
+  const [receiptEndDate, setReceiptEndDate] = useState(
+    () => recentWeekDateRange().endDate,
+  );
+  const [receiptSearchStatus, setReceiptSearchStatus] =
     useState<CmsPrescriptionSearchStatus>("idle");
   const [shortageQuery, setShortageQuery] = useState("");
   const [shortageStartDate, setShortageStartDate] = useState(
@@ -9933,6 +10018,9 @@ function CmsApp({
     setPurchaseHistories((current) =>
       current.length > 0 ? current : demoCmsPurchaseHistories,
     );
+    setReceiptHistories((current) =>
+      current.length > 0 ? current : demoCmsReceiptHistories,
+    );
     setSyncJobs((current) =>
       current.length > 0 ? current : demoPurchaseSyncJobs,
     );
@@ -10035,11 +10123,29 @@ function CmsApp({
         };
 
         if (targetPage === "dashboard") {
-          const dashboardResult =
-            await optionalCmsApiFetch<unknown>("/dashboard");
+          const [dashboardResult, receiptResult, stockItemResult] =
+            await Promise.all([
+              optionalCmsApiFetch<unknown>("/dashboard"),
+              optionalCmsApiFetch<unknown>(
+                "/receipts?size=5&sortBy=receivedAt&sortDirection=desc",
+              ),
+              optionalCmsApiFetch<unknown>(
+                "/stock-items?size=5&sortBy=receivedAt&sortDirection=desc",
+              ),
+            ]);
           setDashboardData(
             dashboardResult ? normalizeCmsDashboard(dashboardResult) : null,
           );
+          const receiptPayloadResult = receiptResult ?? stockItemResult;
+          if (receiptPayloadResult) {
+            setReceiptHistories(
+              sortCmsReceiptHistories(
+                receiptHistoryPayload(receiptPayloadResult).map(
+                  normalizeCmsReceiptHistory,
+                ),
+              ),
+            );
+          }
           setDeductionRecords([]);
         } else if (targetPage === "master") {
           const masterParams = new URLSearchParams();
@@ -10280,6 +10386,42 @@ function CmsApp({
           if (stockResult.status === "fulfilled") {
             setStocks(arrayPayload(stockResult.value).map(normalizeStock));
           }
+        } else if (targetPage === "receipts") {
+          const trimmed = receiptQuery.trim();
+          const normalizedKeyword = normalizeSearchText(trimmed);
+          if (normalizedKeyword.length === 1) {
+            setReceiptSearchStatus("short");
+            setApiMessage("입고 이력 검색어는 2글자 이상 입력해 주세요.");
+          } else {
+            const receiptParams = new URLSearchParams({
+              sortBy: "receivedAt",
+              sortDirection: "desc",
+            });
+            if (receiptStartDate) receiptParams.set("startDate", receiptStartDate);
+            if (receiptEndDate) receiptParams.set("endDate", receiptEndDate);
+            if (trimmed) receiptParams.set("keyword", trimmed);
+            setReceiptSearchStatus("loading");
+            const receiptResult = await optionalCmsApiFetch<unknown>(
+              `/receipts?${receiptParams}`,
+            );
+            const stockItemResult =
+              receiptResult ??
+              (await optionalCmsApiFetch<unknown>(`/stock-items?${receiptParams}`));
+            const nextHistories = stockItemResult
+              ? sortCmsReceiptHistories(
+                  receiptHistoryPayload(stockItemResult)
+                    .map(normalizeCmsReceiptHistory)
+                    .filter((record) =>
+                      receiptHistoryMatchesQuery(record, trimmed),
+                    ),
+                )
+              : [];
+            setReceiptHistories(nextHistories);
+            setReceiptSearchStatus(stockItemResult ? "done" : "error");
+            if (!stockItemResult) {
+              setApiMessage("입고 이력 조회 API 응답을 받지 못했습니다.");
+            }
+          }
         } else if (targetPage === "prescriptions") {
           const trimmed = prescriptionQuery.trim();
           const normalizedKeyword = normalizeSearchText(trimmed);
@@ -10425,6 +10567,9 @@ function CmsApp({
       masterPage,
       masterQuery,
       page,
+      receiptEndDate,
+      receiptQuery,
+      receiptStartDate,
       prescriptionEndDate,
       prescriptionQuery,
       prescriptionSortDirection,
@@ -11571,6 +11716,7 @@ function CmsApp({
               cookieState={cookieState}
               dashboard={dashboardData}
               deductionRecords={deductionRecords}
+              receiptHistories={receiptHistories}
               stocks={stocks}
               syncJobs={syncJobs}
               navigate={navigate}
@@ -11756,6 +11902,19 @@ function CmsApp({
               onResolve={resolveReturnReview}
               onSelect={(record) => setSelectedReturnReviewId(record.id)}
               onStatus={updateReturnReviewStatus}
+            />
+          )}
+          {visiblePage === "receipts" && (
+            <CmsReceiptHistoryPage
+              endDate={receiptEndDate}
+              histories={receiptHistories}
+              query={receiptQuery}
+              searchStatus={receiptSearchStatus}
+              startDate={receiptStartDate}
+              onApplyFilters={() => void refreshCms()}
+              onEndDate={setReceiptEndDate}
+              onQuery={setReceiptQuery}
+              onStartDate={setReceiptStartDate}
             />
           )}
           {visiblePage === "wholesaler" && (
@@ -12690,6 +12849,138 @@ function normalizeCmsPurchase(raw: unknown, index: number): CmsPurchaseHistory {
     quantity: Number(item.quantity ?? 0),
     source: String(item.source ?? "BAROPHARM"),
   };
+}
+
+function normalizeCmsReceiptHistory(
+  raw: unknown,
+  index: number,
+): CmsReceiptHistory {
+  const item = unwrapObjectPayload(raw);
+  const productTotalQuantity = finiteNumber(
+    item.productTotalQuantity ??
+      item.product_total_quantity ??
+      item.totalQuantity ??
+      item.total_quantity ??
+      item.receivedQuantity ??
+      item.received_quantity ??
+      item.quantity,
+  );
+  const returnedQuantity = finiteNumber(
+    item.returnedQuantity ??
+      item.returned_quantity ??
+      item.returnQuantity ??
+      item.return_quantity,
+  );
+  const explicitReturnable =
+    item.returnableQuantity ?? item.returnable_quantity;
+  const returnableQuantity =
+    explicitReturnable === undefined || explicitReturnable === null
+      ? Math.max(0, productTotalQuantity - returnedQuantity)
+      : finiteNumber(explicitReturnable);
+  const receivedAt = formatTransactionAt(
+    item.receivedAt ??
+      item.received_at ??
+      item.receiptAt ??
+      item.receipt_at ??
+      item.createdAt ??
+      item.created_at,
+  );
+  const status: CmsReceiptHistory["status"] =
+    productTotalQuantity > 0 && returnableQuantity <= 0
+      ? "RETURNED"
+      : productTotalQuantity > 0
+        ? "RETURNABLE"
+        : "UNKNOWN";
+
+  return {
+    id: String(item.id ?? item.receiptId ?? item.stockItemId ?? index),
+    pharmacyId: optionalText(item.pharmacyId ?? item.pharmacy_id),
+    pharmacyName: optionalText(item.pharmacyName ?? item.pharmacy_name),
+    stockId: optionalText(item.stockId ?? item.stock_id),
+    stockItemId: optionalText(item.stockItemId ?? item.stock_item_id),
+    pc: optionalText(item.pc ?? item.standardCode ?? item.standard_code) ?? "",
+    sn: normalizeLookupSn(item.sn ?? item.serialNumber ?? item.serial_number, ""),
+    lot: optionalText(item.lot ?? item.lotNo ?? item.lot_no) ?? "",
+    exp: optionalText(item.exp ?? item.expiryDate ?? item.expiry_date) ?? "",
+    drugName:
+      optionalText(item.drugName ?? item.drug_name ?? item.name) ??
+      "미확인 약품",
+    insuranceCode:
+      optionalText(
+        item.insuranceCode ?? item.insurance_code ?? item.productCode,
+      ) ?? "",
+    productTotalQuantity,
+    returnedQuantity,
+    returnableQuantity,
+    wholesalerId: optionalText(item.wholesalerId ?? item.wholesaler_id),
+    wholesalerName:
+      optionalText(
+        item.wholesalerName ??
+          item.wholesaler_name ??
+          item.sellerName ??
+          item.seller_name,
+      ) ?? "-",
+    receivedAt,
+    createdAt: formatTransactionAt(item.createdAt ?? item.created_at),
+    createdBy:
+      optionalText(
+        item.createdBy ??
+          item.created_by ??
+          item.accountName ??
+          item.account_name,
+      ) ?? "-",
+    status,
+  };
+}
+
+function receiptHistoryPayload(raw: unknown) {
+  const direct = firstArrayPayload(raw, [
+    "receipts",
+    "receiptHistories",
+    "receipt_histories",
+    "stockItems",
+    "stock_items",
+    "items",
+    "content",
+    "data",
+  ]);
+  if (direct.length > 0) return direct;
+
+  const payload = unwrapObjectPayload(raw);
+  return arrayPayload(payload).length > 0 ? arrayPayload(payload) : arrayPayload(raw);
+}
+
+function sortCmsReceiptHistories(records: CmsReceiptHistory[]) {
+  return [...records].sort((left, right) => {
+    const compared = right.receivedAt.localeCompare(left.receivedAt);
+    if (compared !== 0) return compared;
+    return right.id.localeCompare(left.id);
+  });
+}
+
+function receiptHistoryMatchesQuery(record: CmsReceiptHistory, query: string) {
+  const normalizedQuery = normalizeSearchText(query);
+  if (!normalizedQuery) return true;
+  return normalizeSearchText(
+    [
+      record.drugName,
+      record.insuranceCode,
+      record.pc,
+      record.sn,
+      record.lot,
+      record.exp,
+      record.wholesalerName,
+      record.createdBy,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  ).includes(normalizedQuery);
+}
+
+function receiptHistoryStatusText(status: CmsReceiptHistory["status"]) {
+  if (status === "RETURNED") return "반품 완료";
+  if (status === "RETURNABLE") return "반품 가능";
+  return "확인 필요";
 }
 
 function normalizeCmsAccount(raw: unknown, index: number): CmsAccount {
@@ -13831,6 +14122,7 @@ function CmsSidebar({
       "/cms/inventory/shortages",
       warningTriangleIcon,
     ],
+    ["receipts", "입고 이력", "/cms/inventory/receipts", fileTextIcon],
     ["return-reviews", "반품 확인", "/cms/inventory/returns", briefcaseIcon],
     ["prescriptions", "처방전", "/cms/prescriptions", fileTextIcon],
     ...(canAccessPurchase
@@ -13907,6 +14199,7 @@ function CmsHeader({
     "inventory-decreases": "차감 이력",
     "inventory-snapshot-diff": "스냅샷 비교",
     "inventory-shortages": "초과 처방",
+    receipts: "입고 이력",
     "return-reviews": "반품 확인",
     wholesaler: "도매처 관리",
     prescriptions: "처방전",
@@ -13923,6 +14216,7 @@ function CmsHeader({
     "inventory-snapshot-diff":
       "에이전트 스냅샷과 현재 재고 수량 차이를 확인합니다.",
     "inventory-shortages": "초과 처방과 부족 수량을 확인합니다.",
+    receipts: "QR/SN 단위 입고 이력과 반품 가능 수량을 확인합니다.",
     "return-reviews": "앱에서 확정되지 않은 반품을 확인하고 처리합니다.",
     wholesaler: "약국별 도매처 정보를 관리합니다.",
     prescriptions: "처방전 차감 결과와 수동 처리 항목을 확인합니다.",
@@ -14411,6 +14705,7 @@ function CmsDashboard({
   dashboard,
   deductionRecords,
   navigate,
+  receiptHistories,
   stocks,
   syncJobs,
 }: {
@@ -14419,6 +14714,7 @@ function CmsDashboard({
   dashboard: CmsDashboardData | null;
   deductionRecords: CmsDeductionRecord[];
   navigate: (path: string) => void;
+  receiptHistories: CmsReceiptHistory[];
   stocks: StockItem[];
   syncJobs: CmsSyncJob[];
 }) {
@@ -14427,6 +14723,7 @@ function CmsDashboard({
     createFallbackDashboardData({
       cookieState,
       deductionRecords,
+      receiptHistories,
       stocks,
       syncJobs,
     });
@@ -14527,6 +14824,11 @@ function CmsDashboard({
       text,
     );
   });
+  const recentReceiptHistories = receiptHistories.slice(0, 5);
+  const receiptHistoryQuantity = receiptHistories.reduce(
+    (sum, history) => sum + history.productTotalQuantity,
+    0,
+  );
   const flowTotal =
     data.todayMovements.receivedQuantity +
     data.todayMovements.returnedQuantity +
@@ -14616,6 +14918,37 @@ function CmsDashboard({
               value={data.todayMovements.manualAdjustedQuantity}
               tone="red"
             />
+          </div>
+        </CmsDashboardSection>
+        <CmsDashboardSection
+          title="최근 입고 이력"
+          summary={`${recentReceiptHistories.length}건 · ${currency(receiptHistoryQuantity)}개`}
+          action="전체 보기"
+          onAction={() => navigate("/cms/inventory/receipts")}
+        >
+          <div className="cms-receipt-mini-list">
+            {recentReceiptHistories.map((history) => (
+              <button
+                className="cms-receipt-mini-row"
+                key={history.id}
+                type="button"
+                onClick={() => navigate("/cms/inventory/receipts")}
+              >
+                <div>
+                  <strong>{history.drugName}</strong>
+                  <span>
+                    {formatInsuranceCodeForDisplay(history.insuranceCode) ||
+                      "-"}{" "}
+                    · {history.wholesalerName}
+                  </span>
+                </div>
+                <b>{currency(history.productTotalQuantity)}개</b>
+                <time>{history.receivedAt}</time>
+              </button>
+            ))}
+            {recentReceiptHistories.length === 0 && (
+              <p className="cms-empty">표시할 입고 이력이 없습니다.</p>
+            )}
           </div>
         </CmsDashboardSection>
         <CmsDashboardSection
@@ -14773,11 +15106,13 @@ function CmsFlowStat({
 function createFallbackDashboardData({
   cookieState,
   deductionRecords,
+  receiptHistories,
   stocks,
   syncJobs,
 }: {
   cookieState: CmsCookieState;
   deductionRecords: CmsDeductionRecord[];
+  receiptHistories: CmsReceiptHistory[];
   stocks: StockItem[];
   syncJobs: CmsSyncJob[];
 }): CmsDashboardData {
@@ -14831,7 +15166,10 @@ function createFallbackDashboardData({
       agentNeedsAction: false,
     },
     todayMovements: {
-      receivedQuantity: 0,
+      receivedQuantity: receiptHistories.reduce(
+        (sum, history) => sum + history.productTotalQuantity,
+        0,
+      ),
       returnedQuantity: 0,
       prescriptionDeductedQuantity: 0,
       manualAdjustedQuantity: 0,
@@ -20425,6 +20763,177 @@ function CmsPurchasePage({
   );
 }
 
+function CmsReceiptHistoryPage({
+  endDate,
+  histories,
+  query,
+  searchStatus,
+  startDate,
+  onApplyFilters,
+  onEndDate,
+  onQuery,
+  onStartDate,
+}: {
+  endDate: string;
+  histories: CmsReceiptHistory[];
+  query: string;
+  searchStatus: CmsPrescriptionSearchStatus;
+  startDate: string;
+  onApplyFilters: () => void;
+  onEndDate: (value: string) => void;
+  onQuery: (value: string) => void;
+  onStartDate: (value: string) => void;
+}) {
+  const visibleHistories = useMemo(
+    () =>
+      sortCmsReceiptHistories(
+        histories.filter((history) => receiptHistoryMatchesQuery(history, query)),
+      ),
+    [histories, query],
+  );
+  const pagination = usePagination(
+    visibleHistories,
+    CMS_PAGE_SIZES.receipts,
+    `${query}|${visibleHistories.length}`,
+  );
+  const totalReceivedQuantity = visibleHistories.reduce(
+    (sum, history) => sum + history.productTotalQuantity,
+    0,
+  );
+  const totalReturnableQuantity = visibleHistories.reduce(
+    (sum, history) => sum + history.returnableQuantity,
+    0,
+  );
+  const returnedCount = visibleHistories.filter(
+    (history) => history.status === "RETURNED",
+  ).length;
+
+  return (
+    <section className="cms-content cms-list-page cms-receipt-history-page">
+      <CmsKpiGrid className="compact" columns={4}>
+        <CmsKpi label="입고 건수" value={`${visibleHistories.length}`} unit="건" />
+        <CmsKpi
+          label="입고 수량"
+          value={currency(totalReceivedQuantity)}
+          unit="개"
+          tone="blue"
+        />
+        <CmsKpi
+          label="반품 가능"
+          value={currency(totalReturnableQuantity)}
+          unit="개"
+        />
+        <CmsKpi
+          label="반품 완료"
+          value={`${returnedCount}`}
+          unit="건"
+          tone={returnedCount > 0 ? "red" : undefined}
+        />
+      </CmsKpiGrid>
+      <div className="cms-table-card cms-receipt-history-card">
+        <div className="cms-toolbar cms-receipt-history-toolbar">
+          <div className="cms-pills">
+            <span>{searchStatus === "loading" ? "조회 중" : "조회 완료"}</span>
+            <span>{startDate || "-"} ~ {endDate || "-"}</span>
+          </div>
+          <label className="cms-search">
+            <span className="search-icon" />
+            <input
+              placeholder="약명 · 보험코드 · SN · 도매처 검색"
+              value={query}
+              onChange={(event) => onQuery(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") onApplyFilters();
+              }}
+            />
+          </label>
+          <label className="cms-input compact">
+            <span>시작일</span>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(event) => onStartDate(event.target.value)}
+            />
+          </label>
+          <label className="cms-input compact">
+            <span>종료일</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(event) => onEndDate(event.target.value)}
+            />
+          </label>
+          <button
+            className="cms-toolbar-action"
+            type="button"
+            onClick={onApplyFilters}
+          >
+            조회
+          </button>
+        </div>
+        {searchStatus === "short" && (
+          <div className="cms-stock-decrease-notice is-warning">
+            검색어는 2글자 이상 입력해 주세요.
+          </div>
+        )}
+        {searchStatus === "error" && (
+          <div className="cms-stock-decrease-notice is-warning">
+            입고 이력 조회 API 응답이 없습니다. 서버의 입고 추적 데이터 조회
+            endpoint를 확인해 주세요.
+          </div>
+        )}
+        <div className="cms-table-scroll">
+          <div className="cms-receipt-history-table">
+            <div className="cms-receipt-history-row cms-th">
+              <span>입고일시</span>
+              <span>약품</span>
+              <span>도매처</span>
+              <span>수량</span>
+              <span>반품 가능</span>
+              <span>QR 추적값</span>
+              <span>상태</span>
+            </div>
+            {pagination.items.map((history) => (
+              <div className="cms-receipt-history-row" key={history.id}>
+                <span>{history.receivedAt}</span>
+                <strong>
+                  {history.drugName}
+                  <em>
+                    {formatInsuranceCodeForDisplay(history.insuranceCode) ||
+                      "-"}
+                  </em>
+                </strong>
+                <span>{history.wholesalerName}</span>
+                <b>{currency(history.productTotalQuantity)}개</b>
+                <b>{currency(history.returnableQuantity)}개</b>
+                <span>
+                  SN {shortCode(history.sn) || "-"}
+                  <em>
+                    LOT {history.lot || "-"} · EXP {history.exp || "-"}
+                  </em>
+                </span>
+                <span
+                  className={`cms-badge ${receiptHistoryStatusBadgeClass(
+                    history.status,
+                  )}`}
+                >
+                  {receiptHistoryStatusText(history.status)}
+                </span>
+              </div>
+            ))}
+            {visibleHistories.length === 0 && (
+              <p className="cms-empty table-empty">
+                표시할 입고 이력이 없습니다.
+              </p>
+            )}
+          </div>
+        </div>
+        <CmsPagination {...pagination} />
+      </div>
+    </section>
+  );
+}
+
 type CmsGridStyle = CSSProperties & {
   [key: `--${string}`]: string | number | undefined;
 };
@@ -20894,6 +21403,7 @@ const CMS_PAGE_SIZES = {
   master: 14,
   prescriptions: 12,
   purchaseHistories: 8,
+  receipts: 12,
   stockDecreases: 12,
   stockSnapshotDiffs: 12,
   shortages: 10,
