@@ -122,7 +122,8 @@ Recommended operation:
 Updating an installed agent:
 
 - Downloading/extracting a new zip does not update the running tray agent by itself.
-- Run install-pharmfarm-agent.bat again, or copy PharmFarm-Agent.ps1 into C:\ProgramData\PharmFarmAgent.
+- Run install-pharmfarm-agent.bat again. The installer stops the existing agent/tray processes before starting the updated files.
+- If PharmFarm-Agent.ps1 is copied into C:\ProgramData\PharmFarmAgent manually, restart the PharmFarmAgent scheduled task afterward.
 - The startup log should show the bundled agent version. If the version is old, the tray is still using the old ProgramData copy.
 - resync-today-prescriptions.bat runs the bundled PharmFarm-Agent.ps1 first, so it can test a freshly extracted package before reinstalling.
 

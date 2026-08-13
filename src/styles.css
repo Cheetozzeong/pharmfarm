@@ -4234,6 +4234,65 @@ body:has(.cms-shell) {
   line-height: 1.15;
 }
 
+.cms-dashboard-period-note {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid #dce5e2;
+  border-radius: 8px;
+  background: #f7faf9;
+  padding: 11px 14px;
+  color: #34443f;
+}
+
+.cms-dashboard-period-note > svg {
+  flex: 0 0 auto;
+  color: #28745d;
+}
+
+.cms-dashboard-period-heading {
+  display: grid;
+  min-width: 150px;
+  gap: 2px;
+}
+
+.cms-dashboard-period-heading strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.cms-dashboard-period-heading span {
+  color: #65736f;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.cms-dashboard-period-items {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 0;
+}
+
+.cms-dashboard-period-items span {
+  border-left: 1px solid #d9e2df;
+  padding: 0 12px;
+  color: #5b6864;
+  font-size: 12px;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+.cms-dashboard-period-items b {
+  margin-right: 4px;
+  color: #273631;
+  font-weight: 950;
+}
+
 .cms-dashboard-hero {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 240px;
@@ -7916,20 +7975,23 @@ body:has(.cms-shell) {
   white-space: nowrap;
 }
 
-.cms-toolbar.cms-receipt-history-toolbar {
-  display: grid;
-  grid-template-columns: minmax(170px, auto) minmax(260px, 1fr) 132px 132px auto;
-  justify-content: stretch;
+.cms-receipt-history-controls {
+  grid-template-columns: minmax(260px, 1fr) 210px auto minmax(
+      220px,
+      max-content
+    );
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  border-radius: 0;
+  padding: 14px 18px;
 }
 
-.cms-receipt-history-toolbar .cms-search {
-  width: 100%;
+.cms-receipt-history-controls .cms-list-search-state {
   min-width: 0;
-  max-width: none;
-}
-
-.cms-receipt-history-toolbar .cms-toolbar-action {
-  min-width: 76px;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .cms-agent-control-page {
@@ -9532,12 +9594,13 @@ body:has(.cms-shell) {
 }
 
 @media (max-width: 1180px) {
-  .cms-toolbar.cms-receipt-history-toolbar {
-    grid-template-columns: minmax(220px, 1fr) 132px 132px auto;
+  .cms-receipt-history-controls {
+    grid-template-columns: minmax(220px, 1fr) 210px auto;
   }
 
-  .cms-receipt-history-toolbar .cms-pills {
+  .cms-receipt-history-controls .cms-list-search-state {
     grid-column: 1 / -1;
+    text-align: left;
   }
 
   .cms-agent-control-layout {
@@ -9860,17 +9923,16 @@ body:has(.cms-shell) {
 }
 
 @media (max-width: 680px) {
-  .cms-toolbar.cms-receipt-history-toolbar {
-    grid-template-columns: 1fr;
+  .cms-receipt-history-controls {
+    grid-template-columns: minmax(0, 1fr) 64px;
+    padding: 10px;
   }
 
-  .cms-receipt-history-toolbar .cms-pills,
-  .cms-receipt-history-toolbar .cms-search,
-  .cms-toolbar.cms-receipt-history-toolbar .cms-input.compact,
-  .cms-receipt-history-toolbar .cms-toolbar-action {
+  .cms-receipt-history-controls .cms-search,
+  .cms-receipt-history-controls .cms-list-search-state {
     width: 100%;
     min-width: 0;
-    grid-column: 1;
+    grid-column: 1 / -1;
   }
 
   .cms-agent-device-summary,
@@ -10021,6 +10083,27 @@ body:has(.cms-shell) {
   .cms-dashboard-hero,
   .cms-prescription-work {
     padding: 14px;
+  }
+
+  .cms-dashboard-period-note {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .cms-dashboard-period-heading {
+    flex: 1;
+  }
+
+  .cms-dashboard-period-items {
+    width: 100%;
+    flex: 0 0 100%;
+    padding-left: 32px;
+  }
+
+  .cms-dashboard-period-items span {
+    width: 100%;
+    border-left: 0;
+    padding: 0;
   }
 
   .cms-dashboard-greeting strong {
@@ -10208,6 +10291,11 @@ body:has(.cms-shell) {
     display: none;
   }
 
+  .cms-receipt-history-controls .cms-toolbar-action {
+    width: 100%;
+    min-width: 0;
+  }
+
   .cms-date-range-presets {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 5px;
@@ -10219,7 +10307,12 @@ body:has(.cms-shell) {
   }
 
   .cms-calendar-months {
+    grid-template-columns: 1fr;
     gap: 6px;
+  }
+
+  .cms-calendar-month + .cms-calendar-month {
+    display: none;
   }
 
   .cms-calendar-day {

@@ -233,6 +233,45 @@ function Start-AgentProcesses {
   }
 }
 
+function Stop-AgentRuntime {
+  $errors = New-Object System.Collections.Generic.List[string]
+  $schtasks = Join-Path $env:SystemRoot "System32\schtasks.exe"
+  if (!(Test-Path -LiteralPath $schtasks) -and (Test-Path -LiteralPath (Join-Path $env:SystemRoot "Sysnative\schtasks.exe"))) {
+    $schtasks = Join-Path $env:SystemRoot "Sysnative\schtasks.exe"
+  }
+
+  foreach ($taskName in @($TaskName, $TrayTaskName)) {
+    try {
+      Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
+    } catch {
+      if (Test-Path -LiteralPath $schtasks) {
+        $endResult = Invoke-ExternalCommand $schtasks @("/End", "/TN", $taskName)
+        if ($endResult.exitCode -ne 0 -and $endResult.output -notmatch "cannot find|찾을 수") {
+          [void]$errors.Add("$taskName 종료 실패: $($endResult.output)")
+        }
+      }
+    }
+  }
+
+  Start-Sleep -Milliseconds 500
+  try {
+    $targetPaths = @($AgentTarget, $TrayTarget) | ForEach-Object { $_.ToLowerInvariant() }
+    $agentProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
+      $commandLine = if ($_.CommandLine) { $_.CommandLine.ToLowerInvariant() } else { "" }
+      ($_.Name -match "^(powershell|pwsh)(\.exe)?$") -and
+        ($targetPaths | Where-Object { $commandLine.Contains($_) }).Count -gt 0
+    })
+
+    foreach ($process in $agentProcesses) {
+      Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
+    }
+  } catch {
+    [void]$errors.Add("기존 에이전트 프로세스 종료 확인 실패: $($_.Exception.Message)")
+  }
+
+  return New-InstallResult ($errors.Count -eq 0) "stop" ($errors.ToArray() -join "`r`n")
+}
+
 function Remove-StartupShortcutFallback {
   try {
     $startupDir = [Environment]::GetFolderPath("Startup")
@@ -583,6 +622,12 @@ $installButton.Add_Click({
       BootstrapDrugPrice = $bootstrapDrugPriceCheck.Checked
       BootstrapDrugUnit = $bootstrapDrugUnitCheck.Checked
       IntervalSeconds = $intervalSeconds
+    }
+
+    $stopResult = Stop-AgentRuntime
+    if (!$stopResult.ok) {
+      [System.Windows.Forms.MessageBox]::Show("기존 에이전트를 완전히 종료하지 못했습니다.`r`n$($stopResult.message)`r`n`r`n작업 관리자에서 PharmFarm Agent를 종료한 뒤 다시 설치해 주세요.", "PharmFarm Agent", "OK", "Warning") | Out-Null
+      return
     }
 
     Write-Config @configParams

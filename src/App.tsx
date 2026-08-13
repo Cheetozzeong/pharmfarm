@@ -8404,6 +8404,12 @@ type CmsReceiptHistory = {
   status: "RETURNABLE" | "RETURNED" | "UNKNOWN";
 };
 
+type CmsReceiptHistoryFilters = {
+  endDate: string;
+  query: string;
+  startDate: string;
+};
+
 type CmsAgentDevice = {
   id: string;
   pharmacyId: string;
@@ -9718,6 +9724,11 @@ function CmsApp({
   const [receiptEndDate, setReceiptEndDate] = useState(
     () => recentWeekDateRange().endDate,
   );
+  const [appliedReceiptFilters, setAppliedReceiptFilters] =
+    useState<CmsReceiptHistoryFilters>(() => ({
+      ...recentWeekDateRange(),
+      query: "",
+    }));
   const [receiptSearchStatus, setReceiptSearchStatus] =
     useState<CmsPrescriptionSearchStatus>("idle");
   const [agentDevices, setAgentDevices] = useState<CmsAgentDevice[]>([]);
@@ -10142,7 +10153,10 @@ function CmsApp({
   }, [masterPage, masterPageInfo, masters]);
 
   const refreshCms = useCallback(
-    async (options?: { prescriptionFilter?: CmsDeductionFilter }) => {
+    async (options?: {
+      prescriptionFilter?: CmsDeductionFilter;
+      receiptFilters?: CmsReceiptHistoryFilters;
+    }) => {
       if (!hasStoredAuthTokens()) {
         setAuthAccount(null);
         setApiState("unauthorized");
@@ -10457,18 +10471,25 @@ function CmsApp({
                 : "",
           );
         } else if (targetPage === "receipts") {
-          const trimmed = receiptQuery.trim();
+          const receiptFilters =
+            options?.receiptFilters ?? appliedReceiptFilters;
+          const trimmed = receiptFilters.query.trim();
           const normalizedKeyword = normalizeSearchText(trimmed);
           if (normalizedKeyword.length === 1) {
             setReceiptSearchStatus("short");
             setApiMessage("입고 이력 검색어는 2글자 이상 입력해 주세요.");
           } else {
             const receiptParams = new URLSearchParams({
+              size: "500",
               sortBy: "receivedAt",
               sortDirection: "desc",
             });
-            if (receiptStartDate) receiptParams.set("startDate", receiptStartDate);
-            if (receiptEndDate) receiptParams.set("endDate", receiptEndDate);
+            if (receiptFilters.startDate) {
+              receiptParams.set("startDate", receiptFilters.startDate);
+            }
+            if (receiptFilters.endDate) {
+              receiptParams.set("endDate", receiptFilters.endDate);
+            }
             if (trimmed) receiptParams.set("keyword", trimmed);
             setReceiptSearchStatus("loading");
             const receiptResult = await optionalCmsApiFetch<unknown>(
@@ -10476,7 +10497,9 @@ function CmsApp({
             );
             const stockItemResult =
               receiptResult ??
-              (await optionalCmsApiFetch<unknown>(`/stock-items?${receiptParams}`));
+              (await optionalCmsApiFetch<unknown>(
+                `/stock-items?${receiptParams}`,
+              ));
             const nextHistories = stockItemResult
               ? sortCmsReceiptHistories(
                   receiptHistoryPayload(stockItemResult)
@@ -10630,6 +10653,7 @@ function CmsApp({
     },
     [
       accountQuery,
+      appliedReceiptFilters,
       baropharmCookieDraft.pharmacyId,
       cmsFallback,
       deductionFilter,
@@ -10637,9 +10661,6 @@ function CmsApp({
       masterPage,
       masterQuery,
       page,
-      receiptEndDate,
-      receiptQuery,
-      receiptStartDate,
       prescriptionEndDate,
       prescriptionQuery,
       prescriptionSortDirection,
@@ -10697,6 +10718,23 @@ function CmsApp({
 
     return () => window.clearTimeout(timer);
   }, [accountQuery, refreshCms, visiblePage]);
+
+  function applyReceiptFilters() {
+    const nextFilters: CmsReceiptHistoryFilters = {
+      endDate: receiptEndDate,
+      query: receiptQuery.trim(),
+      startDate: receiptStartDate,
+    };
+
+    if (normalizeSearchText(nextFilters.query).length === 1) {
+      setReceiptSearchStatus("short");
+      setApiMessage("입고 이력 검색어는 2글자 이상 입력해 주세요.");
+      return;
+    }
+
+    setAppliedReceiptFilters(nextFilters);
+    void refreshCms({ receiptFilters: nextFilters });
+  }
 
   async function submitCmsLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -12009,12 +12047,13 @@ function CmsApp({
           )}
           {visiblePage === "receipts" && (
             <CmsReceiptHistoryPage
+              appliedFilters={appliedReceiptFilters}
               endDate={receiptEndDate}
               histories={receiptHistories}
               query={receiptQuery}
               searchStatus={receiptSearchStatus}
               startDate={receiptStartDate}
-              onApplyFilters={() => void refreshCms()}
+              onApplyFilters={applyReceiptFilters}
               onEndDate={setReceiptEndDate}
               onQuery={setReceiptQuery}
               onStartDate={setReceiptStartDate}
@@ -13078,6 +13117,20 @@ function receiptHistoryMatchesQuery(record: CmsReceiptHistory, query: string) {
       .filter(Boolean)
       .join(" "),
   ).includes(normalizedQuery);
+}
+
+function receiptHistoryMatchesFilters(
+  record: CmsReceiptHistory,
+  filters: CmsReceiptHistoryFilters,
+) {
+  if (!receiptHistoryMatchesQuery(record, filters.query)) return false;
+  if (!filters.startDate && !filters.endDate) return true;
+
+  const receivedDate = record.receivedAt.slice(0, 10).replace(/\./g, "-");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(receivedDate)) return false;
+  if (filters.startDate && receivedDate < filters.startDate) return false;
+  if (filters.endDate && receivedDate > filters.endDate) return false;
+  return true;
 }
 
 function receiptHistoryStatusText(status: CmsReceiptHistory["status"]) {
@@ -14935,6 +14988,17 @@ function CmsDashboard({
   const pharmacyGreetingName =
     account?.pharmacyName ?? account?.accountName ?? accountDisplay.name;
   const greetingRole = cmsGreetingRoleLabel(account);
+  const dashboardReferenceDate = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+  }).format(new Date());
+  const dashboardReferenceMonth = new Intl.DateTimeFormat("ko-KR", {
+    timeZone: "Asia/Seoul",
+    year: "numeric",
+    month: "long",
+  }).format(new Date());
   const shortageRecords = deductionRecords.filter(
     (record) => record.shortageQuantity > 0,
   );
@@ -15039,6 +15103,30 @@ function CmsDashboard({
 
   return (
     <section className="cms-content cms-dashboard-page">
+      <div className="cms-dashboard-period-note" role="note">
+        <CalendarDays size={20} strokeWidth={2.2} aria-hidden="true" />
+        <div className="cms-dashboard-period-heading">
+          <strong>데이터 집계 기준</strong>
+          <span>{dashboardReferenceDate} · 로그인 약국 기준</span>
+        </div>
+        <div className="cms-dashboard-period-items">
+          <span>
+            <b>처방 업무</b> {dashboardReferenceMonth}
+          </span>
+          <span>
+            <b>재고 흐름</b> 오늘 00:00~현재
+          </span>
+          <span>
+            <b>재고 현황</b> 조회 시점 현재
+          </span>
+          <span>
+            <b>만료 예정</b> 오늘~90일 이내
+          </span>
+          <span>
+            <b>최근 내역</b> 입고 최신 5건 · 활동 최대 12건
+          </span>
+        </div>
+      </div>
       <div className="cms-dashboard-hero">
         <div className="cms-dashboard-greeting">
           <span>이번 달 처방 업무</span>
@@ -21201,6 +21289,7 @@ function CmsAgentControlPage({
 }
 
 function CmsReceiptHistoryPage({
+  appliedFilters,
   endDate,
   histories,
   query,
@@ -21211,6 +21300,7 @@ function CmsReceiptHistoryPage({
   onQuery,
   onStartDate,
 }: {
+  appliedFilters: CmsReceiptHistoryFilters;
   endDate: string;
   histories: CmsReceiptHistory[];
   query: string;
@@ -21224,14 +21314,16 @@ function CmsReceiptHistoryPage({
   const visibleHistories = useMemo(
     () =>
       sortCmsReceiptHistories(
-        histories.filter((history) => receiptHistoryMatchesQuery(history, query)),
+        histories.filter((history) =>
+          receiptHistoryMatchesFilters(history, appliedFilters),
+        ),
       ),
-    [histories, query],
+    [appliedFilters, histories],
   );
   const pagination = usePagination(
     visibleHistories,
     CMS_PAGE_SIZES.receipts,
-    `${query}|${visibleHistories.length}`,
+    `${appliedFilters.query}|${appliedFilters.startDate}|${appliedFilters.endDate}|${visibleHistories.length}`,
   );
   const totalReceivedQuantity = visibleHistories.reduce(
     (sum, history) => sum + history.productTotalQuantity,
@@ -21248,7 +21340,11 @@ function CmsReceiptHistoryPage({
   return (
     <section className="cms-content cms-list-page cms-receipt-history-page">
       <CmsKpiGrid className="compact" columns={4}>
-        <CmsKpi label="입고 건수" value={`${visibleHistories.length}`} unit="건" />
+        <CmsKpi
+          label="입고 건수"
+          value={`${visibleHistories.length}`}
+          unit="건"
+        />
         <CmsKpi
           label="입고 수량"
           value={currency(totalReceivedQuantity)}
@@ -21268,46 +21364,39 @@ function CmsReceiptHistoryPage({
         />
       </CmsKpiGrid>
       <div className="cms-table-card cms-receipt-history-card">
-        <div className="cms-toolbar cms-receipt-history-toolbar">
-          <div className="cms-pills">
-            <span>{searchStatus === "loading" ? "조회 중" : "조회 완료"}</span>
-            <span>{startDate || "-"} ~ {endDate || "-"}</span>
-          </div>
+        <form
+          className="cms-prescription-list-controls cms-receipt-history-controls"
+          onSubmit={(event) => {
+            event.preventDefault();
+            onApplyFilters();
+          }}
+        >
           <label className="cms-search">
             <span className="search-icon" />
             <input
               placeholder="약명 · 보험코드 · SN · 도매처 검색"
               value={query}
               onChange={(event) => onQuery(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key === "Enter") onApplyFilters();
-              }}
             />
           </label>
-          <label className="cms-input compact">
-            <span>시작일</span>
-            <input
-              type="date"
-              value={startDate}
-              onChange={(event) => onStartDate(event.target.value)}
-            />
-          </label>
-          <label className="cms-input compact">
-            <span>종료일</span>
-            <input
-              type="date"
-              value={endDate}
-              onChange={(event) => onEndDate(event.target.value)}
-            />
-          </label>
+          <CmsDateRangeInline
+            endDate={endDate}
+            startDate={startDate}
+            onEndDate={onEndDate}
+            onStartDate={onStartDate}
+          />
           <button
-            className="cms-toolbar-action"
-            type="button"
-            onClick={onApplyFilters}
+            className="cms-primary cms-toolbar-action"
+            disabled={searchStatus === "loading"}
+            type="submit"
           >
-            조회
+            {searchStatus === "loading" ? "조회 중" : "조회"}
           </button>
-        </div>
+          <span className={`cms-list-search-state is-${searchStatus}`}>
+            {prescriptionSearchStateText(searchStatus)} ·{" "}
+            {appliedFilters.startDate || "-"} ~ {appliedFilters.endDate || "-"}
+          </span>
+        </form>
         {searchStatus === "short" && (
           <div className="cms-stock-decrease-notice is-warning">
             검색어는 2글자 이상 입력해 주세요.
@@ -21589,14 +21678,27 @@ function CmsDateRangeInline({
 
       const viewportPadding = 12;
       const width = Math.min(620, window.innerWidth - viewportPadding * 2);
+      const maxHeight = window.innerHeight - viewportPadding * 2;
+      const popoverHeight = Math.min(
+        pickerRef.current?.querySelector<HTMLElement>(".cms-date-range-popover")
+          ?.scrollHeight ?? 420,
+        maxHeight,
+      );
       const left = Math.min(
         Math.max(viewportPadding, triggerRect.right - width),
         window.innerWidth - width - viewportPadding,
       );
+      const belowTop = triggerRect.bottom + 8;
+      const top =
+        belowTop + popoverHeight <= window.innerHeight - viewportPadding
+          ? belowTop
+          : Math.max(viewportPadding, triggerRect.top - popoverHeight - 8);
 
       setPopoverStyle({
         left,
-        top: triggerRect.bottom + 8,
+        maxHeight,
+        overflowY: "auto",
+        top,
         width,
       });
     }
