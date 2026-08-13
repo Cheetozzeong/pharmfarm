@@ -7,19 +7,31 @@ import {
 } from "@zxing/browser";
 import { BarcodeFormat, DecodeHintType } from "@zxing/library";
 import {
+  AlertTriangle,
   ArrowDown,
+  ArrowRight,
   ArrowUp,
   ArrowUpDown,
   CalendarDays,
+  Check,
   ChevronDown,
+  ChevronRight,
+  CircleCheck,
   CircleHelp,
+  ClipboardList,
+  Clock3,
   Copy,
   ExternalLink,
   Focus,
   HardDriveDownload,
+  LogOut,
+  PackageCheck,
   PanelLeftClose,
   PanelLeftOpen,
+  Phone,
   RefreshCw,
+  ScanLine,
+  Send,
   ShieldCheck,
   SwitchCamera,
   Trash2,
@@ -36,10 +48,49 @@ import pieGraphIcon from "../icons/20px/pieGraph.svg";
 import warningTriangleIcon from "../icons/20px/warning-triangle-filled.svg";
 import viewGridIcon from "../icons/20px/view_grid-filled.svg";
 import viewListIcon from "../icons/20px/view_list-filled.svg";
-import pharmfarmLogo from "../logo_1.png";
+import pharmfarmMark from "./assets/brand/pharmfarm-mark.png";
 
 const APP_BUILD_TIME = __APP_BUILD_TIME__;
 const APP_COMMIT_SHA = __APP_COMMIT_SHA__;
+
+function BrandMark({
+  className = "",
+  decorative = true,
+  label = "PharmFarm",
+}: {
+  className?: string;
+  decorative?: boolean;
+  label?: string;
+}) {
+  return (
+    <span
+      className={`brand-mark${className ? ` ${className}` : ""}`}
+      aria-hidden={decorative ? true : undefined}
+    >
+      <img src={pharmfarmMark} alt={decorative ? "" : label} />
+    </span>
+  );
+}
+
+function BrandLockup({
+  className = "",
+  primary = "팜팜",
+  secondary = "PharmFarm",
+}: {
+  className?: string;
+  primary?: string;
+  secondary?: string;
+}) {
+  return (
+    <span className={`brand-lockup${className ? ` ${className}` : ""}`}>
+      <BrandMark className="brand-lockup-mark" />
+      <span className="brand-lockup-copy">
+        <strong>{primary}</strong>
+        {secondary && <em>{secondary}</em>}
+      </span>
+    </span>
+  );
+}
 
 type Screen =
   | "scan"
@@ -411,6 +462,36 @@ type AuthAccount = {
   role?: string;
   accountType?: string;
 };
+
+type InquiryFormDraft = {
+  pharmacyName: string;
+  contactName: string;
+  phone: string;
+  email: string;
+  region: string;
+  pharmacySystem: string;
+  monthlyReturnVolume: string;
+  inquiryType: "ADOPTION" | "DEMO" | "PARTNERSHIP";
+  message: string;
+  privacyAgreed: boolean;
+  website: string;
+};
+
+function createInquiryFormDraft(): InquiryFormDraft {
+  return {
+    pharmacyName: "",
+    contactName: "",
+    phone: "",
+    email: "",
+    region: "",
+    pharmacySystem: "",
+    monthlyReturnVolume: "",
+    inquiryType: "ADOPTION",
+    message: "",
+    privacyAgreed: false,
+    website: "",
+  };
+}
 
 type CmsSignupDraft = {
   adminPassword: string;
@@ -1819,9 +1900,10 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
       selectedStockCandidate?.price ??
       Number(item.price ?? item.maxPrice ?? 0),
     matchStatus,
-    virtualDrugName: selectedPrice || knownInsuranceWithoutPriceMaster
-      ? ""
-      : (selectedStockCandidate?.name ?? name),
+    virtualDrugName:
+      selectedPrice || knownInsuranceWithoutPriceMaster
+        ? ""
+        : (selectedStockCandidate?.name ?? name),
     virtualInsuranceCode:
       selectedPrice || knownInsuranceWithoutPriceMaster
         ? ""
@@ -1833,7 +1915,9 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
         ? "2번 기준 데이터는 없지만 1번 기준 보험코드로 입고합니다."
         : undefined,
     insuranceCodeExists:
-      selectedStockCandidate || pcOnlyUninsured || knownInsuranceWithoutPriceMaster
+      selectedStockCandidate ||
+      pcOnlyUninsured ||
+      knownInsuranceWithoutPriceMaster
         ? false
         : null,
   };
@@ -1842,11 +1926,11 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
 function isKnownInsuranceReceiptDrug(drug: DrugMaster, pc: string) {
   return Boolean(
     drug.matchStatus === "NORMAL" &&
-      !drug.priceMasterId &&
-      !drug.selectedStockId &&
-      !drug.pcOnlyUninsured &&
-      (drug.priceMasters?.length ?? 0) === 0 &&
-      isMeaningfulInsuranceCode(drug.insuranceCode, pc),
+    !drug.priceMasterId &&
+    !drug.selectedStockId &&
+    !drug.pcOnlyUninsured &&
+    (drug.priceMasters?.length ?? 0) === 0 &&
+    isMeaningfulInsuranceCode(drug.insuranceCode, pc),
   );
 }
 
@@ -2759,7 +2843,9 @@ function addReceiptQuantityOption(
   options.push(option);
 }
 
-function receiptQuantityOptions(item: ReceiptQueueItem): ReceiptQuantityOption[] {
+function receiptQuantityOptions(
+  item: ReceiptQueueItem,
+): ReceiptQuantityOption[] {
   const options: ReceiptQuantityOption[] = [];
   const scannedQuantity = item.drug.scannedProductTotalQuantity ?? 0;
   const selectedPrice = (item.drug.priceMasters ?? []).find(
@@ -3371,9 +3457,53 @@ function createVirtualInsuranceCodeCandidate(
   return `${prefix}${next.toString().padStart(digits.length, "0")}`;
 }
 
-function getUiPreviewMode() {
+type UiPreviewMode =
+  | "receipt-match"
+  | "return-scan"
+  | "return-confirmed"
+  | "return-done";
+
+function getUiPreviewMode(): UiPreviewMode | null {
   const preview = new URLSearchParams(window.location.search).get("preview");
-  return preview === "receipt-match" ? preview : null;
+  if (
+    preview === "receipt-match" ||
+    preview === "return-scan" ||
+    preview === "return-confirmed" ||
+    preview === "return-done"
+  ) {
+    return preview;
+  }
+  return null;
+}
+
+function createReturnConfirmedPreview(): Extract<
+  ReturnLookup,
+  { matchType: "CONFIRMED" }
+> {
+  return {
+    matchType: "CONFIRMED",
+    pc: "8806400017004",
+    sn: "SN-PHARMFARM-20260813",
+    lot: "LOT-2026-08",
+    exp: "2027-12-31",
+    drugName: "타이레놀정 500mg",
+    insuranceCode: "640001700",
+    wholesalerName: "지오영 도매",
+    productTotalQuantity: 30,
+    returnedQuantity: 0,
+    returnableQuantity: 30,
+    stockQuantity: 48,
+    receiptCandidates: [],
+  };
+}
+
+function createReturnDonePreview(): ReturnSummary {
+  return {
+    drugName: "타이레놀정 500mg",
+    wholesalerName: "지오영 도매",
+    quantity: 30,
+    stockAfter: 18,
+  };
 }
 
 function previewPriceMaster(
@@ -3651,9 +3781,10 @@ function createReceiptMatchPreviewQueue(): ReceiptQueueItem[] {
   ];
 }
 
-function MobileApp() {
+function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
   const uiPreviewMode = getUiPreviewMode();
   const receiptMatchPreview = uiPreviewMode === "receipt-match";
+  const returnPreview = uiPreviewMode?.startsWith("return-") ?? false;
   const videoRef = useRef<HTMLVideoElement>(null);
   const scanGuideRef = useRef<HTMLButtonElement>(null);
   const scanAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -3674,14 +3805,14 @@ function MobileApp() {
   const selectedCameraDeviceIdRef = useRef("");
   const modeRef = useRef<Mode>("receipt");
 
-  const [screen, setScreen] = useState<Screen>(() =>
-    receiptMatchPreview
-      ? "receiptMatch"
-      : hasStoredAuthTokens()
-        ? "wholesaler"
-        : "account",
-  );
-  const [mode, setMode] = useState<Mode>("receipt");
+  const [screen, setScreen] = useState<Screen>(() => {
+    if (receiptMatchPreview) return "receiptMatch";
+    if (uiPreviewMode === "return-confirmed") return "returnConfirmed";
+    if (uiPreviewMode === "return-done") return "returnDone";
+    if (uiPreviewMode === "return-scan") return "scan";
+    return hasStoredAuthTokens() ? "wholesaler" : "account";
+  });
+  const [mode, setMode] = useState<Mode>(returnPreview ? "return" : "receipt");
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraRestartKey, setCameraRestartKey] = useState(0);
   const [cameraError, setCameraError] = useState("");
@@ -3696,10 +3827,10 @@ function MobileApp() {
     getStoredScanCodeMode(),
   );
   const [apiState, setApiState] = useState<ApiState>(() =>
-    receiptMatchPreview ? "demo" : "checking",
+    uiPreviewMode ? "demo" : "checking",
   );
   const [apiMessage, setApiMessage] = useState(
-    receiptMatchPreview ? "UI 프리뷰 더미 데이터" : "",
+    uiPreviewMode ? "UI 프리뷰 더미 데이터" : "",
   );
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
@@ -3723,13 +3854,19 @@ function MobileApp() {
   const [receiptQueue, setReceiptQueue] = useState<ReceiptQueueItem[]>(() =>
     receiptMatchPreview ? createReceiptMatchPreviewQueue() : [],
   );
-  const [lastScanName, setLastScanName] = useState(
-    receiptMatchPreview ? "UI 프리뷰" : "QR 스캔 대기",
+  const [lastScanName, setLastScanName] = useState(() =>
+    returnPreview
+      ? "반품할 약품을 스캔하세요"
+      : receiptMatchPreview
+        ? "UI 프리뷰"
+        : "QR 스캔 대기",
   );
   const [scanNotice, setScanNotice] = useState(
-    receiptMatchPreview
-      ? "더미 데이터로 매칭 결과 UI를 확인 중입니다."
-      : "카메라를 시작하면 QR이 자동으로 인식됩니다.",
+    returnPreview
+      ? "입고 이력과 도매처를 자동으로 확인합니다."
+      : receiptMatchPreview
+        ? "더미 데이터로 매칭 결과 UI를 확인 중입니다."
+        : "카메라를 시작하면 QR이 자동으로 인식됩니다.",
   );
   const [receiptSummary, setReceiptSummary] = useState<ReceiptSummary | null>(
     null,
@@ -3737,13 +3874,17 @@ function MobileApp() {
   const [receiptSubmitError, setReceiptSubmitError] = useState("");
   const [receiptPartialConfirmOpen, setReceiptPartialConfirmOpen] =
     useState(false);
-  const [returnLookup, setReturnLookup] = useState<ReturnLookup | null>(null);
+  const [returnLookup, setReturnLookup] = useState<ReturnLookup | null>(() =>
+    uiPreviewMode === "return-confirmed"
+      ? createReturnConfirmedPreview()
+      : null,
+  );
   const [returnQuantity, setReturnQuantity] = useState(10);
   const [returnMemo, setReturnMemo] = useState("유통기한 임박 반품");
   const [selectedCandidateId, setSelectedCandidateId] = useState("");
   const [returnReviewMessage, setReturnReviewMessage] = useState("");
   const [returnSummary, setReturnSummary] = useState<ReturnSummary | null>(
-    null,
+    () => (uiPreviewMode === "return-done" ? createReturnDonePreview() : null),
   );
   const [scanExpiryNotice, setScanExpiryNotice] =
     useState<ScanExpiryNotice | null>(null);
@@ -4278,7 +4419,7 @@ function MobileApp() {
   );
 
   const bootstrapAuth = useCallback(async () => {
-    if (receiptMatchPreview) {
+    if (uiPreviewMode) {
       setApiState("demo");
       setApiMessage("UI 프리뷰 더미 데이터");
       return;
@@ -4315,7 +4456,7 @@ function MobileApp() {
     }
   }, [
     refreshFromBackend,
-    receiptMatchPreview,
+    uiPreviewMode,
     resetReturnFlow,
     resetWholesalerSelection,
     setApiFallback,
@@ -5465,12 +5606,14 @@ function MobileApp() {
             stockId: optionalId(drug.selectedStockId),
             priceMasterId: optionalId(drug.priceMasterId),
             productTotalQuantity: drug.productTotalQuantity,
-            virtualDrugName: drug.priceMasterId || knownInsuranceFallback
-              ? null
-              : drug.virtualDrugName || drug.name,
-            virtualInsuranceCode: drug.priceMasterId || knownInsuranceFallback
-              ? null
-              : drug.virtualInsuranceCode || drug.insuranceCode,
+            virtualDrugName:
+              drug.priceMasterId || knownInsuranceFallback
+                ? null
+                : drug.virtualDrugName || drug.name,
+            virtualInsuranceCode:
+              drug.priceMasterId || knownInsuranceFallback
+                ? null
+                : drug.virtualInsuranceCode || drug.insuranceCode,
           };
         }),
       );
@@ -5704,6 +5847,11 @@ function MobileApp() {
           scanPerformanceMode={scanPerformanceMode}
           scannerEngine={scannerEngine}
           scanNotice={scanNotice}
+          previewCameraImage={
+            uiPreviewMode === "return-scan"
+              ? "/marketing/pharmacy-qr-camera.jpg"
+              : undefined
+          }
           selectedWholesaler={selectedWholesaler}
           scanGuideRef={scanGuideRef}
           torchAvailable={torchAvailable}
@@ -5840,6 +5988,11 @@ function MobileApp() {
         returnLookup?.matchType === "CONFIRMED" && (
           <ReturnConfirmedScreen
             lookup={returnLookup}
+            previewCameraImage={
+              uiPreviewMode === "return-confirmed"
+                ? "/marketing/pharmacy-qr-camera.jpg"
+                : undefined
+            }
             onClose={() => {
               resetReturnFlow();
               setLastScanName("QR 스캔 대기");
@@ -5945,6 +6098,7 @@ function MobileApp() {
           onLoginId={setLoginId}
           onPassword={setPassword}
           onSubmit={submitLogin}
+          onInquiry={navigate ? () => navigate("/introduce") : undefined}
         />
       )}
 
@@ -6079,6 +6233,7 @@ function ScanScreen({
   scanPerformanceMode,
   scannerEngine,
   scanNotice,
+  previewCameraImage,
   selectedWholesaler,
   scanGuideRef,
   torchAvailable,
@@ -6110,6 +6265,7 @@ function ScanScreen({
   scanPerformanceMode: ScanPerformanceMode;
   scannerEngine: ScannerEngine;
   scanNotice: string;
+  previewCameraImage?: string;
   selectedWholesaler: Wholesaler | null;
   scanGuideRef: RefObject<HTMLButtonElement>;
   torchAvailable: boolean;
@@ -6143,7 +6299,36 @@ function ScanScreen({
   const [menuOpen, setMenuOpen] = useState(false);
   const [manualBarcodeOpen, setManualBarcodeOpen] = useState(false);
   const [manualBarcodeValue, setManualBarcodeValue] = useState("");
+  const manualBarcodePanelRef = useRef<HTMLFormElement>(null);
+  const statusMenuButtonRef = useRef<HTMLButtonElement>(null);
   const manualBarcodeDisabled = !isReceipt || !selectedWholesaler;
+
+  const dismissManualBarcode = useCallback(() => {
+    setManualBarcodeOpen(false);
+    setManualBarcodeValue("");
+  }, []);
+
+  useEffect(() => {
+    if (!manualBarcodeOpen) return;
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!(event.target instanceof Node)) return;
+      if (manualBarcodePanelRef.current?.contains(event.target)) return;
+      dismissManualBarcode();
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      dismissManualBarcode();
+      statusMenuButtonRef.current?.focus();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [dismissManualBarcode, manualBarcodeOpen]);
 
   const submitManualBarcodeForm = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -6170,6 +6355,7 @@ function ScanScreen({
         )}
         <div className="scan-menu-wrap">
           <button
+            ref={statusMenuButtonRef}
             className="count-chip status-menu-btn"
             type="button"
             onClick={() => setMenuOpen((current) => !current)}
@@ -6279,10 +6465,15 @@ function ScanScreen({
 
       {manualBarcodeOpen && (
         <form
+          ref={manualBarcodePanelRef}
+          aria-labelledby="manual-barcode-title"
           className="manual-barcode-panel"
+          role="dialog"
           onSubmit={submitManualBarcodeForm}
         >
-          <label htmlFor="manual-barcode-input">바코드 수기 입력</label>
+          <label id="manual-barcode-title" htmlFor="manual-barcode-input">
+            바코드 수기 입력
+          </label>
           <input
             id="manual-barcode-input"
             autoComplete="off"
@@ -6293,13 +6484,7 @@ function ScanScreen({
             onChange={(event) => setManualBarcodeValue(event.target.value)}
           />
           <div className="manual-barcode-actions">
-            <button
-              type="button"
-              onClick={() => {
-                setManualBarcodeOpen(false);
-                setManualBarcodeValue("");
-              }}
-            >
+            <button type="button" onClick={dismissManualBarcode}>
               닫기
             </button>
             <button type="submit">입고 추가</button>
@@ -6340,6 +6525,13 @@ function ScanScreen({
         <div className="scan-status-copy">
           <span>{scanStatusText}</span>
         </div>
+        {previewCameraImage && (
+          <img
+            className="camera-preview-image"
+            src={previewCameraImage}
+            alt="손에 든 약품 QR을 팜팜 카메라로 스캔하는 장면"
+          />
+        )}
         <video
           ref={videoRef}
           className={`camera-video ${cameraActive ? "is-active" : ""}`}
@@ -7356,7 +7548,11 @@ function ReceiptQuantitySelector({
   onSelectQuantity: (itemId: string, productTotalQuantity: number) => void;
 }) {
   return (
-    <div className="receipt-quantity-choice" role="group" aria-label="입고 수량">
+    <div
+      className="receipt-quantity-choice"
+      role="group"
+      aria-label="입고 수량"
+    >
       <span>입고 수량</span>
       <div>
         {options.map((option) => {
@@ -7556,11 +7752,13 @@ function ReceiptPartialConfirmModal({
 
 function ReturnConfirmedScreen({
   lookup,
+  previewCameraImage,
   onClose,
   onFullReturn,
   onNext,
 }: {
   lookup: Extract<ReturnLookup, { matchType: "CONFIRMED" }>;
+  previewCameraImage?: string;
   onClose: () => void;
   onFullReturn: () => void;
   onNext: () => void;
@@ -7576,6 +7774,7 @@ function ReturnConfirmedScreen({
   return (
     <ReturnSheet
       height="confirmed"
+      previewCameraImage={previewCameraImage}
       variant={isPcOnlyReturn ? "pc-only" : undefined}
     >
       <span className="state-badge confirmed">
@@ -8010,6 +8209,7 @@ function AccountScreen({
   loginId,
   password,
   onBack,
+  onInquiry,
   onLoginId,
   onPassword,
   onSubmit,
@@ -8017,6 +8217,7 @@ function AccountScreen({
   loginId: string;
   password: string;
   onBack?: () => void;
+  onInquiry?: () => void;
   onLoginId: (value: string) => void;
   onPassword: (value: string) => void;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -8027,9 +8228,7 @@ function AccountScreen({
       <section className="scroll-body account-body">
         <div className="login-panel">
           <div className="app-login-hero">
-            <div className="app-login-logo">
-              <img src={pharmfarmLogo} alt="" />
-            </div>
+            <BrandLockup className="app-login-logo" />
             <span>약품 재고를 스캔으로 간편하게</span>
           </div>
           <form className="login-form" onSubmit={onSubmit}>
@@ -8056,7 +8255,9 @@ function AccountScreen({
             <div className="login-links">
               <span>비밀번호 찾기</span>
               <i />
-              <span>약국 등록 문의</span>
+              <button type="button" onClick={onInquiry}>
+                약국 등록 문의
+              </button>
             </div>
           </form>
         </div>
@@ -8223,15 +8424,26 @@ function receiptDrugDetail(item: ReceiptQueueItem) {
 function ReturnSheet({
   children,
   height,
+  previewCameraImage,
   variant,
 }: {
   children: ReactNode;
   height: "confirmed" | "estimated" | "none";
+  previewCameraImage?: string;
   variant?: "pc-only";
 }) {
   return (
     <>
-      <div className="return-backdrop">
+      <div
+        className={`return-backdrop ${previewCameraImage ? "has-camera-preview" : ""}`}
+        style={
+          previewCameraImage
+            ? ({
+                "--return-camera-image": `url(${previewCameraImage})`,
+              } as CSSProperties)
+            : undefined
+        }
+      >
         <div
           className="mini-scan"
           style={{ "--accent": "#4D9AFF" } as CSSProperties}
@@ -8292,6 +8504,7 @@ function SummaryLine({
 
 type CmsPage =
   | "dashboard"
+  | "inquiries"
   | "master"
   | "import"
   | "signup"
@@ -8472,6 +8685,31 @@ type CmsAccountDraft = {
   accountName: string;
   status: CmsAccountStatus;
   newPassword: string;
+};
+
+type CmsInquiryStatus =
+  | "NEW"
+  | "CONTACTED"
+  | "DEMO_SCHEDULED"
+  | "CONVERTED"
+  | "CLOSED";
+
+type CmsInquiry = {
+  id: string;
+  pharmacyName: string;
+  contactName: string;
+  phone: string;
+  email: string;
+  region: string;
+  pharmacySystem: string;
+  monthlyReturnVolume: string;
+  inquiryType: string;
+  message: string;
+  status: CmsInquiryStatus;
+  adminMemo: string;
+  source: string;
+  createdAt: string;
+  updatedAt: string;
 };
 
 type CmsSyncJob = {
@@ -8934,6 +9172,61 @@ const demoCmsMasters: CmsMaster[] = [
   },
 ];
 
+const demoCmsInquiries: CmsInquiry[] = [
+  {
+    id: "1042",
+    pharmacyName: "새봄약국",
+    contactName: "김서연",
+    phone: "010-4821-7305",
+    email: "seoyeon@example.com",
+    region: "서울 송파구",
+    pharmacySystem: "이팜",
+    monthlyReturnVolume: "31_TO_100",
+    inquiryType: "ADOPTION",
+    message:
+      "반품할 때 도매처를 찾는 시간이 오래 걸립니다. 현재 프로그램과 연동 가능한지 상담받고 싶습니다.",
+    status: "NEW",
+    adminMemo: "",
+    source: "INTRODUCE_LANDING",
+    createdAt: "2026. 08. 13. 16:24",
+    updatedAt: "2026. 08. 13. 16:24",
+  },
+  {
+    id: "1041",
+    pharmacyName: "온누리중앙약국",
+    contactName: "박정민",
+    phone: "010-7732-1180",
+    email: "",
+    region: "경기 성남시",
+    pharmacySystem: "PM+",
+    monthlyReturnVolume: "10_TO_30",
+    inquiryType: "DEMO",
+    message: "직원들과 함께 실제 반품 흐름을 시연으로 보고 싶습니다.",
+    status: "DEMO_SCHEDULED",
+    adminMemo: "8월 19일 오후 2시 원격 시연 예정",
+    source: "INTRODUCE_LANDING",
+    createdAt: "2026. 08. 12. 11:08",
+    updatedAt: "2026. 08. 13. 09:30",
+  },
+  {
+    id: "1039",
+    pharmacyName: "한결약국",
+    contactName: "이현우",
+    phone: "010-3150-8824",
+    email: "hyunwoo@example.com",
+    region: "인천 연수구",
+    pharmacySystem: "이팜",
+    monthlyReturnVolume: "OVER_100",
+    inquiryType: "ADOPTION",
+    message: "지점 두 곳을 함께 관리할 수 있는지 문의드립니다.",
+    status: "CONTACTED",
+    adminMemo: "다지점 운영 방식 확인 후 제안서 전달 예정",
+    source: "INTRODUCE_LANDING",
+    createdAt: "2026. 08. 11. 15:42",
+    updatedAt: "2026. 08. 12. 10:18",
+  },
+];
+
 const demoImportJobs: CmsImportJob[] = [
   {
     id: "J-301",
@@ -9297,6 +9590,15 @@ function App() {
     setPath(nextPath);
   }, []);
 
+  if (path.startsWith("/introduce") || path.startsWith("/inquiry")) {
+    return (
+      <>
+        <KakaoExternalBrowserGate />
+        <IntroductionLanding navigate={navigate} />
+      </>
+    );
+  }
+
   if (path.startsWith("/agent")) {
     return (
       <>
@@ -9318,8 +9620,441 @@ function App() {
   return (
     <>
       <KakaoExternalBrowserGate />
-      <MobileApp />
+      <MobileApp navigate={navigate} />
     </>
+  );
+}
+
+function IntroductionLanding({
+  navigate,
+}: {
+  navigate: (path: string) => void;
+}) {
+  const [draft, setDraft] = useState<InquiryFormDraft>(createInquiryFormDraft);
+  const [submitState, setSubmitState] = useState<
+    "idle" | "submitting" | "success" | "error"
+  >("idle");
+  const [submitMessage, setSubmitMessage] = useState("");
+
+  function patchDraft(patch: Partial<InquiryFormDraft>) {
+    setDraft((current) => ({ ...current, ...patch }));
+  }
+
+  function scrollToInquiry() {
+    document
+      .getElementById("inquiry-form")
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
+  async function submitInquiry(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitState === "submitting") return;
+
+    setSubmitState("submitting");
+    setSubmitMessage("");
+    try {
+      await rawApiFetch<unknown>("/inquiries", {
+        method: "POST",
+        body: JSON.stringify({
+          ...draft,
+          pharmacyName: draft.pharmacyName.trim(),
+          contactName: draft.contactName.trim(),
+          phone: draft.phone.trim(),
+          email: draft.email.trim() || undefined,
+          region: draft.region.trim() || undefined,
+          pharmacySystem: draft.pharmacySystem.trim() || undefined,
+          monthlyReturnVolume: draft.monthlyReturnVolume || undefined,
+          message: draft.message.trim() || undefined,
+          source: "INTRODUCE_LANDING",
+        }),
+      });
+      setDraft(createInquiryFormDraft());
+      setSubmitState("success");
+      setSubmitMessage(
+        "도입 문의가 접수되었습니다. 내용을 확인한 뒤 담당자가 연락드리겠습니다.",
+      );
+    } catch (error) {
+      setSubmitState("error");
+      setSubmitMessage(
+        error instanceof ApiError && error.status < 500
+          ? "입력 내용을 다시 확인해 주세요."
+          : "문의 접수에 실패했습니다. 잠시 후 다시 시도해 주세요.",
+      );
+    }
+  }
+
+  return (
+    <main className="introduce-page">
+      <header className="introduce-nav">
+        <button
+          className="introduce-brand"
+          type="button"
+          aria-label="팜팜 소개 페이지 맨 위로"
+          onClick={() => window.scrollTo({ top: 0, behavior: "smooth" })}
+        >
+          <BrandLockup primary="팜팜" />
+        </button>
+        <nav aria-label="소개 페이지 메뉴">
+          <a href="#return-flow">반품 방법</a>
+          <a href="#benefits">도입 효과</a>
+          <button type="button" onClick={scrollToInquiry}>
+            도입 문의
+          </button>
+        </nav>
+      </header>
+
+      <section className="introduce-hero">
+        <div className="introduce-hero-copy">
+          <span className="introduce-kicker">약국 재고·반품 관리</span>
+          <h1>
+            약국 반품,
+            <br />
+            스캔 한 번으로 간단하게.
+          </h1>
+          <p>
+            팜팜은 약품 QR을 읽어 입고 이력과 도매처를 확인하고, 반품 수량과
+            재고까지 한 흐름으로 정리합니다.
+          </p>
+          <div className="introduce-hero-actions">
+            <button
+              type="button"
+              className="introduce-primary"
+              onClick={scrollToInquiry}
+            >
+              도입 상담 신청
+              <ArrowRight size={18} aria-hidden="true" />
+            </button>
+            <a href="#return-flow" className="introduce-secondary">
+              실제 화면 보기
+              <ChevronRight size={18} aria-hidden="true" />
+            </a>
+          </div>
+          <ul className="introduce-proof-list">
+            <li>
+              <Check size={16} aria-hidden="true" />
+              입고 이력 기반 도매처 확인
+            </li>
+            <li>
+              <Check size={16} aria-hidden="true" />
+              반품과 동시에 재고 반영
+            </li>
+          </ul>
+        </div>
+        <div className="introduce-hero-visual" aria-label="팜팜 반품 확인 화면">
+          <img
+            src="/marketing/return-confirmed-v2.png"
+            alt="QR 스캔 후 도매처와 반품 가능 수량을 확인한 팜팜 실제 화면"
+          />
+          <span className="introduce-visual-note">
+            <CircleCheck size={18} aria-hidden="true" />
+            도매처와 반품 가능 수량을 즉시 확인
+          </span>
+        </div>
+      </section>
+
+      <section className="introduce-signal" aria-label="팜팜 반품 흐름 요약">
+        <div>
+          <ScanLine size={22} aria-hidden="true" />
+          <strong>QR 스캔</strong>
+          <span>약품을 바로 인식</span>
+        </div>
+        <div>
+          <ClipboardList size={22} aria-hidden="true" />
+          <strong>이력 확인</strong>
+          <span>입고·도매처 자동 조회</span>
+        </div>
+        <div>
+          <PackageCheck size={22} aria-hidden="true" />
+          <strong>반품 완료</strong>
+          <span>수량과 재고까지 반영</span>
+        </div>
+      </section>
+
+      <section className="introduce-flow" id="return-flow">
+        <header className="introduce-section-heading">
+          <span>실제 제품 화면</span>
+          <h2>복잡한 반품을 세 화면으로 끝냅니다</h2>
+          <p>
+            약품을 읽고, 확인하고, 완료합니다. 별도 장부를 다시 정리할 필요가
+            없습니다.
+          </p>
+        </header>
+        <div className="introduce-screen-grid">
+          <article>
+            <div className="introduce-screen-index">01</div>
+            <div className="introduce-screen-copy">
+              <strong>반품할 약품 스캔</strong>
+              <span>QR 또는 바코드를 카메라에 맞춥니다.</span>
+            </div>
+            <img
+              src="/marketing/return-scan-v2.png"
+              alt="반품 모드에서 약품 QR을 스캔하는 팜팜 화면"
+            />
+          </article>
+          <article>
+            <div className="introduce-screen-index">02</div>
+            <div className="introduce-screen-copy">
+              <strong>도매처·수량 확인</strong>
+              <span>입고 이력에서 반품 근거를 바로 확인합니다.</span>
+            </div>
+            <img
+              src="/marketing/return-confirmed-v2.png"
+              alt="도매처와 반품 가능 수량이 표시된 팜팜 화면"
+            />
+          </article>
+          <article>
+            <div className="introduce-screen-index">03</div>
+            <div className="introduce-screen-copy">
+              <strong>반품·재고 반영 완료</strong>
+              <span>처리 수량과 남은 재고를 한 번에 확인합니다.</span>
+            </div>
+            <img
+              src="/marketing/return-done.png"
+              alt="반품 수량과 남은 재고가 반영된 팜팜 완료 화면"
+            />
+          </article>
+        </div>
+      </section>
+
+      <section className="introduce-benefits" id="benefits">
+        <div className="introduce-benefits-inner">
+          <header className="introduce-section-heading is-light">
+            <span>반품 업무에 필요한 것만</span>
+            <h2>찾는 시간은 줄이고, 근거는 남깁니다</h2>
+          </header>
+          <div className="introduce-benefit-list">
+            <article>
+              <span>01</span>
+              <strong>도매처를 다시 찾지 않아도 됩니다</strong>
+              <p>
+                입고 이력이 있는 약품은 스캔 즉시 도매처와 반품 가능 수량을
+                보여줍니다.
+              </p>
+            </article>
+            <article>
+              <span>02</span>
+              <strong>재고가 따로 놀지 않습니다</strong>
+              <p>
+                반품 확정 수량만큼 현재 재고에 반영되어 이중 입력을 줄입니다.
+              </p>
+            </article>
+            <article>
+              <span>03</span>
+              <strong>애매한 건 관리자에게 모입니다</strong>
+              <p>
+                판매처가 확정되지 않은 건은 CMS 반품 확인 목록에서 이어서
+                처리합니다.
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section className="introduce-inquiry" id="inquiry-form">
+        <div className="introduce-inquiry-copy">
+          <span className="introduce-kicker">도입 문의</span>
+          <h2>우리 약국에서도 쓸 수 있는지 확인해 보세요</h2>
+          <p>
+            사용 중인 약국 프로그램과 반품 업무 방식을 알려주시면 도입 범위를
+            확인해 연락드리겠습니다.
+          </p>
+          <div className="introduce-inquiry-points">
+            <span>
+              <Clock3 size={18} aria-hidden="true" />
+              문의 내용은 팜팜 관리자에게 바로 접수됩니다
+            </span>
+            <span>
+              <ShieldCheck size={18} aria-hidden="true" />
+              연락 목적 외에는 사용하지 않습니다
+            </span>
+          </div>
+        </div>
+
+        <form className="introduce-form" onSubmit={submitInquiry}>
+          {submitState === "success" ? (
+            <div className="introduce-form-success" role="status">
+              <CircleCheck size={40} aria-hidden="true" />
+              <strong>문의가 접수되었습니다</strong>
+              <p>{submitMessage}</p>
+              <button
+                type="button"
+                className="introduce-secondary"
+                onClick={() => {
+                  setSubmitState("idle");
+                  setSubmitMessage("");
+                }}
+              >
+                다른 문의 남기기
+              </button>
+            </div>
+          ) : (
+            <>
+              <div className="introduce-form-grid">
+                <label>
+                  <span>약국명 *</span>
+                  <input
+                    required
+                    maxLength={200}
+                    placeholder="예: 팜팜약국"
+                    value={draft.pharmacyName}
+                    onChange={(event) =>
+                      patchDraft({ pharmacyName: event.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  <span>담당자명 *</span>
+                  <input
+                    required
+                    maxLength={100}
+                    placeholder="성함을 입력해 주세요"
+                    value={draft.contactName}
+                    onChange={(event) =>
+                      patchDraft({ contactName: event.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  <span>연락처 *</span>
+                  <input
+                    required
+                    maxLength={40}
+                    inputMode="tel"
+                    placeholder="010-0000-0000"
+                    value={draft.phone}
+                    onChange={(event) =>
+                      patchDraft({ phone: event.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  <span>이메일</span>
+                  <input
+                    type="email"
+                    maxLength={254}
+                    placeholder="name@pharmacy.co.kr"
+                    value={draft.email}
+                    onChange={(event) =>
+                      patchDraft({ email: event.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  <span>지역</span>
+                  <input
+                    maxLength={120}
+                    placeholder="예: 서울 강남구"
+                    value={draft.region}
+                    onChange={(event) =>
+                      patchDraft({ region: event.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  <span>사용 중인 약국 프로그램</span>
+                  <input
+                    maxLength={120}
+                    placeholder="예: 이팜, PM+"
+                    value={draft.pharmacySystem}
+                    onChange={(event) =>
+                      patchDraft({ pharmacySystem: event.target.value })
+                    }
+                  />
+                </label>
+                <label>
+                  <span>월 평균 반품 건수</span>
+                  <select
+                    value={draft.monthlyReturnVolume}
+                    onChange={(event) =>
+                      patchDraft({ monthlyReturnVolume: event.target.value })
+                    }
+                  >
+                    <option value="">선택해 주세요</option>
+                    <option value="UNDER_10">10건 미만</option>
+                    <option value="10_TO_30">10~30건</option>
+                    <option value="31_TO_100">31~100건</option>
+                    <option value="OVER_100">100건 이상</option>
+                  </select>
+                </label>
+                <label>
+                  <span>문의 유형</span>
+                  <select
+                    value={draft.inquiryType}
+                    onChange={(event) =>
+                      patchDraft({
+                        inquiryType: event.target
+                          .value as InquiryFormDraft["inquiryType"],
+                      })
+                    }
+                  >
+                    <option value="ADOPTION">서비스 도입</option>
+                    <option value="DEMO">제품 시연</option>
+                    <option value="PARTNERSHIP">제휴·협업</option>
+                  </select>
+                </label>
+              </div>
+              <label className="introduce-form-message">
+                <span>문의 내용</span>
+                <textarea
+                  maxLength={5000}
+                  rows={4}
+                  placeholder="현재 반품 업무에서 불편한 점이나 궁금한 내용을 적어 주세요."
+                  value={draft.message}
+                  onChange={(event) =>
+                    patchDraft({ message: event.target.value })
+                  }
+                />
+              </label>
+              <label className="introduce-honeypot" aria-hidden="true">
+                <span>웹사이트</span>
+                <input
+                  tabIndex={-1}
+                  autoComplete="off"
+                  value={draft.website}
+                  onChange={(event) =>
+                    patchDraft({ website: event.target.value })
+                  }
+                />
+              </label>
+              <label className="introduce-consent">
+                <input
+                  required
+                  type="checkbox"
+                  checked={draft.privacyAgreed}
+                  onChange={(event) =>
+                    patchDraft({ privacyAgreed: event.target.checked })
+                  }
+                />
+                <span>
+                  도입 상담을 위한 개인정보 수집 및 이용에 동의합니다. *
+                </span>
+              </label>
+              {submitMessage && (
+                <p className="introduce-form-error" role="alert">
+                  {submitMessage}
+                </p>
+              )}
+              <button
+                type="submit"
+                className="introduce-primary introduce-submit"
+                disabled={submitState === "submitting" || !draft.privacyAgreed}
+              >
+                {submitState === "submitting" ? "접수 중" : "도입 문의 접수"}
+                <Send size={18} aria-hidden="true" />
+              </button>
+            </>
+          )}
+        </form>
+      </section>
+
+      <footer className="introduce-footer">
+        <BrandLockup primary="팜팜" />
+        <p>약국의 입고와 반품을 더 단순하게.</p>
+        <button type="button" onClick={() => navigate("/")}>
+          서비스 로그인
+        </button>
+      </footer>
+    </main>
   );
 }
 
@@ -9343,7 +10078,7 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
     <main className="agent-download-page">
       <section className="agent-download-hero">
         <div className="agent-brand-row">
-          <img src={pharmfarmLogo} alt="PharmFarm" />
+          <BrandMark className="agent-brand-logo" />
           <span>PharmFarm</span>
         </div>
         <div className="agent-build-badge" aria-label="배포 버전 정보">
@@ -9467,6 +10202,7 @@ function getCmsPage(path: string): CmsPage {
     return "agent-control";
   }
   if (
+    segment === "inquiries" ||
     segment === "master" ||
     segment === "import" ||
     segment === "signup" ||
@@ -9543,6 +10279,7 @@ function cmsGreetingRoleLabel(account?: AuthAccount | null) {
 
 function isRestrictedCmsPage(page: CmsPage) {
   return (
+    page === "inquiries" ||
     page === "master" ||
     page === "import" ||
     page === "signup" ||
@@ -9572,6 +10309,9 @@ function CmsApp({
   path: string;
 }) {
   const page = getCmsPage(path);
+  const inquiryPreviewMode =
+    debugToolsEnabled &&
+    new URLSearchParams(window.location.search).get("preview") === "inquiries";
   const shortageRouteId = getCmsShortageId(path);
   const returnReviewRouteId = getCmsReturnReviewId(path);
   const stockSnapshotDiffRouteInsuranceCode =
@@ -9581,20 +10321,38 @@ function CmsApp({
     path === "/cms/login" ? "/cms" : path,
   );
   const [apiState, setApiState] = useState<ApiState>(() =>
-    hasStoredAuthTokens() ? "checking" : "unauthorized",
+    inquiryPreviewMode
+      ? "demo"
+      : hasStoredAuthTokens()
+        ? "checking"
+        : "unauthorized",
   );
   const [apiMessage, setApiMessage] = useState(() =>
-    hasStoredAuthTokens()
-      ? "관리자 데이터 확인 중"
-      : "관리자 로그인이 필요합니다.",
+    inquiryPreviewMode
+      ? "도입 문의 화면 프리뷰"
+      : hasStoredAuthTokens()
+        ? "관리자 데이터 확인 중"
+        : "관리자 로그인이 필요합니다.",
   );
   const [sidebarCollapsed, setSidebarCollapsed] = useState(
     () => localStorage.getItem(storageKeys.cmsSidebarCollapsed) === "true",
   );
   const compactCmsNav = useMediaQuery(cmsCompactNavQuery);
-  const [cmsReady, setCmsReady] = useState(() => !hasStoredAuthTokens());
+  const [cmsReady, setCmsReady] = useState(
+    () => inquiryPreviewMode || !hasStoredAuthTokens(),
+  );
   const [authAccount, setAuthAccount] = useState<AuthAccount | null>(() =>
-    getStoredAuthAccount(),
+    inquiryPreviewMode
+      ? {
+          accountId: "1",
+          pharmacyId: "1",
+          pharmacyName: "PharmFarm 운영",
+          loginId: ROOT_CMS_LOGIN_ID,
+          accountName: "서비스 운영자",
+          role: "ADMIN",
+          accountType: "ADMIN",
+        }
+      : getStoredAuthAccount(),
   );
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
@@ -9609,6 +10367,15 @@ function CmsApp({
     createDefaultCmsAccountDraft,
   );
   const [accountSubmitting, setAccountSubmitting] = useState(false);
+  const [inquiries, setInquiries] = useState<CmsInquiry[]>(() =>
+    inquiryPreviewMode ? demoCmsInquiries : [],
+  );
+  const [inquiryQuery, setInquiryQuery] = useState("");
+  const [inquiryStatusFilter, setInquiryStatusFilter] = useState<
+    "ALL" | CmsInquiryStatus
+  >("ALL");
+  const [selectedInquiryId, setSelectedInquiryId] = useState("");
+  const [inquirySubmitting, setInquirySubmitting] = useState(false);
   const [dashboardData, setDashboardData] = useState<CmsDashboardData | null>(
     null,
   );
@@ -9659,9 +10426,9 @@ function CmsApp({
   const [purchaseHistories, setPurchaseHistories] = useState<
     CmsPurchaseHistory[]
   >([]);
-  const [receiptHistories, setReceiptHistories] = useState<
-    CmsReceiptHistory[]
-  >([]);
+  const [receiptHistories, setReceiptHistories] = useState<CmsReceiptHistory[]>(
+    [],
+  );
   const [syncJobs, setSyncJobs] = useState<CmsSyncJob[]>([]);
   const [deductionRecords, setDeductionRecords] = useState<
     CmsDeductionRecord[]
@@ -9783,6 +10550,32 @@ function CmsApp({
     wholesalers[0];
   const selectedAccount =
     accounts.find((account) => account.id === selectedAccountId) ?? accounts[0];
+  const filteredInquiries = useMemo(() => {
+    const keyword = normalizeSearchText(inquiryQuery);
+    return inquiries.filter((inquiry) => {
+      if (
+        inquiryStatusFilter !== "ALL" &&
+        inquiry.status !== inquiryStatusFilter
+      ) {
+        return false;
+      }
+      if (!keyword) return true;
+      return normalizeSearchText(
+        [
+          inquiry.pharmacyName,
+          inquiry.contactName,
+          inquiry.phone,
+          inquiry.email,
+          inquiry.region,
+          inquiry.pharmacySystem,
+          inquiry.message,
+        ].join(" "),
+      ).includes(keyword);
+    });
+  }, [inquiries, inquiryQuery, inquiryStatusFilter]);
+  const selectedInquiry = inquiries.find(
+    (inquiry) => inquiry.id === selectedInquiryId,
+  );
   const filteredDeductionRecords = useMemo(() => {
     const filtered =
       deductionFilter === "ALL"
@@ -9860,7 +10653,7 @@ function CmsApp({
   const selectedAgentDevice = agentDevices.find(
     (device) => agentDeviceKey(device) === selectedAgentDeviceKey,
   );
-  const hasCmsSession = hasStoredAuthTokens();
+  const hasCmsSession = inquiryPreviewMode || hasStoredAuthTokens();
   const effectiveSidebarCollapsed = sidebarCollapsed && !compactCmsNav;
 
   useEffect(() => {
@@ -10157,6 +10950,13 @@ function CmsApp({
       prescriptionFilter?: CmsDeductionFilter;
       receiptFilters?: CmsReceiptHistoryFilters;
     }) => {
+      if (inquiryPreviewMode) {
+        setInquiries(demoCmsInquiries);
+        setApiState("demo");
+        setApiMessage("도입 문의 화면 프리뷰");
+        setCmsReady(true);
+        return true;
+      }
       if (!hasStoredAuthTokens()) {
         setAuthAccount(null);
         setApiState("unauthorized");
@@ -10243,6 +11043,13 @@ function CmsApp({
             results.some((account) => account.id === current)
               ? current
               : (results[0]?.id ?? ""),
+          );
+        } else if (targetPage === "inquiries") {
+          const response = await apiFetch<unknown>("/admin/inquiries");
+          const results = arrayPayload(response).map(normalizeCmsInquiry);
+          setInquiries(results);
+          setSelectedInquiryId((current) =>
+            results.some((inquiry) => inquiry.id === current) ? current : "",
           );
         } else if (targetPage === "inventory") {
           const trimmed = stockQuery.trim();
@@ -10456,12 +11263,12 @@ function CmsApp({
             apiFetch<unknown>("/admin/agent-devices"),
             apiFetch<unknown>("/admin/agent-commands?size=100"),
           ]);
-          const nextDevices = arrayPayload(deviceResponse).map(
+          const nextDevices = agentDevicePayload(deviceResponse).map(
             normalizeCmsAgentDevice,
           );
           setAgentDevices(nextDevices);
           setAgentCommands(
-            arrayPayload(commandResponse).map(normalizeCmsAgentCommand),
+            agentCommandPayload(commandResponse).map(normalizeCmsAgentCommand),
           );
           setSelectedAgentDeviceKey((current) =>
             nextDevices.some((device) => agentDeviceKey(device) === current)
@@ -10658,6 +11465,7 @@ function CmsApp({
       cmsFallback,
       deductionFilter,
       includeInactive,
+      inquiryPreviewMode,
       masterPage,
       masterQuery,
       page,
@@ -10718,6 +11526,21 @@ function CmsApp({
 
     return () => window.clearTimeout(timer);
   }, [accountQuery, refreshCms, visiblePage]);
+
+  useEffect(() => {
+    if (visiblePage !== "agent-control" || !hasStoredAuthTokens()) return;
+
+    const hasActiveCommand = agentCommands.some((command) =>
+      isActiveAgentCommandStatus(command.status),
+    );
+    if (!hasActiveCommand) return;
+
+    const timer = window.setInterval(() => {
+      void refreshCms();
+    }, 5000);
+
+    return () => window.clearInterval(timer);
+  }, [agentCommands, refreshCms, visiblePage]);
 
   function applyReceiptFilters() {
     const nextFilters: CmsReceiptHistoryFilters = {
@@ -10900,6 +11723,51 @@ function CmsApp({
       }
     } finally {
       setAccountSubmitting(false);
+    }
+  }
+
+  async function updateInquiry(
+    inquiry: CmsInquiry,
+    status: CmsInquiryStatus,
+    adminMemo: string,
+  ) {
+    if (inquirySubmitting || !canAccessRootCms(authAccount)) return;
+
+    if (inquiryPreviewMode) {
+      setInquiries((current) =>
+        current.map((item) =>
+          item.id === inquiry.id
+            ? { ...item, status, adminMemo, updatedAt: "방금" }
+            : item,
+        ),
+      );
+      setApiState("demo");
+      setApiMessage("프리뷰 문의 처리 내용을 저장했습니다.");
+      return;
+    }
+
+    setInquirySubmitting(true);
+    try {
+      const response = await apiFetch<unknown>(
+        `/admin/inquiries/${inquiry.id}`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({ status, adminMemo: adminMemo.trim() }),
+        },
+      );
+      const updatedInquiry = normalizeCmsInquiry(response, 0);
+      setInquiries((current) =>
+        current.map((item) =>
+          item.id === updatedInquiry.id ? updatedInquiry : item,
+        ),
+      );
+      setSelectedInquiryId(updatedInquiry.id);
+      setApiState("connected");
+      setApiMessage("문의 상태와 관리자 메모를 저장했습니다.");
+    } catch (error) {
+      cmsFallback(error);
+    } finally {
+      setInquirySubmitting(false);
     }
   }
 
@@ -11892,6 +12760,20 @@ function CmsApp({
               onQuery={setAccountQuery}
               onSave={submitAccountUpdate}
               onSelect={setSelectedAccountId}
+            />
+          )}
+          {visiblePage === "inquiries" && (
+            <CmsInquiryPage
+              inquiries={filteredInquiries}
+              query={inquiryQuery}
+              selectedInquiry={selectedInquiry}
+              statusFilter={inquiryStatusFilter}
+              submitting={inquirySubmitting}
+              totalCount={inquiries.length}
+              onQuery={setInquiryQuery}
+              onSave={updateInquiry}
+              onSelect={setSelectedInquiryId}
+              onStatusFilter={setInquiryStatusFilter}
             />
           )}
           {visiblePage === "agent-control" && (
@@ -13041,7 +13923,10 @@ function normalizeCmsReceiptHistory(
     stockId: optionalText(item.stockId ?? item.stock_id),
     stockItemId: optionalText(item.stockItemId ?? item.stock_item_id),
     pc: optionalText(item.pc ?? item.standardCode ?? item.standard_code) ?? "",
-    sn: normalizeLookupSn(item.sn ?? item.serialNumber ?? item.serial_number, ""),
+    sn: normalizeLookupSn(
+      item.sn ?? item.serialNumber ?? item.serial_number,
+      "",
+    ),
     lot: optionalText(item.lot ?? item.lotNo ?? item.lot_no) ?? "",
     exp: optionalText(item.exp ?? item.expiryDate ?? item.expiry_date) ?? "",
     drugName:
@@ -13089,7 +13974,9 @@ function receiptHistoryPayload(raw: unknown) {
   if (direct.length > 0) return direct;
 
   const payload = unwrapObjectPayload(raw);
-  return arrayPayload(payload).length > 0 ? arrayPayload(payload) : arrayPayload(raw);
+  return arrayPayload(payload).length > 0
+    ? arrayPayload(payload)
+    : arrayPayload(raw);
 }
 
 function sortCmsReceiptHistories(records: CmsReceiptHistory[]) {
@@ -13098,6 +13985,42 @@ function sortCmsReceiptHistories(records: CmsReceiptHistory[]) {
     if (compared !== 0) return compared;
     return right.id.localeCompare(left.id);
   });
+}
+
+function nestedArrayPayload(raw: unknown, keys: string[]): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  if (!raw || typeof raw !== "object") return [];
+
+  const item = asRecord(raw);
+  for (const key of keys) {
+    const value = item[key];
+    if (Array.isArray(value)) return value;
+  }
+
+  const payload = unwrapObjectPayload(raw);
+  return payload !== item ? nestedArrayPayload(payload, keys) : [];
+}
+
+function agentDevicePayload(raw: unknown) {
+  return nestedArrayPayload(raw, [
+    "devices",
+    "agentDevices",
+    "agent_devices",
+    "content",
+    "items",
+    "data",
+  ]);
+}
+
+function agentCommandPayload(raw: unknown) {
+  return nestedArrayPayload(raw, [
+    "commands",
+    "agentCommands",
+    "agent_commands",
+    "content",
+    "items",
+    "data",
+  ]);
 }
 
 function receiptHistoryMatchesQuery(record: CmsReceiptHistory, query: string) {
@@ -13174,27 +14097,148 @@ function normalizeCmsAgentDevice(raw: unknown, index: number): CmsAgentDevice {
   };
 }
 
+function agentCommandRecord(raw: unknown) {
+  const item = asRecord(raw);
+  const commandKeys = [
+    "id",
+    "commandId",
+    "command_id",
+    "commandType",
+    "command_type",
+    "deviceId",
+    "device_id",
+  ];
+
+  if (commandKeys.some((key) => item[key] !== undefined)) return item;
+
+  for (const key of ["data", "payload", "item"]) {
+    const value = item[key];
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      return asRecord(value);
+    }
+  }
+
+  return item;
+}
+
+function normalizeAgentCommandStatus(raw: unknown) {
+  const item = agentCommandRecord(raw);
+  const result = asRecord(item.result);
+  const rawStatus = optionalText(
+    item.status ??
+      item.commandStatus ??
+      item.command_status ??
+      item.executionStatus ??
+      item.execution_status ??
+      item.resultStatus ??
+      item.result_status ??
+      item.latestStatus ??
+      item.latest_status ??
+      item.state ??
+      item.commandState ??
+      item.command_state ??
+      result.status,
+  );
+  const status = (rawStatus ?? "PENDING").toUpperCase().replace(/[\s-]+/g, "_");
+
+  if (
+    status === "COMPLETED" ||
+    status === "COMPLETE" ||
+    status === "SUCCESS" ||
+    status === "SUCCEEDED" ||
+    status === "DONE" ||
+    status === "FINISHED"
+  ) {
+    return "COMPLETED";
+  }
+  if (
+    status === "STARTED" ||
+    status === "RUNNING" ||
+    status === "PROCESSING" ||
+    status === "IN_PROGRESS"
+  ) {
+    return "STARTED";
+  }
+  if (status === "FAILED" || status === "ERROR") return "FAILED";
+  if (
+    status === "REJECTED" ||
+    status === "CANCELED" ||
+    status === "CANCELLED"
+  ) {
+    return "REJECTED";
+  }
+
+  return status || "PENDING";
+}
+
+function isActiveAgentCommandStatus(status: string) {
+  return status === "PENDING" || status === "STARTED" || status === "RUNNING";
+}
+
 function normalizeCmsAgentCommand(
   raw: unknown,
   index: number,
 ): CmsAgentCommand {
-  const item = unwrapObjectPayload(raw);
+  const item = agentCommandRecord(raw);
+  const result = asRecord(item.result);
+  const device = asRecord(item.device ?? item.agentDevice ?? item.agent_device);
+  const pharmacy = asRecord(item.pharmacy);
   return {
-    id: String(item.id ?? item.commandId ?? index),
+    id: String(item.id ?? item.commandId ?? item.command_id ?? index),
     commandId: String(item.commandId ?? item.command_id ?? item.id ?? index),
-    pharmacyId: String(item.pharmacyId ?? item.pharmacy_id ?? ""),
-    pharmacyName: String(
-      item.pharmacyName ?? item.pharmacy_name ?? "약국 미확인",
+    pharmacyId: String(
+      item.pharmacyId ??
+        item.pharmacy_id ??
+        pharmacy.id ??
+        device.pharmacyId ??
+        device.pharmacy_id ??
+        "",
     ),
-    deviceId: String(item.deviceId ?? item.device_id ?? ""),
+    pharmacyName: String(
+      item.pharmacyName ??
+        item.pharmacy_name ??
+        pharmacy.name ??
+        device.pharmacyName ??
+        device.pharmacy_name ??
+        "약국 미확인",
+    ),
+    deviceId: String(
+      item.deviceId ??
+        item.device_id ??
+        device.deviceId ??
+        device.device_id ??
+        "",
+    ),
     commandType: String(
       item.commandType ?? item.command_type ?? item.type ?? "UNKNOWN",
     ).toUpperCase(),
-    status: String(item.status ?? "PENDING").toUpperCase(),
-    message: String(item.message ?? ""),
-    createdAt: formatTransactionAt(item.createdAt ?? item.created_at),
+    status: normalizeAgentCommandStatus(item),
+    message:
+      optionalText(
+        item.message ??
+          item.resultMessage ??
+          item.result_message ??
+          item.errorMessage ??
+          item.error_message ??
+          item.failureReason ??
+          item.failure_reason ??
+          result.message,
+      ) ?? "",
+    createdAt: formatTransactionAt(
+      item.createdAt ??
+        item.created_at ??
+        item.requestedAt ??
+        item.requested_at,
+    ),
     startedAt: formatTransactionAt(item.startedAt ?? item.started_at),
-    completedAt: formatTransactionAt(item.completedAt ?? item.completed_at),
+    completedAt: formatTransactionAt(
+      item.completedAt ??
+        item.completed_at ??
+        item.finishedAt ??
+        item.finished_at ??
+        item.updatedAt ??
+        item.updated_at,
+    ),
   };
 }
 
@@ -13258,6 +14302,66 @@ function normalizeCmsAccount(raw: unknown, index: number): CmsAccount {
     createdAt: formatTransactionAt(item.createdAt ?? item.created_at),
     updatedAt: formatTransactionAt(item.updatedAt ?? item.updated_at),
   };
+}
+
+function normalizeCmsInquiry(raw: unknown, index: number): CmsInquiry {
+  const item = unwrapObjectPayload(raw);
+  const rawStatus = String(item.status ?? "NEW").toUpperCase();
+  const status: CmsInquiryStatus =
+    rawStatus === "CONTACTED" ||
+    rawStatus === "DEMO_SCHEDULED" ||
+    rawStatus === "CONVERTED" ||
+    rawStatus === "CLOSED"
+      ? rawStatus
+      : "NEW";
+
+  return {
+    id: String(item.id ?? index),
+    pharmacyName: optionalText(item.pharmacyName) || "약국명 미입력",
+    contactName: optionalText(item.contactName) || "담당자 미입력",
+    phone: optionalText(item.phone) || "-",
+    email: optionalText(item.email) || "",
+    region: optionalText(item.region) || "",
+    pharmacySystem: optionalText(item.pharmacySystem) || "",
+    monthlyReturnVolume: optionalText(item.monthlyReturnVolume) || "",
+    inquiryType: optionalText(item.inquiryType) || "ADOPTION",
+    message: optionalText(item.message) || "",
+    status,
+    adminMemo: optionalText(item.adminMemo) || "",
+    source: optionalText(item.source) || "",
+    createdAt: formatTransactionAt(item.createdAt),
+    updatedAt: formatTransactionAt(item.updatedAt),
+  };
+}
+
+function cmsInquiryStatusText(status: CmsInquiryStatus) {
+  if (status === "CONTACTED") return "연락 완료";
+  if (status === "DEMO_SCHEDULED") return "시연 예정";
+  if (status === "CONVERTED") return "도입 확정";
+  if (status === "CLOSED") return "종료";
+  return "신규";
+}
+
+function cmsInquiryStatusClass(status: CmsInquiryStatus) {
+  if (status === "CONTACTED") return "is-contacted";
+  if (status === "DEMO_SCHEDULED") return "is-scheduled";
+  if (status === "CONVERTED") return "is-converted";
+  if (status === "CLOSED") return "is-closed";
+  return "is-new";
+}
+
+function cmsInquiryTypeText(type: string) {
+  if (type === "DEMO") return "제품 시연";
+  if (type === "PARTNERSHIP") return "제휴·협업";
+  return "서비스 도입";
+}
+
+function cmsInquiryReturnVolumeText(volume: string) {
+  if (volume === "UNDER_10") return "월 10건 미만";
+  if (volume === "10_TO_30") return "월 10~30건";
+  if (volume === "31_TO_100") return "월 31~100건";
+  if (volume === "OVER_100") return "월 100건 이상";
+  return "미입력";
 }
 
 function cmsAccountStatusText(status: CmsAccountStatus) {
@@ -14333,6 +15437,11 @@ function CmsSidebar({
   const items: Array<[CmsPage, string, string, string]> = [
     ["dashboard", "대시보드", "/cms", homeIcon],
     ...(canAccessMasterData
+      ? ([["inquiries", "도입 문의", "/cms/inquiries", fileTextIcon]] as Array<
+          [CmsPage, string, string, string]
+        >)
+      : []),
+    ...(canAccessMasterData
       ? ([
           ["master", "기준 데이터", "/cms/master", viewGridIcon],
           ["import", "Import", "/cms/import", viewListIcon],
@@ -14388,7 +15497,7 @@ function CmsSidebar({
   return (
     <aside className="cms-sidebar">
       <div className="cms-brand">
-        <img src={pharmfarmLogo} alt="" aria-hidden="true" />
+        <BrandMark className="cms-brand-logo" />
         <div>
           <strong>팜팜</strong>
           <em>관리자 페이지</em>
@@ -14443,6 +15552,7 @@ function CmsHeader({
 }) {
   const titles: Record<CmsPage, string> = {
     dashboard: "대시보드",
+    inquiries: "도입 문의",
     master: "기준 데이터",
     import: "기준 데이터 Import",
     signup: "계정 생성",
@@ -14460,6 +15570,7 @@ function CmsHeader({
   };
   const subtitles: Record<CmsPage, string> = {
     dashboard: "오늘 필요한 업무를 한눈에 확인하세요.",
+    inquiries: "광고 랜딩에서 접수된 도입 상담을 확인하고 관리합니다.",
     master: "약품 기준 데이터를 확인하고 정리합니다.",
     import: "기준 데이터 파일을 등록합니다.",
     signup: "root 계정으로 신규 약국과 기본 계정을 생성합니다.",
@@ -14484,12 +15595,26 @@ function CmsHeader({
         <span>{subtitles[page]}</span>
       </div>
       <div className="cms-header-actions">
-        <button type="button" onClick={onRefresh}>
-          새로고침
+        <button
+          className="cms-header-action is-refresh"
+          type="button"
+          aria-label="데이터 새로고침"
+          title="데이터 새로고침"
+          onClick={onRefresh}
+        >
+          <RefreshCw size={17} strokeWidth={2.2} aria-hidden="true" />
+          <span className="cms-header-action-label">새로고침</span>
         </button>
         {onLogout && (
-          <button type="button" onClick={onLogout}>
-            로그아웃
+          <button
+            className="cms-header-action is-logout"
+            type="button"
+            aria-label="관리자 로그아웃"
+            title="관리자 로그아웃"
+            onClick={onLogout}
+          >
+            <LogOut size={17} strokeWidth={2.2} aria-hidden="true" />
+            <span className="cms-header-action-label">로그아웃</span>
           </button>
         )}
       </div>
@@ -14502,7 +15627,7 @@ function CmsLoadingPage({ apiMessage }: { apiMessage: string }) {
     <section className="cms-loading">
       <div className="cms-loading-shell">
         <div className="cms-loading-brand">
-          <img src={pharmfarmLogo} alt="" />
+          <BrandMark className="cms-loading-logo" />
           <div>
             <strong>PharmFarm 관리자</strong>
             <span>{apiMessage || "관리자 데이터를 불러오는 중입니다."}</span>
@@ -14673,6 +15798,231 @@ function CmsSignupPage({
           </button>
         </div>
       </form>
+    </section>
+  );
+}
+
+function CmsInquiryPage({
+  inquiries,
+  query,
+  selectedInquiry,
+  statusFilter,
+  submitting,
+  totalCount,
+  onQuery,
+  onSave,
+  onSelect,
+  onStatusFilter,
+}: {
+  inquiries: CmsInquiry[];
+  query: string;
+  selectedInquiry?: CmsInquiry;
+  statusFilter: "ALL" | CmsInquiryStatus;
+  submitting: boolean;
+  totalCount: number;
+  onQuery: (value: string) => void;
+  onSave: (
+    inquiry: CmsInquiry,
+    status: CmsInquiryStatus,
+    adminMemo: string,
+  ) => Promise<void>;
+  onSelect: (id: string) => void;
+  onStatusFilter: (status: "ALL" | CmsInquiryStatus) => void;
+}) {
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [draftStatus, setDraftStatus] = useState<CmsInquiryStatus>("NEW");
+  const [adminMemo, setAdminMemo] = useState("");
+  const pagination = usePagination(
+    inquiries,
+    CMS_PAGE_SIZES.inquiries,
+    `${query}|${statusFilter}|${inquiries.length}`,
+  );
+
+  useEffect(() => {
+    if (!selectedInquiry) {
+      setSheetOpen(false);
+      return;
+    }
+    setDraftStatus(selectedInquiry.status);
+    setAdminMemo(selectedInquiry.adminMemo);
+  }, [selectedInquiry]);
+
+  const statusOptions: Array<"ALL" | CmsInquiryStatus> = [
+    "ALL",
+    "NEW",
+    "CONTACTED",
+    "DEMO_SCHEDULED",
+    "CONVERTED",
+    "CLOSED",
+  ];
+
+  return (
+    <section className="cms-content cms-list-page cms-inquiry-page">
+      <div className="cms-table-card">
+        <div className="cms-toolbar cms-inquiry-toolbar">
+          <div className="cms-pills" role="tablist" aria-label="문의 상태 필터">
+            {statusOptions.map((status) => (
+              <button
+                key={status}
+                className={statusFilter === status ? "is-active" : ""}
+                type="button"
+                role="tab"
+                aria-selected={statusFilter === status}
+                onClick={() => onStatusFilter(status)}
+              >
+                {status === "ALL"
+                  ? `전체 ${totalCount}`
+                  : cmsInquiryStatusText(status)}
+              </button>
+            ))}
+          </div>
+          <label className="cms-search">
+            <span className="search-icon" />
+            <input
+              placeholder="약국명 · 담당자 · 연락처 검색"
+              value={query}
+              onChange={(event) => onQuery(event.target.value)}
+            />
+          </label>
+        </div>
+        <div className="cms-table-scroll">
+          <div className="cms-table inquiry">
+            <div className="cms-tr cms-th">
+              <span>접수일</span>
+              <span>약국</span>
+              <span>담당자</span>
+              <span>연락처</span>
+              <span>약국 프로그램</span>
+              <span>문의 유형</span>
+              <span>상태</span>
+            </div>
+            {pagination.items.map((inquiry) => (
+              <button
+                key={inquiry.id}
+                className={`cms-tr ${selectedInquiry?.id === inquiry.id ? "is-selected" : ""}`}
+                type="button"
+                onClick={() => {
+                  onSelect(inquiry.id);
+                  setDraftStatus(inquiry.status);
+                  setAdminMemo(inquiry.adminMemo);
+                  setSheetOpen(true);
+                }}
+              >
+                <span>{inquiry.createdAt}</span>
+                <strong>
+                  {inquiry.pharmacyName}
+                  {inquiry.region && <small>{inquiry.region}</small>}
+                </strong>
+                <span>{inquiry.contactName}</span>
+                <span>{inquiry.phone}</span>
+                <span>{inquiry.pharmacySystem || "미입력"}</span>
+                <span>{cmsInquiryTypeText(inquiry.inquiryType)}</span>
+                <span
+                  className={`cms-badge cms-inquiry-status ${cmsInquiryStatusClass(inquiry.status)}`}
+                >
+                  {cmsInquiryStatusText(inquiry.status)}
+                </span>
+              </button>
+            ))}
+            {inquiries.length === 0 && (
+              <p className="cms-empty table-empty">
+                조건에 맞는 도입 문의가 없습니다.
+              </p>
+            )}
+          </div>
+        </div>
+        <CmsPagination {...pagination} />
+      </div>
+
+      {sheetOpen && selectedInquiry && (
+        <CmsSheet
+          title={selectedInquiry.pharmacyName}
+          subtitle={`${selectedInquiry.contactName} · ${selectedInquiry.createdAt}`}
+          onClose={() => setSheetOpen(false)}
+        >
+          <form
+            className="cms-sheet-body cms-inquiry-sheet"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void onSave(selectedInquiry, draftStatus, adminMemo);
+            }}
+          >
+            <div className="cms-inquiry-summary">
+              <span
+                className={`cms-badge cms-inquiry-status ${cmsInquiryStatusClass(selectedInquiry.status)}`}
+              >
+                {cmsInquiryStatusText(selectedInquiry.status)}
+              </span>
+              <strong>{cmsInquiryTypeText(selectedInquiry.inquiryType)}</strong>
+              <em>문의 #{selectedInquiry.id}</em>
+            </div>
+
+            <div className="cms-inquiry-contact-actions">
+              <a href={`tel:${selectedInquiry.phone}`}>
+                <Phone size={16} aria-hidden="true" />
+                {selectedInquiry.phone}
+              </a>
+              {selectedInquiry.email && (
+                <a href={`mailto:${selectedInquiry.email}`}>
+                  {selectedInquiry.email}
+                </a>
+              )}
+            </div>
+
+            <div className="cms-field-grid">
+              <CmsField label="담당자" value={selectedInquiry.contactName} />
+              <CmsField
+                label="지역"
+                value={selectedInquiry.region || "미입력"}
+              />
+              <CmsField
+                label="약국 프로그램"
+                value={selectedInquiry.pharmacySystem || "미입력"}
+              />
+              <CmsField
+                label="월 평균 반품"
+                value={cmsInquiryReturnVolumeText(
+                  selectedInquiry.monthlyReturnVolume,
+                )}
+              />
+            </div>
+
+            <div className="cms-inquiry-message">
+              <span>문의 내용</span>
+              <p>{selectedInquiry.message || "별도 문의 내용이 없습니다."}</p>
+            </div>
+
+            <label className="cms-input">
+              <span>진행 상태</span>
+              <select
+                value={draftStatus}
+                onChange={(event) =>
+                  setDraftStatus(event.target.value as CmsInquiryStatus)
+                }
+              >
+                <option value="NEW">신규</option>
+                <option value="CONTACTED">연락 완료</option>
+                <option value="DEMO_SCHEDULED">시연 예정</option>
+                <option value="CONVERTED">도입 확정</option>
+                <option value="CLOSED">종료</option>
+              </select>
+            </label>
+            <label className="cms-input">
+              <span>관리자 메모</span>
+              <textarea
+                rows={6}
+                maxLength={5000}
+                placeholder="통화 내용, 후속 일정, 참고 사항을 기록하세요."
+                value={adminMemo}
+                onChange={(event) => setAdminMemo(event.target.value)}
+              />
+            </label>
+            <button className="cms-primary" type="submit" disabled={submitting}>
+              {submitting ? "저장 중" : "문의 처리 내용 저장"}
+            </button>
+          </form>
+        </CmsSheet>
+      )}
     </section>
   );
 }
@@ -14893,7 +16243,7 @@ function CmsLoginPage({
       <div className="cms-login-shell">
         <div className="cms-login-visual">
           <div className="cms-login-mark">
-            <img src={pharmfarmLogo} alt="" />
+            <BrandMark className="cms-login-mark-logo" />
             <span>PharmFarm 관리자</span>
           </div>
           <div className="cms-login-message">
@@ -14914,9 +16264,7 @@ function CmsLoginPage({
           <small>© 2026 PharmFarm. 약국 전용 재고 관리 시스템</small>
         </div>
         <form className="cms-login-card" onSubmit={onSubmit}>
-          <div className="cms-login-logo">
-            <img src={pharmfarmLogo} alt="" />
-          </div>
+          <BrandLockup className="cms-login-logo" />
           <div className="cms-login-title">
             <strong>운영자 로그인</strong>
             <span>약국 관리자 계정으로 로그인하세요</span>
@@ -15100,64 +16448,119 @@ function CmsDashboard({
     data.todayMovements.returnedQuantity +
     data.todayMovements.prescriptionDeductedQuantity +
     Math.abs(data.todayMovements.manualAdjustedQuantity);
+  const stockSummaryItems = [
+    {
+      label: "보유 재고 품목",
+      value: `${data.stockSummary.stockCount}`,
+      unit: "종",
+    },
+    {
+      label: "총 보유 수량",
+      value: currency(data.stockSummary.totalQuantity),
+      unit: "개",
+    },
+    {
+      label: "재고 확인 필요",
+      value: `${inventoryTaskTotal}`,
+      unit: "건",
+      tone: inventoryTaskTotal > 0 ? "red" : "",
+    },
+    ...(canViewAmounts
+      ? [
+          {
+            label: "예상 재고 금액",
+            value: compactKoreanCurrency(data.stockSummary.estimatedAmount),
+            unit: "원",
+            detail: `전체 ${currency(data.stockSummary.estimatedAmount)}원`,
+            tone: "blue",
+          },
+        ]
+      : []),
+  ];
+  // "90일 내 만료" 지표는 운영 화면에서 제외한 상태입니다.
+  const stockReferenceItems = [
+    ["관리약 재고", `${data.stockSummary.controlledStockCount}종`],
+    ["임의 재고", `${data.stockSummary.virtualStockCount}종`],
+    ["0개 재고", `${data.stockSummary.zeroStockCount}종`],
+  ];
+  const shortageStatusItems = [
+    ["주문 필요", `${orderNeededShortageCount}건`],
+    ["주문 완료", `${orderedShortageCount}건`],
+    ["보류", `${holdShortageCount}건`],
+    ["대체 처리", `${substitutedShortageCount}건`],
+  ];
 
   return (
     <section className="cms-content cms-dashboard-page">
-      <div className="cms-dashboard-period-note" role="note">
-        <CalendarDays size={20} strokeWidth={2.2} aria-hidden="true" />
-        <div className="cms-dashboard-period-heading">
-          <strong>데이터 집계 기준</strong>
-          <span>{dashboardReferenceDate} · 로그인 약국 기준</span>
+      <header className="cms-dashboard-intro">
+        <div className="cms-dashboard-intro-copy">
+          <span>오늘의 운영 현황</span>
+          <h2>
+            {pharmacyGreetingName} {greetingRole}, 확인할 업무를 정리했습니다.
+          </h2>
+          <p>
+            처방 이슈와 재고 변동을 우선순위에 따라 확인하고 바로 처리하세요.
+          </p>
         </div>
-        <div className="cms-dashboard-period-items">
-          <span>
-            <b>처방 업무</b> {dashboardReferenceMonth}
-          </span>
-          <span>
-            <b>재고 흐름</b> 오늘 00:00~현재
-          </span>
-          <span>
-            <b>재고 현황</b> 조회 시점 현재
-          </span>
-          <span>
-            <b>만료 예정</b> 오늘~90일 이내
-          </span>
-          <span>
-            <b>최근 내역</b> 입고 최신 5건 · 활동 최대 12건
-          </span>
-        </div>
-      </div>
-      <div className="cms-dashboard-hero">
-        <div className="cms-dashboard-greeting">
-          <span>이번 달 처방 업무</span>
-          <strong>
-            안녕하세요, {pharmacyGreetingName} {greetingRole}.
-          </strong>
-          <p>이번 달 확인할 처방 이슈를 확인해보세요!</p>
-        </div>
-        <div className="cms-dashboard-work-count">
-          <span>이번 달 처방 이슈</span>
-          <strong>{prescriptionWorkTotal}건</strong>
-          <button type="button" onClick={() => navigate("/cms/prescriptions")}>
-            처방전 확인
-          </button>
-        </div>
-      </div>
-
-      <section className="cms-prescription-work">
+        <details className="cms-dashboard-period">
+          <summary>
+            <CalendarDays size={18} strokeWidth={2.1} aria-hidden="true" />
+            <span>{dashboardReferenceDate} 기준</span>
+            <ChevronDown size={16} strokeWidth={2.2} aria-hidden="true" />
+          </summary>
+          <div className="cms-dashboard-period-popover">
+            <strong>데이터 집계 기준</strong>
+            <dl>
+              <div>
+                <dt>처방 업무</dt>
+                <dd>{dashboardReferenceMonth}</dd>
+              </div>
+              <div>
+                <dt>재고 흐름</dt>
+                <dd>오늘 00:00~현재</dd>
+              </div>
+              <div>
+                <dt>재고 현황</dt>
+                <dd>조회 시점 현재</dd>
+              </div>
+              <div>
+                <dt>만료 예정</dt>
+                <dd>오늘~90일 이내</dd>
+              </div>
+              <div>
+                <dt>최근 내역</dt>
+                <dd>입고 최신 5건 · 활동 최대 12건</dd>
+              </div>
+            </dl>
+          </div>
+        </details>
+      </header>
+      {/* 
+      <section
+        className={`cms-dashboard-priority ${
+          prescriptionWorkTotal > 0 ? "is-alert" : "is-clear"
+        }`}
+      >
         <header>
           <div>
-            <strong>
+            <span>{dashboardReferenceMonth} 처방 업무</span>
+            <h3>
               {prescriptionWorkTotal > 0
-                ? "이번 달 확인이 필요한 처방 업무가 있습니다."
-                : "이번 달 바로 처리할 처방 이슈가 없습니다."}
-            </strong>
+                ? `${prescriptionWorkTotal}건의 처방 업무를 확인해 주세요.`
+                : "지금 바로 처리할 처방 이슈가 없습니다."}
+            </h3>
+            <p>
+              {prescriptionWorkTotal > 0
+                ? "재고 부족과 차감 실패 항목부터 순서대로 처리하세요."
+                : "새로운 이슈가 발생하면 이 영역에 우선 표시됩니다."}
+            </p>
           </div>
           <button
             type="button"
-            onClick={() => navigate("/cms/inventory/shortages")}
+            onClick={() => navigate("/cms/prescriptions")}
           >
-            초과 처방 목록
+            처방 업무 전체 보기
+            <ArrowRight size={17} strokeWidth={2.2} aria-hidden="true" />
           </button>
         </header>
         <div className="cms-prescription-task-grid">
@@ -15172,20 +16575,76 @@ function CmsDashboard({
                 type="button"
                 onClick={() => navigate(item.href)}
               >
-                <span className={`cms-task-dot ${item.tone}`} />
-                <strong>{item.title}</strong>
-                <em>{item.description}</em>
-                <b>{item.count}건</b>
+                <span
+                  className="cms-prescription-task-state"
+                  aria-hidden="true"
+                >
+                  {isActive ? (
+                    <AlertTriangle size={18} strokeWidth={2.2} />
+                  ) : (
+                    <CircleCheck size={18} strokeWidth={2.2} />
+                  )}
+                </span>
+                <span className="cms-prescription-task-copy">
+                  <strong>{item.title}</strong>
+                  <em>{item.description}</em>
+                </span>
+                <span className="cms-prescription-task-count">
+                  <b>{item.count}</b>
+                  <em>건</em>
+                </span>
+                <ArrowRight
+                  className="cms-prescription-task-arrow"
+                  size={17}
+                  strokeWidth={2.2}
+                  aria-hidden="true"
+                />
               </button>
             );
           })}
         </div>
+      </section> */}
+
+      <section
+        className="cms-dashboard-stock-summary"
+        aria-labelledby="stock-summary-title"
+      >
+        <header>
+          <div>
+            <span>현재 재고</span>
+            <h3 id="stock-summary-title">재고 핵심 지표</h3>
+          </div>
+          <button type="button" onClick={() => navigate("/cms/inventory")}>
+            재고 전체 보기
+            <ArrowRight size={17} strokeWidth={2.2} aria-hidden="true" />
+          </button>
+        </header>
+        <div
+          className={`cms-dashboard-stock-metrics ${
+            canViewAmounts ? "" : "is-amount-hidden"
+          }`}
+        >
+          {stockSummaryItems.map((item) => (
+            <div
+              className={`cms-dashboard-stock-metric ${item.tone ?? ""}`}
+              key={item.label}
+            >
+              <span>{item.label}</span>
+              <strong>
+                {item.value}
+                <em>{item.unit}</em>
+              </strong>
+              {item.detail && <small>{item.detail}</small>}
+            </div>
+          ))}
+        </div>
       </section>
 
-      <div className="cms-dashboard-sections">
-        <CmsDashboardSection
+      <div className="cms-dashboard-grid">
+        <CmsDashboardPanel
+          className="cms-dashboard-flow-panel"
           title="오늘 재고 흐름"
-          summary={`${currency(flowTotal)}개`}
+          summary={`총 ${currency(flowTotal)}개`}
         >
           <div className="cms-flow-grid">
             <CmsFlowStat
@@ -15209,11 +16668,51 @@ function CmsDashboard({
               tone="red"
             />
           </div>
-        </CmsDashboardSection>
-        <CmsDashboardSection
+        </CmsDashboardPanel>
+
+        <CmsDashboardPanel
+          title="초과 처방 처리 상태"
+          summary={`${activeShortageCount}건 진행 중`}
+          action="처리 상태 전체 보기"
+          onAction={() => navigate("/cms/inventory/shortages")}
+        >
+          <div className="cms-dashboard-status-list">
+            {shortageStatusItems.map(([label, value], index) => (
+              <div
+                className={
+                  index === 0 && orderNeededShortageCount > 0
+                    ? "is-warning"
+                    : ""
+                }
+                key={label}
+              >
+                <span>
+                  {index === 0 && orderNeededShortageCount > 0 ? (
+                    <AlertTriangle
+                      size={16}
+                      strokeWidth={2.2}
+                      aria-hidden="true"
+                    />
+                  ) : (
+                    <CircleCheck
+                      size={16}
+                      strokeWidth={2.2}
+                      aria-hidden="true"
+                    />
+                  )}
+                  {label}
+                </span>
+                <strong>{value}</strong>
+              </div>
+            ))}
+          </div>
+        </CmsDashboardPanel>
+
+        <CmsDashboardPanel
+          className="cms-dashboard-receipt-panel"
           title="최근 입고 이력"
           summary={`${recentReceiptHistories.length}건 · ${currency(receiptHistoryQuantity)}개`}
-          action="전체 보기"
+          action="입고 이력 전체 보기"
           onAction={() => navigate("/cms/inventory/receipts")}
         >
           <div className="cms-receipt-mini-list">
@@ -15234,76 +16733,35 @@ function CmsDashboard({
                 </div>
                 <b>{currency(history.productTotalQuantity)}개</b>
                 <time>{history.receivedAt}</time>
+                <ArrowRight size={16} strokeWidth={2.2} aria-hidden="true" />
               </button>
             ))}
             {recentReceiptHistories.length === 0 && (
-              <p className="cms-empty">표시할 입고 이력이 없습니다.</p>
+              <p className="cms-empty">
+                아직 입고 이력이 없습니다. QR 입고를 완료하면 최근 기록이
+                표시됩니다.
+              </p>
             )}
           </div>
-        </CmsDashboardSection>
-        <CmsDashboardSection
+        </CmsDashboardPanel>
+
+        <CmsDashboardPanel
           title="재고 참고 정보"
-          summary={`${data.stockSummary.stockCount}종`}
-          action="재고 보기"
-          onAction={() => navigate("/cms/inventory")}
+          summary={`${data.stockSummary.stockCount}종 기준`}
         >
-          <CmsKpiGrid
-            className={`dashboard-kpis ${canViewAmounts ? "" : "is-amount-hidden"}`}
-            columns={canViewAmounts ? 4 : 3}
-          >
-            <CmsKpi
-              label="보유 재고 품목"
-              value={`${data.stockSummary.stockCount}`}
-              unit="종"
-            />
-            <CmsKpi
-              label="총 보유 수량"
-              value={currency(data.stockSummary.totalQuantity)}
-              unit="개"
-            />
-            <CmsKpi
-              label="재고 확인 필요"
-              value={`${inventoryTaskTotal}`}
-              unit="건"
-              tone={inventoryTaskTotal > 0 ? "red" : undefined}
-            />
-            {canViewAmounts && (
-              <CmsKpi
-                label="예상 재고 금액"
-                detail={`전체 ${currency(data.stockSummary.estimatedAmount)}원`}
-                value={compactKoreanCurrency(data.stockSummary.estimatedAmount)}
-                unit="원"
-                tone="blue"
-              />
-            )}
-          </CmsKpiGrid>
-          <CmsMiniList
-            items={[
-              ["90일 내 만료", `${data.traceSummary.expiringSoonItemCount}건`],
-              ["관리약 재고", `${data.stockSummary.controlledStockCount}종`],
-              ["임의 재고", `${data.stockSummary.virtualStockCount}종`],
-              ["0개 재고", `${data.stockSummary.zeroStockCount}종`],
-            ]}
-          />
-        </CmsDashboardSection>
-        <CmsDashboardSection
-          title="초과 처방 처리 상태"
-          summary={`${activeShortageCount}건`}
-          action="상세 보기"
-          onAction={() => navigate("/cms/inventory/shortages")}
-        >
-          <CmsMiniList
-            items={[
-              ["주문 필요", `${orderNeededShortageCount}건`],
-              ["주문 완료", `${orderedShortageCount}건`],
-              ["보류", `${holdShortageCount}건`],
-              ["대체 처리", `${substitutedShortageCount}건`],
-            ]}
-          />
-        </CmsDashboardSection>
-        <CmsDashboardSection
+          <div className="cms-dashboard-reference-list">
+            {stockReferenceItems.map(([label, value]) => (
+              <div key={label}>
+                <span>{label}</span>
+                <strong>{value}</strong>
+              </div>
+            ))}
+          </div>
+        </CmsDashboardPanel>
+
+        <CmsDashboardPanel
           title="최근 활동"
-          summary={`${visibleActivities.length}건`}
+          summary={`최근 ${visibleActivities.length}건`}
         >
           <div className="cms-activity-list">
             {visibleActivities.map((activity) => (
@@ -15311,7 +16769,12 @@ function CmsDashboard({
                 className="cms-activity-row"
                 key={`${activity.type}-${activity.id}`}
               >
-                <span className={`cms-task-dot ${activity.tone}`} />
+                <span
+                  className={`cms-activity-icon ${activity.tone}`}
+                  aria-hidden="true"
+                >
+                  <Clock3 size={15} strokeWidth={2.2} />
+                </span>
                 <div>
                   <strong>{activity.title}</strong>
                   <span>{activity.description}</span>
@@ -15320,57 +16783,48 @@ function CmsDashboard({
               </div>
             ))}
             {visibleActivities.length === 0 && (
-              <p className="cms-empty">표시할 최근 활동이 없습니다.</p>
+              <p className="cms-empty">
+                아직 표시할 활동이 없습니다. 재고 작업을 시작하면 기록이
+                표시됩니다.
+              </p>
             )}
           </div>
-        </CmsDashboardSection>
+        </CmsDashboardPanel>
       </div>
     </section>
   );
 }
 
-function CmsDashboardSection({
+function CmsDashboardPanel({
   action,
   children,
-  defaultOpen = false,
+  className = "",
   onAction,
   summary,
   title,
 }: {
   action?: string;
   children: ReactNode;
-  defaultOpen?: boolean;
+  className?: string;
   onAction?: () => void;
   summary?: string;
   title: string;
 }) {
-  const [open, setOpen] = useState(defaultOpen);
-
   return (
-    <section className={`cms-dashboard-section ${open ? "is-open" : ""}`}>
+    <section className={`cms-dashboard-panel ${className}`.trim()}>
       <header>
-        <button
-          className="cms-dashboard-section-toggle"
-          type="button"
-          onClick={() => setOpen((current) => !current)}
-        >
-          <ChevronDown size={16} strokeWidth={2.4} />
-          <span>
-            <strong>{title}</strong>
-            {summary && <em>{summary}</em>}
-          </span>
-        </button>
+        <div>
+          <h3>{title}</h3>
+          {summary && <span>{summary}</span>}
+        </div>
         {action && (
-          <button
-            className="cms-dashboard-section-action"
-            type="button"
-            onClick={onAction}
-          >
+          <button type="button" onClick={onAction}>
             {action}
+            <ArrowRight size={16} strokeWidth={2.2} aria-hidden="true" />
           </button>
         )}
       </header>
-      {open && <div className="cms-dashboard-section-body">{children}</div>}
+      <div className="cms-dashboard-panel-body">{children}</div>
     </section>
   );
 }
@@ -21079,7 +22533,7 @@ function CmsAgentControlPage({
   );
   const onlineCount = devices.filter((device) => device.online).length;
   const pendingCommandCount = commands.filter((command) =>
-    ["PENDING", "STARTED"].includes(command.status),
+    isActiveAgentCommandStatus(command.status),
   ).length;
   const pendingQueueCount = devices.reduce(
     (sum, device) => sum + device.pendingQueueCount,
@@ -21266,7 +22720,7 @@ function CmsAgentControlPage({
                       : command.status === "FAILED" ||
                           command.status === "REJECTED"
                         ? "missing"
-                        : command.status === "STARTED"
+                        : isActiveAgentCommandStatus(command.status)
                           ? "name"
                           : "virtual"
                   }`}
@@ -21937,6 +23391,7 @@ function CmsPanel({
 
 const CMS_PAGE_SIZES = {
   accounts: 12,
+  inquiries: 12,
   importJobs: 6,
   inventory: 14,
   master: 14,
