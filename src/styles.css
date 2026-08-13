@@ -7916,6 +7916,293 @@ body:has(.cms-shell) {
   white-space: nowrap;
 }
 
+.cms-toolbar.cms-receipt-history-toolbar {
+  display: grid;
+  grid-template-columns: minmax(170px, auto) minmax(260px, 1fr) 132px 132px auto;
+  justify-content: stretch;
+}
+
+.cms-receipt-history-toolbar .cms-search {
+  width: 100%;
+  min-width: 0;
+  max-width: none;
+}
+
+.cms-receipt-history-toolbar .cms-toolbar-action {
+  min-width: 76px;
+}
+
+.cms-agent-control-page {
+  gap: 16px;
+}
+
+.cms-agent-control-layout {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: minmax(280px, 0.75fr) minmax(480px, 1.6fr);
+  gap: 16px;
+}
+
+.cms-agent-device-panel,
+.cms-agent-command-panel,
+.cms-agent-command-history {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.cms-agent-device-panel,
+.cms-agent-command-panel {
+  padding: 18px;
+}
+
+.cms-agent-device-panel > header,
+.cms-agent-selected-device,
+.cms-agent-history-head {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.cms-agent-device-panel > header strong,
+.cms-agent-selected-device strong,
+.cms-agent-history-head strong {
+  display: block;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.cms-agent-device-panel > header span,
+.cms-agent-selected-device span,
+.cms-agent-history-head span {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.cms-agent-device-list {
+  display: grid;
+  max-height: 300px;
+  gap: 8px;
+  overflow: auto;
+  margin-top: 14px;
+}
+
+.cms-agent-device-row {
+  display: grid;
+  min-width: 0;
+  min-height: 58px;
+  grid-template-columns: 10px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  padding: 10px 12px;
+  text-align: left;
+}
+
+.cms-agent-device-row.is-selected {
+  border-color: #8dbaff;
+  background: #f5f9ff;
+}
+
+.cms-agent-state-dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: #c4cbd1;
+}
+
+.cms-agent-state-dot.is-online {
+  background: #2f9e61;
+  box-shadow: 0 0 0 3px rgba(47, 158, 97, 0.12);
+}
+
+.cms-agent-device-row div,
+.cms-agent-device-row strong,
+.cms-agent-device-row span {
+  min-width: 0;
+}
+
+.cms-agent-device-row strong,
+.cms-agent-device-row span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cms-agent-device-row strong {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.cms-agent-device-row span,
+.cms-agent-device-row em {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.cms-agent-device-row span {
+  margin-top: 3px;
+}
+
+.cms-agent-device-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.cms-agent-device-summary div {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fafbfb;
+  padding: 9px 10px;
+}
+
+.cms-agent-device-summary span,
+.cms-agent-device-summary strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cms-agent-device-summary span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.cms-agent-device-summary strong {
+  margin-top: 4px;
+  color: var(--ink);
+  font-size: 11px;
+  font-weight: 950;
+}
+
+.cms-agent-command-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.cms-agent-command-grid button {
+  display: flex;
+  min-width: 0;
+  min-height: 64px;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: #fff;
+  padding: 11px 12px;
+  color: var(--blue);
+  text-align: left;
+}
+
+.cms-agent-command-grid button:hover:not(:disabled) {
+  border-color: #8dbaff;
+  background: #f5f9ff;
+}
+
+.cms-agent-command-grid button:disabled {
+  background: #f6f7f8;
+  color: #9aa3aa;
+}
+
+.cms-agent-command-grid button > span {
+  min-width: 0;
+}
+
+.cms-agent-command-grid strong,
+.cms-agent-command-grid em {
+  display: block;
+}
+
+.cms-agent-command-grid strong {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.cms-agent-command-grid em {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 750;
+  line-height: 1.35;
+}
+
+.cms-agent-command-history {
+  flex: 1;
+}
+
+.cms-agent-history-head {
+  min-height: 52px;
+  border-bottom: 1px solid var(--line);
+  padding: 0 18px;
+}
+
+.cms-agent-command-table {
+  min-width: 960px;
+}
+
+.cms-agent-command-row {
+  display: grid;
+  min-height: 58px;
+  grid-template-columns: 140px minmax(210px, 0.9fr) minmax(
+      190px,
+      1fr
+    ) 90px minmax(220px, 1.2fr);
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid #f4f5f6;
+  padding: 0 18px;
+}
+
+.cms-agent-command-row > span,
+.cms-agent-command-row > strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cms-agent-command-row > strong {
+  color: var(--ink);
+  font-weight: 950;
+}
+
+.cms-agent-command-row em {
+  display: block;
+  overflow: hidden;
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .cms-return-cancel-button {
   width: 100%;
   min-height: 32px;
@@ -9245,6 +9532,18 @@ body:has(.cms-shell) {
 }
 
 @media (max-width: 1180px) {
+  .cms-toolbar.cms-receipt-history-toolbar {
+    grid-template-columns: minmax(220px, 1fr) 132px 132px auto;
+  }
+
+  .cms-receipt-history-toolbar .cms-pills {
+    grid-column: 1 / -1;
+  }
+
+  .cms-agent-control-layout {
+    grid-template-columns: 1fr;
+  }
+
   .cms-split,
   .cms-grid.two,
   .cms-dashboard-sections,
@@ -9561,6 +9860,24 @@ body:has(.cms-shell) {
 }
 
 @media (max-width: 680px) {
+  .cms-toolbar.cms-receipt-history-toolbar {
+    grid-template-columns: 1fr;
+  }
+
+  .cms-receipt-history-toolbar .cms-pills,
+  .cms-receipt-history-toolbar .cms-search,
+  .cms-toolbar.cms-receipt-history-toolbar .cms-input.compact,
+  .cms-receipt-history-toolbar .cms-toolbar-action {
+    width: 100%;
+    min-width: 0;
+    grid-column: 1;
+  }
+
+  .cms-agent-device-summary,
+  .cms-agent-command-grid {
+    grid-template-columns: 1fr;
+  }
+
   .cms-loading,
   .cms-login {
     padding: 16px;

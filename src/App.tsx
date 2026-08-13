@@ -8302,6 +8302,7 @@ type CmsPage =
   | "inventory-shortages"
   | "return-reviews"
   | "receipts"
+  | "agent-control"
   | "wholesaler"
   | "prescriptions"
   | "purchase";
@@ -8402,6 +8403,45 @@ type CmsReceiptHistory = {
   createdBy: string;
   status: "RETURNABLE" | "RETURNED" | "UNKNOWN";
 };
+
+type CmsAgentDevice = {
+  id: string;
+  pharmacyId: string;
+  pharmacyName: string;
+  deviceId: string;
+  deviceName: string;
+  agentVersion: string;
+  status: string;
+  heartbeatStatus: string;
+  heartbeatMessage: string;
+  lastSeenAt: string;
+  lastSqlOkAt: string;
+  lastApiOkAt: string;
+  pendingQueueCount: number;
+  online: boolean;
+};
+
+type CmsAgentCommand = {
+  id: string;
+  commandId: string;
+  pharmacyId: string;
+  pharmacyName: string;
+  deviceId: string;
+  commandType: string;
+  status: string;
+  message: string;
+  createdAt: string;
+  startedAt: string;
+  completedAt: string;
+};
+
+type CmsAgentCommandType =
+  | "RESYNC_TODAY_PRESCRIPTIONS"
+  | "SYNC_REFERENCE_DATA"
+  | "SYNC_STOCKS"
+  | "SYNC_PURCHASES"
+  | "SYNC_CONTROLLED_DRUGS"
+  | "HEARTBEAT_NOW";
 
 type CmsAccountStatus = "ACTIVE" | "INACTIVE" | "LOCKED";
 
@@ -9417,6 +9457,9 @@ function getCmsPage(path: string): CmsPage {
   if (segment === "inventory" && subSegment === "receipts") {
     return "receipts";
   }
+  if (segment === "agent-control") {
+    return "agent-control";
+  }
   if (
     segment === "master" ||
     segment === "import" ||
@@ -9500,6 +9543,7 @@ function isRestrictedCmsPage(page: CmsPage) {
     page === "accounts" ||
     page === "inventory-decreases" ||
     page === "inventory-snapshot-diff" ||
+    page === "agent-control" ||
     page === "wholesaler" ||
     page === "purchase"
   );
@@ -9676,6 +9720,10 @@ function CmsApp({
   );
   const [receiptSearchStatus, setReceiptSearchStatus] =
     useState<CmsPrescriptionSearchStatus>("idle");
+  const [agentDevices, setAgentDevices] = useState<CmsAgentDevice[]>([]);
+  const [agentCommands, setAgentCommands] = useState<CmsAgentCommand[]>([]);
+  const [selectedAgentDeviceKey, setSelectedAgentDeviceKey] = useState("");
+  const [agentCommandSubmitting, setAgentCommandSubmitting] = useState(false);
   const [shortageQuery, setShortageQuery] = useState("");
   const [shortageStartDate, setShortageStartDate] = useState(
     () => recentWeekDateRange().startDate,
@@ -9797,6 +9845,9 @@ function CmsApp({
   const activeReturnReviewId = returnReviewRouteId || selectedReturnReviewId;
   const selectedReturnReview = returnReviews.find(
     (record) => record.id === activeReturnReviewId,
+  );
+  const selectedAgentDevice = agentDevices.find(
+    (device) => agentDeviceKey(device) === selectedAgentDeviceKey,
   );
   const hasCmsSession = hasStoredAuthTokens();
   const effectiveSidebarCollapsed = sidebarCollapsed && !compactCmsNav;
@@ -10386,6 +10437,25 @@ function CmsApp({
           if (stockResult.status === "fulfilled") {
             setStocks(arrayPayload(stockResult.value).map(normalizeStock));
           }
+        } else if (targetPage === "agent-control") {
+          const [deviceResponse, commandResponse] = await Promise.all([
+            apiFetch<unknown>("/admin/agent-devices"),
+            apiFetch<unknown>("/admin/agent-commands?size=100"),
+          ]);
+          const nextDevices = arrayPayload(deviceResponse).map(
+            normalizeCmsAgentDevice,
+          );
+          setAgentDevices(nextDevices);
+          setAgentCommands(
+            arrayPayload(commandResponse).map(normalizeCmsAgentCommand),
+          );
+          setSelectedAgentDeviceKey((current) =>
+            nextDevices.some((device) => agentDeviceKey(device) === current)
+              ? current
+              : nextDevices[0]
+                ? agentDeviceKey(nextDevices[0])
+                : "",
+          );
         } else if (targetPage === "receipts") {
           const trimmed = receiptQuery.trim();
           const normalizedKeyword = normalizeSearchText(trimmed);
@@ -11241,6 +11311,29 @@ function CmsApp({
     }
   }
 
+  async function createAgentCommand(commandType: CmsAgentCommandType) {
+    if (!selectedAgentDevice || agentCommandSubmitting) return;
+
+    setAgentCommandSubmitting(true);
+    try {
+      await apiFetch("/admin/agent-commands", {
+        method: "POST",
+        body: JSON.stringify({
+          pharmacyId: Number(selectedAgentDevice.pharmacyId),
+          deviceId: selectedAgentDevice.deviceId,
+          commandType,
+        }),
+      });
+      setApiState("connected");
+      setApiMessage(`${agentCommandLabel(commandType)} 명령을 전송했습니다.`);
+      await refreshCms();
+    } catch (error) {
+      cmsFallback(error);
+    } finally {
+      setAgentCommandSubmitting(false);
+    }
+  }
+
   async function startPurchaseSync() {
     const pharmacyId = baropharmCookieDraft.pharmacyId.trim();
     if (!pharmacyId) {
@@ -11761,6 +11854,16 @@ function CmsApp({
               onQuery={setAccountQuery}
               onSave={submitAccountUpdate}
               onSelect={setSelectedAccountId}
+            />
+          )}
+          {visiblePage === "agent-control" && (
+            <CmsAgentControlPage
+              commands={agentCommands}
+              devices={agentDevices}
+              selectedDeviceKey={selectedAgentDeviceKey}
+              submitting={agentCommandSubmitting}
+              onCommand={(commandType) => void createAgentCommand(commandType)}
+              onSelectDevice={setSelectedAgentDeviceKey}
             />
           )}
           {visiblePage === "inventory" && (
@@ -12983,6 +13086,96 @@ function receiptHistoryStatusText(status: CmsReceiptHistory["status"]) {
   return "확인 필요";
 }
 
+function normalizeCmsAgentDevice(raw: unknown, index: number): CmsAgentDevice {
+  const item = unwrapObjectPayload(raw);
+  const lastSeenValue = item.lastSeenAt ?? item.last_seen_at;
+  const parsedLastSeenAt = Date.parse(String(lastSeenValue ?? ""));
+  const online =
+    Number.isFinite(parsedLastSeenAt) &&
+    Date.now() - parsedLastSeenAt >= 0 &&
+    Date.now() - parsedLastSeenAt <= 180_000;
+
+  return {
+    id: String(item.id ?? index),
+    pharmacyId: String(item.pharmacyId ?? item.pharmacy_id ?? ""),
+    pharmacyName: String(
+      item.pharmacyName ?? item.pharmacy_name ?? "약국 미확인",
+    ),
+    deviceId: String(item.deviceId ?? item.device_id ?? ""),
+    deviceName: String(item.deviceName ?? item.device_name ?? "Windows PC"),
+    agentVersion: String(item.agentVersion ?? item.agent_version ?? "-"),
+    status: String(item.status ?? "UNKNOWN").toUpperCase(),
+    heartbeatStatus: String(
+      item.heartbeatStatus ?? item.heartbeat_status ?? "UNKNOWN",
+    ).toUpperCase(),
+    heartbeatMessage: String(
+      item.heartbeatMessage ?? item.heartbeat_message ?? "",
+    ),
+    lastSeenAt: formatTransactionAt(lastSeenValue),
+    lastSqlOkAt: formatTransactionAt(item.lastSqlOkAt ?? item.last_sql_ok_at),
+    lastApiOkAt: formatTransactionAt(item.lastApiOkAt ?? item.last_api_ok_at),
+    pendingQueueCount: finiteNumber(
+      item.pendingQueueCount ?? item.pending_queue_count,
+    ),
+    online,
+  };
+}
+
+function normalizeCmsAgentCommand(
+  raw: unknown,
+  index: number,
+): CmsAgentCommand {
+  const item = unwrapObjectPayload(raw);
+  return {
+    id: String(item.id ?? item.commandId ?? index),
+    commandId: String(item.commandId ?? item.command_id ?? item.id ?? index),
+    pharmacyId: String(item.pharmacyId ?? item.pharmacy_id ?? ""),
+    pharmacyName: String(
+      item.pharmacyName ?? item.pharmacy_name ?? "약국 미확인",
+    ),
+    deviceId: String(item.deviceId ?? item.device_id ?? ""),
+    commandType: String(
+      item.commandType ?? item.command_type ?? item.type ?? "UNKNOWN",
+    ).toUpperCase(),
+    status: String(item.status ?? "PENDING").toUpperCase(),
+    message: String(item.message ?? ""),
+    createdAt: formatTransactionAt(item.createdAt ?? item.created_at),
+    startedAt: formatTransactionAt(item.startedAt ?? item.started_at),
+    completedAt: formatTransactionAt(item.completedAt ?? item.completed_at),
+  };
+}
+
+function agentDeviceKey(device: CmsAgentDevice) {
+  return `${device.pharmacyId}:${device.deviceId}`;
+}
+
+function agentCommandLabel(commandType: string) {
+  const labels: Record<string, string> = {
+    RESYNC_TODAY_PRESCRIPTIONS: "오늘 처방 재수집",
+    SYNC_REFERENCE_DATA: "기준 데이터 전체 동기화",
+    RESYNC_REFERENCE_DATA: "기준 데이터 전체 재동기화",
+    SYNC_DRUG_MASTERS: "약품 마스터 동기화",
+    SYNC_STOCKS: "재고 동기화",
+    SYNC_BARCODES: "바코드 동기화",
+    SYNC_WHOLESALERS: "도매처 동기화",
+    SYNC_PURCHASES: "입고·매입 동기화",
+    SYNC_CONTROLLED_DRUGS: "관리 약품 동기화",
+    RESYNC_CONTROLLED_DRUGS: "관리 약품 재동기화",
+    SYNC_DRUG_PRICES: "약가 동기화",
+    SYNC_DRUG_UNITS: "약품 단위 동기화",
+    HEARTBEAT_NOW: "상태 즉시 확인",
+  };
+  return labels[commandType] ?? commandType;
+}
+
+function agentCommandStatusText(status: string) {
+  if (status === "COMPLETED") return "완료";
+  if (status === "STARTED") return "실행 중";
+  if (status === "FAILED") return "실패";
+  if (status === "REJECTED") return "거절";
+  return "대기";
+}
+
 function normalizeCmsAccount(raw: unknown, index: number): CmsAccount {
   const item = unwrapObjectPayload(raw);
   const rawStatus = String(item.status ?? "ACTIVE").toUpperCase();
@@ -14097,6 +14290,12 @@ function CmsSidebar({
       ? ([
           ["signup", "계정 생성", "/cms/signup", fileTextIcon],
           ["accounts", "계정 관리", "/cms/accounts", fileTextIcon],
+          [
+            "agent-control",
+            "에이전트 제어",
+            "/cms/agent-control",
+            briefcaseIcon,
+          ],
         ] as Array<[CmsPage, string, string, string]>)
       : []),
     ["inventory", "재고", "/cms/inventory", barGraphIcon],
@@ -14200,6 +14399,7 @@ function CmsHeader({
     "inventory-snapshot-diff": "스냅샷 비교",
     "inventory-shortages": "초과 처방",
     receipts: "입고 이력",
+    "agent-control": "에이전트 제어",
     "return-reviews": "반품 확인",
     wholesaler: "도매처 관리",
     prescriptions: "처방전",
@@ -14217,6 +14417,8 @@ function CmsHeader({
       "에이전트 스냅샷과 현재 재고 수량 차이를 확인합니다.",
     "inventory-shortages": "초과 처방과 부족 수량을 확인합니다.",
     receipts: "QR/SN 단위 입고 이력과 반품 가능 수량을 확인합니다.",
+    "agent-control":
+      "약국 PC 연결 상태를 확인하고 데이터 동기화 명령을 실행합니다.",
     "return-reviews": "앱에서 확정되지 않은 반품을 확인하고 처리합니다.",
     wholesaler: "약국별 도매처 정보를 관리합니다.",
     prescriptions: "처방전 차감 결과와 수동 처리 항목을 확인합니다.",
@@ -20758,6 +20960,241 @@ function CmsPurchasePage({
             )}
           </div>
         </CmsPanel>
+      </div>
+    </section>
+  );
+}
+
+function CmsAgentControlPage({
+  commands,
+  devices,
+  selectedDeviceKey,
+  submitting,
+  onCommand,
+  onSelectDevice,
+}: {
+  commands: CmsAgentCommand[];
+  devices: CmsAgentDevice[];
+  selectedDeviceKey: string;
+  submitting: boolean;
+  onCommand: (commandType: CmsAgentCommandType) => void;
+  onSelectDevice: (deviceKey: string) => void;
+}) {
+  const selectedDevice = devices.find(
+    (device) => agentDeviceKey(device) === selectedDeviceKey,
+  );
+  const visibleCommands = commands.filter(
+    (command) =>
+      !selectedDevice ||
+      (command.pharmacyId === selectedDevice.pharmacyId &&
+        command.deviceId === selectedDevice.deviceId),
+  );
+  const onlineCount = devices.filter((device) => device.online).length;
+  const pendingCommandCount = commands.filter((command) =>
+    ["PENDING", "STARTED"].includes(command.status),
+  ).length;
+  const pendingQueueCount = devices.reduce(
+    (sum, device) => sum + device.pendingQueueCount,
+    0,
+  );
+  const commandOptions: Array<{
+    type: CmsAgentCommandType;
+    label: string;
+    description: string;
+    icon: ReactNode;
+  }> = [
+    {
+      type: "HEARTBEAT_NOW",
+      label: "상태 즉시 확인",
+      description: "PC 연결과 API 응답 상태를 바로 갱신합니다.",
+      icon: <Zap size={17} />,
+    },
+    {
+      type: "RESYNC_TODAY_PRESCRIPTIONS",
+      label: "오늘 처방 재수집",
+      description: "오늘 처방 데이터를 다시 읽어 서버에 반영합니다.",
+      icon: <RefreshCw size={17} />,
+    },
+    {
+      type: "SYNC_STOCKS",
+      label: "재고 동기화",
+      description: "현재 재고 스냅샷을 다시 수집합니다.",
+      icon: <HardDriveDownload size={17} />,
+    },
+    {
+      type: "SYNC_PURCHASES",
+      label: "입고·매입 동기화",
+      description: "PC의 최근 입고와 매입 데이터를 수집합니다.",
+      icon: <HardDriveDownload size={17} />,
+    },
+    {
+      type: "SYNC_CONTROLLED_DRUGS",
+      label: "관리 약품 동기화",
+      description: "향정·관리 약품 정보를 다시 수집합니다.",
+      icon: <ShieldCheck size={17} />,
+    },
+    {
+      type: "SYNC_REFERENCE_DATA",
+      label: "기준 데이터 전체 동기화",
+      description: "약품·바코드·도매처 등 기준 데이터를 갱신합니다.",
+      icon: <RefreshCw size={17} />,
+    },
+  ];
+
+  return (
+    <section className="cms-content cms-list-page cms-agent-control-page">
+      <CmsKpiGrid className="compact" columns={4}>
+        <CmsKpi label="등록 기기" value={`${devices.length}`} unit="대" />
+        <CmsKpi label="온라인" value={`${onlineCount}`} unit="대" tone="blue" />
+        <CmsKpi label="실행 대기" value={`${pendingCommandCount}`} unit="건" />
+        <CmsKpi
+          label="전송 대기 데이터"
+          value={`${pendingQueueCount}`}
+          unit="건"
+        />
+      </CmsKpiGrid>
+
+      <div className="cms-agent-control-layout">
+        <section className="cms-agent-device-panel">
+          <header>
+            <div>
+              <strong>연결된 약국 PC</strong>
+              <span>최근 heartbeat 기준</span>
+            </div>
+          </header>
+          <div className="cms-agent-device-list">
+            {devices.map((device) => (
+              <button
+                className={`cms-agent-device-row ${
+                  agentDeviceKey(device) === selectedDeviceKey
+                    ? "is-selected"
+                    : ""
+                }`}
+                key={agentDeviceKey(device)}
+                type="button"
+                onClick={() => onSelectDevice(agentDeviceKey(device))}
+              >
+                <span
+                  className={`cms-agent-state-dot ${device.online ? "is-online" : ""}`}
+                />
+                <div>
+                  <strong>{device.pharmacyName}</strong>
+                  <span>
+                    {device.deviceName} · {device.agentVersion}
+                  </span>
+                </div>
+                <em>{device.online ? "온라인" : "오프라인"}</em>
+              </button>
+            ))}
+            {devices.length === 0 && (
+              <p className="cms-empty">등록된 에이전트 기기가 없습니다.</p>
+            )}
+          </div>
+        </section>
+
+        <section className="cms-agent-command-panel">
+          <header className="cms-agent-selected-device">
+            <div>
+              <strong>
+                {selectedDevice?.pharmacyName ?? "기기를 선택해 주세요"}
+              </strong>
+              <span>{selectedDevice?.deviceId ?? "원격 명령 대상 없음"}</span>
+            </div>
+            {selectedDevice && (
+              <span
+                className={`cms-badge ${selectedDevice.online ? "normal" : "missing"}`}
+              >
+                {selectedDevice.online ? "연결됨" : "연결 대기"}
+              </span>
+            )}
+          </header>
+
+          {selectedDevice && (
+            <div className="cms-agent-device-summary">
+              <div>
+                <span>마지막 연결</span>
+                <strong>{selectedDevice.lastSeenAt}</strong>
+              </div>
+              <div>
+                <span>SQL 정상</span>
+                <strong>{selectedDevice.lastSqlOkAt}</strong>
+              </div>
+              <div>
+                <span>API 정상</span>
+                <strong>{selectedDevice.lastApiOkAt}</strong>
+              </div>
+              <div>
+                <span>대기 큐</span>
+                <strong>{selectedDevice.pendingQueueCount}건</strong>
+              </div>
+            </div>
+          )}
+
+          <div className="cms-agent-command-grid">
+            {commandOptions.map((option) => (
+              <button
+                disabled={!selectedDevice || submitting}
+                key={option.type}
+                type="button"
+                onClick={() => onCommand(option.type)}
+              >
+                {option.icon}
+                <span>
+                  <strong>{option.label}</strong>
+                  <em>{option.description}</em>
+                </span>
+              </button>
+            ))}
+          </div>
+        </section>
+      </div>
+
+      <div className="cms-table-card cms-agent-command-history">
+        <div className="cms-agent-history-head">
+          <strong>최근 명령 이력</strong>
+          <span>{visibleCommands.length}건</span>
+        </div>
+        <div className="cms-table-scroll">
+          <div className="cms-agent-command-table">
+            <div className="cms-agent-command-row cms-th">
+              <span>요청일시</span>
+              <span>약국·기기</span>
+              <span>명령</span>
+              <span>상태</span>
+              <span>메시지</span>
+            </div>
+            {visibleCommands.map((command) => (
+              <div className="cms-agent-command-row" key={command.commandId}>
+                <span>{command.createdAt}</span>
+                <strong>
+                  {command.pharmacyName}
+                  <em>{command.deviceId}</em>
+                </strong>
+                <span>{agentCommandLabel(command.commandType)}</span>
+                <span
+                  className={`cms-badge ${
+                    command.status === "COMPLETED"
+                      ? "normal"
+                      : command.status === "FAILED" ||
+                          command.status === "REJECTED"
+                        ? "missing"
+                        : command.status === "STARTED"
+                          ? "name"
+                          : "virtual"
+                  }`}
+                >
+                  {agentCommandStatusText(command.status)}
+                </span>
+                <span title={command.message}>{command.message || "-"}</span>
+              </div>
+            ))}
+            {visibleCommands.length === 0 && (
+              <p className="cms-empty table-empty">
+                표시할 원격 명령 이력이 없습니다.
+              </p>
+            )}
+          </div>
+        </div>
       </div>
     </section>
   );

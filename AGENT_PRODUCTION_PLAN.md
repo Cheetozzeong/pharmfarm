@@ -449,10 +449,10 @@ heartbeat payload:
 - [ ] 에이전트 설치 토큰 설계
 - [ ] HMAC 인증 방식 추가
 - [x] PowerShell 에이전트 heartbeat 전송 추가
-- [ ] 서버 heartbeat API 추가
+- [x] 서버 heartbeat API 추가
 - [x] PowerShell 에이전트 원격 명령 polling 추가
-- [ ] 서버 원격 명령 API 추가
-- [ ] 에이전트 상태 UI 추가
+- [x] 서버 원격 명령 API 추가
+- [x] 에이전트 상태 UI 추가
 - [ ] 기존 `/samples` 기반 흐름에서 전용 처방 API로 이전
 - [ ] PowerShell 진단 모드와 운영 모드 분리
 - [ ] .NET Agent 프로젝트 생성
