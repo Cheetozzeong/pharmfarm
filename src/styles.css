@@ -11445,6 +11445,163 @@ body:has(.cms-shell) {
   color: var(--dashboard-danger);
 }
 
+.cms-dashboard-inventory-tasks {
+  display: grid;
+  min-width: 0;
+  gap: var(--dashboard-space-3);
+}
+
+.cms-dashboard-inventory-task-heading {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--dashboard-space-2);
+}
+
+.cms-dashboard-inventory-task-heading > div {
+  display: grid;
+  min-width: 0;
+  gap: var(--dashboard-space-1);
+}
+
+.cms-dashboard-inventory-task-heading span,
+.cms-dashboard-inventory-task-heading > em {
+  color: var(--dashboard-text-muted);
+  font-size: var(--dashboard-font-xs);
+  font-style: normal;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.cms-dashboard-inventory-task-heading strong {
+  color: var(--dashboard-text);
+  font-size: var(--dashboard-font-sm);
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.cms-dashboard-inventory-task-grid {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 1px;
+  border: 1px solid var(--dashboard-line);
+  border-radius: var(--dashboard-radius-md);
+  background: var(--dashboard-line);
+  overflow: hidden;
+}
+
+.cms-dashboard-page .cms-dashboard-inventory-task {
+  display: grid;
+  min-width: 0;
+  min-height: 132px;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  gap: var(--dashboard-space-3);
+  border: 0;
+  border-radius: 0;
+  background: var(--dashboard-surface);
+  padding: var(--dashboard-space-4);
+  text-align: left;
+  transition:
+    background var(--dashboard-duration) var(--dashboard-ease),
+    transform var(--dashboard-duration) var(--dashboard-ease);
+}
+
+.cms-dashboard-page .cms-dashboard-inventory-task:hover {
+  border-color: transparent;
+  background: var(--dashboard-surface-muted);
+  box-shadow: none;
+  transform: translateY(-1px);
+}
+
+.cms-dashboard-inventory-task-state {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--dashboard-success-soft);
+  color: var(--dashboard-success);
+}
+
+.cms-dashboard-inventory-task.is-active.red
+  .cms-dashboard-inventory-task-state {
+  background: var(--dashboard-danger-soft);
+  color: var(--dashboard-danger);
+}
+
+.cms-dashboard-inventory-task.is-active.amber
+  .cms-dashboard-inventory-task-state {
+  background: var(--dashboard-warning-soft);
+  color: var(--dashboard-warning);
+}
+
+.cms-dashboard-inventory-task.is-active.blue
+  .cms-dashboard-inventory-task-state {
+  background: var(--dashboard-brand-soft);
+  color: var(--dashboard-brand-strong);
+}
+
+.cms-dashboard-inventory-task-copy {
+  display: grid;
+  min-width: 0;
+  gap: var(--dashboard-space-1);
+}
+
+.cms-dashboard-page .cms-dashboard-inventory-task-copy strong {
+  color: var(--dashboard-text);
+  font-size: var(--dashboard-font-sm);
+  font-weight: 800;
+  line-height: 1.3;
+  white-space: normal;
+}
+
+.cms-dashboard-page .cms-dashboard-inventory-task-copy em {
+  color: var(--dashboard-text-muted);
+  font-size: var(--dashboard-font-xs);
+  font-style: normal;
+  font-weight: 600;
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.cms-dashboard-inventory-task-count {
+  display: flex;
+  min-width: 48px;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: var(--dashboard-space-1);
+  color: var(--dashboard-text);
+  white-space: nowrap;
+}
+
+.cms-dashboard-page .cms-dashboard-inventory-task-count b {
+  font-size: var(--dashboard-font-lg);
+  font-weight: 800;
+  line-height: 1;
+}
+
+.cms-dashboard-page .cms-dashboard-inventory-task-count em {
+  color: var(--dashboard-text-muted);
+  font-size: var(--dashboard-font-xs);
+  font-style: normal;
+  font-weight: 700;
+}
+
+.cms-dashboard-inventory-task-action {
+  display: inline-flex;
+  grid-column: 2 / -1;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--dashboard-space-1);
+  color: var(--dashboard-brand-strong);
+  font-size: var(--dashboard-font-xs);
+  font-weight: 800;
+  line-height: 1.2;
+}
+
 .cms-dashboard-grid {
   display: grid;
   min-width: 0;
@@ -11743,6 +11900,16 @@ body:has(.cms-shell) {
   }
 
   .cms-dashboard-stock-metrics.is-amount-hidden {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .cms-dashboard-inventory-task-heading {
+    flex-direction: row;
+    align-items: flex-end;
+    justify-content: space-between;
+  }
+
+  .cms-dashboard-inventory-task-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 

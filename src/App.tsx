@@ -3215,6 +3215,9 @@ function filterStocksByControlledFilter(
   if (controlledFilter === "VIRTUAL") {
     return stocks.filter(isVirtualStock);
   }
+  if (controlledFilter === "UNPRICED_VIRTUAL") {
+    return stocks.filter((stock) => isVirtualStock(stock) && stock.price <= 0);
+  }
   return stocks;
 }
 
@@ -3421,6 +3424,8 @@ function stockControlledFilterText(filter: CmsStockControlledFilter) {
       return "비향정";
     case "VIRTUAL":
       return "임의";
+    case "UNPRICED_VIRTUAL":
+      return "가격 미입력 임의";
     default:
       return "전체";
   }
@@ -8743,7 +8748,8 @@ type CmsStockControlledFilter =
   | "ALL"
   | "CONTROLLED"
   | "NON_CONTROLLED"
-  | "VIRTUAL";
+  | "VIRTUAL"
+  | "UNPRICED_VIRTUAL";
 type CmsStockSortKey = "name" | "quantity";
 type CmsStockSortDirection = "asc" | "desc";
 type CmsStockSearchStatus = "idle" | "short" | "loading" | "done" | "error";
@@ -9073,6 +9079,8 @@ type CmsDashboardData = {
     virtualStocks: number;
     zeroStocks: number;
     controlledCandidates: number;
+    unpricedVirtualStocks: number;
+    openReturnReviews: number;
     baropharmNeedsAction: boolean;
     agentNeedsAction: boolean;
   };
@@ -10389,7 +10397,9 @@ function CmsApp({
   const [stocks, setStocks] = useState<StockItem[]>([]);
   const [stockQuery, setStockQuery] = useState("");
   const [stockControlledFilter, setStockControlledFilter] =
-    useState<CmsStockControlledFilter>("ALL");
+    useState<CmsStockControlledFilter>(() =>
+      path === "/cms/inventory/unpriced" ? "UNPRICED_VIRTUAL" : "ALL",
+    );
   const [stockSortKey, setStockSortKey] = useState<CmsStockSortKey>("quantity");
   const [stockSortDirection, setStockSortDirection] =
     useState<CmsStockSortDirection>("desc");
@@ -10531,6 +10541,13 @@ function CmsApp({
   const [adjustMemo, setAdjustMemo] = useState("실사 후 수량 보정");
   const [mergeInsuranceCode, setMergeInsuranceCode] = useState("");
   const [prescriptionId, setPrescriptionId] = useState("");
+
+  useEffect(() => {
+    if (path === "/cms/inventory/unpriced") {
+      setStockControlledFilter("UNPRICED_VIRTUAL");
+    }
+  }, [path]);
+
   const canAccessMasterData = canAccessMasterDataCms(authAccount);
   const isCmsAccessCheckPending = apiState === "checking" && !authAccount;
   const visiblePage =
@@ -10988,24 +11005,19 @@ function CmsApp({
         };
 
         if (targetPage === "dashboard") {
-          const [dashboardResult, receiptResult, stockItemResult] =
-            await Promise.all([
-              optionalCmsApiFetch<unknown>("/dashboard"),
-              optionalCmsApiFetch<unknown>(
-                "/receipts?size=5&sortBy=receivedAt&sortDirection=desc",
-              ),
-              optionalCmsApiFetch<unknown>(
-                "/stock-items?size=5&sortBy=receivedAt&sortDirection=desc",
-              ),
-            ]);
+          const [dashboardResult, receiptResult] = await Promise.all([
+            optionalCmsApiFetch<unknown>("/dashboard"),
+            optionalCmsApiFetch<unknown>(
+              "/receipts?size=5&sortBy=receivedAt&sortDirection=desc",
+            ),
+          ]);
           setDashboardData(
             dashboardResult ? normalizeCmsDashboard(dashboardResult) : null,
           );
-          const receiptPayloadResult = receiptResult ?? stockItemResult;
-          if (receiptPayloadResult) {
+          if (receiptResult) {
             setReceiptHistories(
               sortCmsReceiptHistories(
-                receiptHistoryPayload(receiptPayloadResult).map(
+                receiptHistoryPayload(receiptResult).map(
                   normalizeCmsReceiptHistory,
                 ),
               ),
@@ -12716,6 +12728,7 @@ function CmsApp({
               dashboard={dashboardData}
               deductionRecords={deductionRecords}
               receiptHistories={receiptHistories}
+              returnReviews={returnReviews}
               stocks={stocks}
               syncJobs={syncJobs}
               navigate={navigate}
@@ -12808,7 +12821,12 @@ function CmsApp({
                 setAdjustQuantity(Math.max(1, Math.min(999, value)))
               }
               onCreateStock={createCmsStock}
-              onControlledFilter={setStockControlledFilter}
+              onControlledFilter={(nextFilter) => {
+                setStockControlledFilter(nextFilter);
+                if (path === "/cms/inventory/unpriced") {
+                  navigate("/cms/inventory");
+                }
+              }}
               onMergeInsuranceCode={setMergeInsuranceCode}
               onMergeVirtual={mergeVirtualStock}
               onQuery={setStockQuery}
@@ -15307,6 +15325,15 @@ function normalizeCmsDashboard(raw: unknown): CmsDashboardData {
       virtualStocks: Number(tasks.virtualStocks ?? 0),
       zeroStocks: Number(tasks.zeroStocks ?? 0),
       controlledCandidates: Number(tasks.controlledCandidates ?? 0),
+      unpricedVirtualStocks: Number(
+        tasks.unpricedVirtualStocks ??
+          tasks.virtualStocksWithoutPrice ??
+          tasks.virtualStocksMissingPrice ??
+          0,
+      ),
+      openReturnReviews: Number(
+        tasks.openReturnReviews ?? tasks.pendingReturnReviews ?? 0,
+      ),
       baropharmNeedsAction: normalizeBoolean(tasks.baropharmNeedsAction),
       agentNeedsAction: normalizeBoolean(tasks.agentNeedsAction),
     },
@@ -16309,6 +16336,7 @@ function CmsDashboard({
   deductionRecords,
   navigate,
   receiptHistories,
+  returnReviews,
   stocks,
   syncJobs,
 }: {
@@ -16318,6 +16346,7 @@ function CmsDashboard({
   deductionRecords: CmsDeductionRecord[];
   navigate: (path: string) => void;
   receiptHistories: CmsReceiptHistory[];
+  returnReviews: CmsReturnReview[];
   stocks: StockItem[];
   syncJobs: CmsSyncJob[];
 }) {
@@ -16327,6 +16356,7 @@ function CmsDashboard({
       cookieState,
       deductionRecords,
       receiptHistories,
+      returnReviews,
       stocks,
       syncJobs,
     });
@@ -16393,9 +16423,42 @@ function CmsDashboard({
     ? data.tasks.prescriptionIssues
     : activeShortageCount + failedPrescriptionCount;
   const inventoryTaskTotal =
-    data.tasks.virtualStocks +
-    data.tasks.zeroStocks +
-    data.tasks.controlledCandidates;
+    orderNeededShortageCount +
+    data.tasks.unpricedVirtualStocks +
+    data.tasks.openReturnReviews;
+  const inventoryTaskItems: Array<{
+    action: string;
+    count: number;
+    description: string;
+    href: string;
+    title: string;
+    tone: "amber" | "blue" | "red";
+  }> = [
+    {
+      action: "주문 처리",
+      count: orderNeededShortageCount,
+      description: "재고 부족으로 주문 결정이 필요한 처방입니다.",
+      href: "/cms/inventory/shortages",
+      title: "주문 필요한 초과 처방",
+      tone: "red",
+    },
+    {
+      action: "가격 입력",
+      count: data.tasks.unpricedVirtualStocks,
+      description: "가격이 0원인 임의 재고를 확인하세요.",
+      href: "/cms/inventory/unpriced",
+      title: "가격 미입력 임의 재고",
+      tone: "amber",
+    },
+    {
+      action: "반품 확정",
+      count: data.tasks.openReturnReviews,
+      description: "확정 전이라 아직 재고가 감소하지 않은 반품입니다.",
+      href: "/cms/inventory/returns",
+      title: "확정되지 않은 반품",
+      tone: "blue",
+    },
+  ];
   const prescriptionTaskItems: Array<{
     count: number;
     description: string;
@@ -16638,6 +16701,51 @@ function CmsDashboard({
             </div>
           ))}
         </div>
+        <div className="cms-dashboard-inventory-tasks">
+          <div className="cms-dashboard-inventory-task-heading">
+            <div>
+              <span>바로 처리할 업무</span>
+              <strong>
+                {inventoryTaskTotal > 0
+                  ? `${inventoryTaskTotal}건의 재고 업무가 남아 있습니다.`
+                  : "현재 처리할 재고 업무가 없습니다."}
+              </strong>
+            </div>
+            <em>항목을 선택하면 처리 화면으로 이동합니다.</em>
+          </div>
+          <div className="cms-dashboard-inventory-task-grid">
+            {inventoryTaskItems.map((item) => (
+              <button
+                className={`cms-dashboard-inventory-task ${item.tone} ${
+                  item.count > 0 ? "is-active" : "is-clear"
+                }`}
+                key={item.title}
+                type="button"
+                onClick={() => navigate(item.href)}
+              >
+                <span className="cms-dashboard-inventory-task-state">
+                  {item.count > 0 ? (
+                    <AlertTriangle size={17} strokeWidth={2.3} />
+                  ) : (
+                    <CircleCheck size={17} strokeWidth={2.3} />
+                  )}
+                </span>
+                <span className="cms-dashboard-inventory-task-copy">
+                  <strong>{item.title}</strong>
+                  <em>{item.description}</em>
+                </span>
+                <span className="cms-dashboard-inventory-task-count">
+                  <b>{item.count}</b>
+                  <em>건</em>
+                </span>
+                <span className="cms-dashboard-inventory-task-action">
+                  {item.action}
+                  <ArrowRight size={15} strokeWidth={2.4} aria-hidden="true" />
+                </span>
+              </button>
+            ))}
+          </div>
+        </div>
       </section>
 
       <div className="cms-dashboard-grid">
@@ -16851,12 +16959,14 @@ function createFallbackDashboardData({
   cookieState,
   deductionRecords,
   receiptHistories,
+  returnReviews,
   stocks,
   syncJobs,
 }: {
   cookieState: CmsCookieState;
   deductionRecords: CmsDeductionRecord[];
   receiptHistories: CmsReceiptHistory[];
+  returnReviews: CmsReturnReview[];
   stocks: StockItem[];
   syncJobs: CmsSyncJob[];
 }): CmsDashboardData {
@@ -16905,6 +17015,12 @@ function createFallbackDashboardData({
       virtualStocks: stocks.filter(isVirtualStock).length,
       zeroStocks: stocks.filter((stock) => stock.quantity <= 0).length,
       controlledCandidates: controlledStockCount,
+      unpricedVirtualStocks: stocks.filter(
+        (stock) => isVirtualStock(stock) && stock.price <= 0,
+      ).length,
+      openReturnReviews: returnReviews.filter(
+        (record) => record.status === "OPEN",
+      ).length,
       baropharmNeedsAction:
         !cookieState.registered || cookieState.status === "AUTH_FAILED",
       agentNeedsAction: false,
@@ -17462,6 +17578,7 @@ function CmsInventoryPage({
                   ["CONTROLLED", "향정"],
                   ["NON_CONTROLLED", "비향정"],
                   ["VIRTUAL", "임의"],
+                  ["UNPRICED_VIRTUAL", "가격 미입력"],
                 ] as Array<[CmsStockControlledFilter, string]>
               ).map(([value, label]) => (
                 <button
