@@ -19607,7 +19607,7 @@ function CmsInventoryShortagePage({
           </CmsKpiGrid>
 
           <form
-            className="cms-prescription-list-controls"
+            className="cms-prescription-list-controls cms-shortage-list-controls"
             onSubmit={(event) => {
               event.preventDefault();
               onApplyFilters();
@@ -20017,6 +20017,16 @@ function CmsInventoryShortagePage({
         <CmsModal
           title="입고 재고로 초과 처방 해소"
           subtitle={activeRecord.drugName}
+          footer={
+            <button
+              className="cms-primary cms-arrival-footer-button"
+              type="button"
+              disabled={arrivalQuantity <= 0 || arrivalSubmitting}
+              onClick={() => setArrivalConfirmOpen(true)}
+            >
+              차감 내용 확인
+            </button>
+          }
           onClose={() => {
             if (!arrivalSubmitting) {
               setArrivalModalOpen(false);
@@ -20095,16 +20105,6 @@ function CmsInventoryShortagePage({
                 {currency(arrivalRemainingShortage)}개
               </em>
             </div>
-            <div className="cms-connect-confirm-bar">
-              <button
-                className="cms-primary"
-                type="button"
-                disabled={arrivalQuantity <= 0 || arrivalSubmitting}
-                onClick={() => setArrivalConfirmOpen(true)}
-              >
-                차감 내용 확인
-              </button>
-            </div>
           </div>
         </CmsModal>
       )}
@@ -20113,6 +20113,28 @@ function CmsInventoryShortagePage({
           title="입고 재고 차감 최종 확인"
           subtitle={`${activeRecord.prescriptionCode} · ${activeRecord.insuranceCode}`}
           variant="confirm"
+          footer={
+            <div className="cms-confirm-actions">
+              <button
+                className="cms-confirm-button"
+                disabled={arrivalSubmitting}
+                type="button"
+                onClick={() => setArrivalConfirmOpen(false)}
+              >
+                다시 확인
+              </button>
+              <button
+                className="cms-confirm-button is-primary"
+                disabled={!arrivalAvailable || arrivalSubmitting}
+                type="button"
+                onClick={() => void confirmArrivalReconciliation()}
+              >
+                {arrivalSubmitting
+                  ? "차감 처리 중"
+                  : `${currency(arrivalQuantity)}개 차감 확정`}
+              </button>
+            </div>
+          }
           onClose={() => {
             if (!arrivalSubmitting) setArrivalConfirmOpen(false);
           }}
@@ -20134,26 +20156,6 @@ function CmsInventoryShortagePage({
               확인을 누르면 재고가 즉시 감소하고 처리 계정과 시각이 차감 이력에
               기록됩니다. 처방전과 실제 조제 여부를 확인했습니까?
             </p>
-            <div className="cms-confirm-actions">
-              <button
-                className="cms-confirm-button"
-                disabled={arrivalSubmitting}
-                type="button"
-                onClick={() => setArrivalConfirmOpen(false)}
-              >
-                다시 확인
-              </button>
-              <button
-                className="cms-confirm-button is-primary"
-                disabled={!arrivalAvailable || arrivalSubmitting}
-                type="button"
-                onClick={() => void confirmArrivalReconciliation()}
-              >
-                {arrivalSubmitting
-                  ? "차감 처리 중"
-                  : `${currency(arrivalQuantity)}개 차감 확정`}
-              </button>
-            </div>
           </div>
         </CmsModal>
       )}
@@ -24012,12 +24014,14 @@ function CmsSheet({
 
 function CmsModal({
   children,
+  footer,
   onClose,
   subtitle,
   title,
   variant = "default",
 }: {
   children: ReactNode;
+  footer?: ReactNode;
   onClose: () => void;
   subtitle?: string;
   title: string;
@@ -24049,6 +24053,7 @@ function CmsModal({
           </button>
         </header>
         <div className="cms-modal-body">{children}</div>
+        {footer && <footer className="cms-modal-footer">{footer}</footer>}
       </aside>
     </div>
   );
