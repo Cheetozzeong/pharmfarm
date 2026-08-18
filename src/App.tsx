@@ -17717,7 +17717,7 @@ function CmsInventoryPage({
                       : "전체 재고"}
             </span>
           </div> */}
-          <div style={{ display: "flex", gap: "10px" }}>
+          <div className="cms-inventory-search-controls">
             <label className="cms-search">
               <span className="search-icon" />
               <input
@@ -19719,14 +19719,18 @@ function CmsInventoryShortagePage({
                     }}
                   >
                     <span>{record.createdAt}</span>
-                    <strong>
-                      {record.drugName}
+                    <strong className="cms-shortage-drug-cell">
+                      <span className="cms-shortage-drug-line">
+                        <span className="cms-shortage-drug-name">
+                          {record.drugName}
+                        </span>
+                        {record.arrivalReconciliationAvailable && (
+                          <i className="cms-arrival-ready-badge">
+                            입고 재고 확인 필요
+                          </i>
+                        )}
+                      </span>
                       <em>{record.insuranceCode}</em>
-                      {record.arrivalReconciliationAvailable && (
-                        <i className="cms-arrival-ready-badge">
-                          입고 재고 확인 필요
-                        </i>
-                      )}
                     </strong>
                     <span>{record.prescriptionCode}</span>
                     <b>

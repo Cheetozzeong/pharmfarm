@@ -5558,12 +5558,26 @@ body:has(.cms-shell) {
 .cms-inventory-filter {
   display: grid;
   flex: 0 0 auto;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 4px;
   border: 1px solid var(--line);
   border-radius: 10px;
   background: #fff;
   padding: 4px;
+}
+
+.cms-inventory-search-controls {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.cms-inventory-search-controls .cms-search {
+  height: 44px;
+  min-height: 44px;
+  max-height: 44px;
+  align-self: center;
 }
 
 .cms-inventory-filter button {
@@ -12889,6 +12903,26 @@ body:has(.cms-shell) {
 }
 
 @media (max-width: 980px) {
+  .cms-inventory-search-controls {
+    width: 100%;
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+
+  .cms-inventory-search-controls .cms-search {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+    flex: 1 1 100%;
+  }
+
+  .cms-inventory-search-controls .cms-inventory-filter {
+    width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    grid-template-columns: repeat(5, minmax(56px, 1fr));
+  }
+
   .cms-sidebar .cms-nav {
     scrollbar-width: none;
   }
@@ -13242,8 +13276,11 @@ body:has(.cms-shell) {
 
 .cms-arrival-ready-badge {
   display: inline-flex;
-  width: fit-content;
-  margin-top: 5px;
+  width: auto;
+  max-width: 100%;
+  flex: 0 0 auto;
+  align-items: center;
+  margin-top: 0;
   padding: 3px 7px;
   border-radius: 999px;
   background: #fff1c7;
@@ -13251,6 +13288,38 @@ body:has(.cms-shell) {
   font-size: 11px;
   font-style: normal;
   font-weight: 800;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+
+.cms-shortage-drug-cell {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.cms-shortage-row .cms-shortage-drug-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  overflow: hidden;
+}
+
+.cms-shortage-row .cms-shortage-drug-name {
+  display: block;
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cms-shortage-drug-cell > em {
+  margin-top: 0;
 }
 
 .cms-arrival-reconcile-card,
