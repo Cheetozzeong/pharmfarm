@@ -2602,10 +2602,18 @@ p {
 .done-body {
   display: flex;
   flex: 1 1 auto;
+  min-height: 0;
   flex-direction: column;
   align-items: center;
-  padding: 52px 20px 140px;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  padding: 52px 20px calc(112px + env(safe-area-inset-bottom));
   text-align: center;
+  -webkit-overflow-scrolling: touch;
+}
+
+.done-body.has-secondary-action {
+  padding-bottom: calc(176px + env(safe-area-inset-bottom));
 }
 
 .done-icon {
@@ -13309,7 +13317,7 @@ body:has(.cms-shell) {
 .cms-shortage-row .cms-shortage-drug-name {
   display: block;
   min-width: 0;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   overflow: hidden;
   color: var(--ink);
   font-size: 13px;

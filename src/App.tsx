@@ -6005,28 +6005,18 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
         <DoneScreen
           kind="receipt"
           receiptSummary={receiptSummary}
+          hideSecondary={
+            receiptSummary.shortageNotices.length > 0 &&
+            receiptSummary.missing <= 0
+          }
           onPrimary={() => {
             setReceiptSummary(null);
             setScreen("scan");
           }}
           secondaryLabel={
-            receiptSummary.shortageNotices.length > 0
-              ? "초과 처방 확인"
-              : receiptSummary.missing > 0
-                ? "미해결 이슈 확인"
-                : undefined
+            receiptSummary.missing > 0 ? "미해결 이슈 확인" : undefined
           }
           onSecondary={() => {
-            if (receiptSummary.shortageNotices.length > 0) {
-              const firstNotice = receiptSummary.shortageNotices[0];
-              const shortagePath = `/cms/inventory/shortages/${encodeURIComponent(firstNotice.deductionId)}`;
-              if (navigate) {
-                navigate(shortagePath);
-              } else {
-                window.location.assign(shortagePath);
-              }
-              return;
-            }
             if (receiptSummary.missing > 0) {
               setReceiptSummary(null);
               setScreen("receiptIssues");
@@ -8110,6 +8100,7 @@ function DoneScreen({
   kind,
   receiptSummary,
   returnSummary,
+  hideSecondary = false,
   secondaryLabel,
   onPrimary,
   onSecondary,
@@ -8117,14 +8108,18 @@ function DoneScreen({
   kind: "receipt" | "return";
   receiptSummary?: ReceiptSummary;
   returnSummary?: ReturnSummary;
+  hideSecondary?: boolean;
   secondaryLabel?: string;
   onPrimary: () => void;
   onSecondary: () => void;
 }) {
   const isReceipt = kind === "receipt";
+  const hasSecondaryAction = !hideSecondary;
   return (
     <>
-      <section className="done-body">
+      <section
+        className={`done-body ${hasSecondaryAction ? "has-secondary-action" : "has-primary-action"}`}
+      >
         <div className="done-icon" />
         <h1>{isReceipt ? "입고 완료" : "반품 완료"}</h1>
         <p>
@@ -8184,8 +8179,8 @@ function DoneScreen({
           <div className="receipt-shortage-notice">
             <strong>입고 재고와 연결할 초과 처방이 있습니다.</strong>
             <span>
-              재고는 아직 차감하지 않았습니다. 약사가 초과 처방 화면에서
-              처방전과 수량을 확인한 뒤 직접 차감해야 합니다.
+              재고는 아직 차감하지 않았습니다. 약사가 관리자 웹의 초과 처방
+              화면에서 처방전과 수량을 확인한 뒤 직접 차감해야 합니다.
             </span>
             {(receiptSummary?.shortageNotices ?? [])
               .slice(0, 3)
@@ -8195,16 +8190,24 @@ function DoneScreen({
                   가능 {notice.suggestedQuantity}개
                 </em>
               ))}
+            {(receiptSummary?.shortageNotices.length ?? 0) > 3 && (
+              <em>
+                외 {(receiptSummary?.shortageNotices.length ?? 0) - 3}건은
+                관리자 웹에서 확인해 주세요.
+              </em>
+            )}
           </div>
         )}
       </section>
-      <BottomBar stack>
+      <BottomBar stack={hasSecondaryAction}>
         <button className="primary-btn" type="button" onClick={onPrimary}>
           {isReceipt ? "계속 스캔하기" : "계속 반품하기"}
         </button>
-        <button className="secondary-btn" type="button" onClick={onSecondary}>
-          {secondaryLabel ?? (isReceipt ? "재고 목록 보기" : "홈으로")}
-        </button>
+        {hasSecondaryAction && (
+          <button className="secondary-btn" type="button" onClick={onSecondary}>
+            {secondaryLabel ?? (isReceipt ? "재고 목록 보기" : "홈으로")}
+          </button>
+        )}
       </BottomBar>
     </>
   );
