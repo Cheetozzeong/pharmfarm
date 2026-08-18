@@ -13198,3 +13198,218 @@ body:has(.cms-shell) {
     height: 246px;
   }
 }
+
+.receipt-shortage-notice {
+  display: grid;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 16px;
+  border: 1px solid #f2c66d;
+  border-radius: 14px;
+  background: #fff9e9;
+  color: #6e4b08;
+}
+
+.receipt-shortage-notice strong {
+  font-size: 15px;
+}
+
+.receipt-shortage-notice span,
+.receipt-shortage-notice em {
+  font-size: 12px;
+  line-height: 1.55;
+  font-style: normal;
+}
+
+.receipt-shortage-notice em {
+  padding-top: 7px;
+  border-top: 1px solid #f5dfad;
+  color: #805f1d;
+}
+
+.cms-arrival-ready-badge {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 5px;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: #fff1c7;
+  color: #805700;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.cms-arrival-reconcile-card,
+.cms-arrival-reconciled-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-top: 16px;
+  padding: 18px;
+  border: 1px solid #f1c45f;
+  border-radius: 16px;
+  background: linear-gradient(135deg, #fff9e6, #fffdf7);
+}
+
+.cms-arrival-reconcile-card > div,
+.cms-arrival-reconciled-card {
+  min-width: 0;
+}
+
+.cms-arrival-reconcile-card span,
+.cms-arrival-reconcile-card strong,
+.cms-arrival-reconcile-card em,
+.cms-arrival-reconciled-card span,
+.cms-arrival-reconciled-card strong,
+.cms-arrival-reconciled-card em {
+  display: block;
+}
+
+.cms-arrival-reconcile-card span,
+.cms-arrival-reconciled-card span {
+  color: #8a650d;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.cms-arrival-reconcile-card strong,
+.cms-arrival-reconciled-card strong {
+  margin-top: 4px;
+  color: #392b0b;
+  font-size: 16px;
+}
+
+.cms-arrival-reconcile-card em,
+.cms-arrival-reconciled-card em {
+  margin-top: 5px;
+  color: #735d28;
+  font-size: 12px;
+  font-style: normal;
+  line-height: 1.5;
+}
+
+.cms-arrival-reconcile-card button {
+  flex: none;
+  padding: 10px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: #d08b00;
+  color: #fff;
+  font-weight: 800;
+}
+
+.cms-arrival-reconciled-card {
+  display: block;
+  border-color: #b9d7c5;
+  background: #f2faf5;
+}
+
+.cms-arrival-modal {
+  display: grid;
+  gap: 18px;
+}
+
+.cms-arrival-safety-notice {
+  padding: 16px;
+  border: 1px solid #f0c45f;
+  border-radius: 14px;
+  background: #fff9e8;
+}
+
+.cms-arrival-safety-notice strong,
+.cms-arrival-safety-notice span {
+  display: block;
+}
+
+.cms-arrival-safety-notice strong {
+  color: #6d4d08;
+  font-size: 14px;
+}
+
+.cms-arrival-safety-notice span {
+  margin-top: 5px;
+  color: #775f2d;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.cms-arrival-compare-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.cms-arrival-compare-grid > div,
+.cms-arrival-impact-card {
+  padding: 14px;
+  border: 1px solid #dfe7ea;
+  border-radius: 12px;
+  background: #fff;
+}
+
+.cms-arrival-compare-grid span,
+.cms-arrival-impact-card span {
+  display: block;
+  color: #718087;
+  font-size: 12px;
+}
+
+.cms-arrival-compare-grid strong,
+.cms-arrival-impact-card strong {
+  display: block;
+  margin-top: 4px;
+  color: #18272d;
+  font-size: 18px;
+}
+
+.cms-arrival-quantity-control {
+  display: grid;
+  grid-template-columns: 44px minmax(80px, 1fr) 44px;
+  gap: 8px;
+  max-width: 230px;
+}
+
+.cms-arrival-quantity-control button,
+.cms-arrival-quantity-control input {
+  height: 44px;
+  border: 1px solid #ccd9de;
+  border-radius: 10px;
+  background: #fff;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 800;
+}
+
+.cms-arrival-quantity-control button:disabled {
+  opacity: 0.4;
+}
+
+.cms-arrival-impact-card {
+  border-color: #b9d5df;
+  background: #f4fafc;
+}
+
+.cms-arrival-impact-card em {
+  display: block;
+  margin-top: 5px;
+  color: #486773;
+  font-size: 12px;
+  font-style: normal;
+}
+
+@media (max-width: 640px) {
+  .cms-arrival-reconcile-card {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .cms-arrival-reconcile-card button {
+    width: 100%;
+  }
+
+  .cms-arrival-compare-grid {
+    grid-template-columns: 1fr;
+  }
+}

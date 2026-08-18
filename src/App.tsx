@@ -301,6 +301,18 @@ type ReceiptSummary = {
   count: number;
   increase: number;
   missing: number;
+  shortageNotices: ReceiptShortageNotice[];
+};
+
+type ReceiptShortageNotice = {
+  deductionId: string;
+  prescriptionCode: string;
+  drugName: string;
+  insuranceCode: string;
+  shortageQuantity: number;
+  stockId: string;
+  availableStockQuantity: number;
+  suggestedQuantity: number;
 };
 
 type ReturnSummary = {
@@ -5586,6 +5598,7 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
 
     setReceiptSubmitError("");
     setReceiptPartialConfirmOpen(false);
+    let committedShortageNotices: ReceiptShortageNotice[] = [];
 
     try {
       const committedItems = eligibleReceiptItems;
@@ -5623,7 +5636,7 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
         }),
       );
 
-      await apiFetch("/receipts", {
+      const receiptResponse = await apiFetch<unknown>("/receipts", {
         method: "POST",
         body: JSON.stringify({
           wholesalerId: Number.isNaN(Number(wholesaler.id))
@@ -5633,8 +5646,28 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
           items: requestItems,
         }),
       });
+      const receiptPayload = unwrapObjectPayload(receiptResponse);
+      committedShortageNotices = firstArrayPayload(receiptPayload, [
+        "shortageNotices",
+      ]).map((rawNotice) => {
+        const notice = asRecord(rawNotice);
+        return {
+          deductionId: String(notice.deductionId ?? notice.id ?? ""),
+          prescriptionCode: String(notice.prescriptionCode ?? "-"),
+          drugName: String(notice.drugName ?? "미확인 약품"),
+          insuranceCode: String(notice.insuranceCode ?? ""),
+          shortageQuantity: finiteNumber(notice.shortageQuantity),
+          stockId: String(notice.stockId ?? ""),
+          availableStockQuantity: finiteNumber(notice.availableStockQuantity),
+          suggestedQuantity: finiteNumber(notice.suggestedQuantity),
+        };
+      });
       setApiState("connected");
-      setApiMessage("입고 반영 완료");
+      setApiMessage(
+        committedShortageNotices.length > 0
+          ? `입고 반영 완료 · 초과 처방 연결 후보 ${committedShortageNotices.length}건 (아직 차감되지 않음)`
+          : "입고 반영 완료",
+      );
       void refreshFromBackend();
     } catch (error) {
       if (error instanceof ApiError) {
@@ -5663,6 +5696,7 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
       count: eligibleReceiptItems.length,
       increase: committedIncrease,
       missing: unresolvedCount,
+      shortageNotices: committedShortageNotices,
     });
     setReceiptQueue((current) =>
       current.filter((item) => !committedIds.has(item.id)),
@@ -5976,9 +6010,23 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
             setScreen("scan");
           }}
           secondaryLabel={
-            receiptSummary.missing > 0 ? "미해결 이슈 확인" : undefined
+            receiptSummary.shortageNotices.length > 0
+              ? "초과 처방 확인"
+              : receiptSummary.missing > 0
+                ? "미해결 이슈 확인"
+                : undefined
           }
           onSecondary={() => {
+            if (receiptSummary.shortageNotices.length > 0) {
+              const firstNotice = receiptSummary.shortageNotices[0];
+              const shortagePath = `/cms/inventory/shortages/${encodeURIComponent(firstNotice.deductionId)}`;
+              if (navigate) {
+                navigate(shortagePath);
+              } else {
+                window.location.assign(shortagePath);
+              }
+              return;
+            }
             if (receiptSummary.missing > 0) {
               setReceiptSummary(null);
               setScreen("receiptIssues");
@@ -8105,6 +8153,13 @@ function DoneScreen({
                 value={`미등록 ${receiptSummary?.missing ?? 0}건`}
                 red
               />
+              {(receiptSummary?.shortageNotices.length ?? 0) > 0 && (
+                <SummaryLine
+                  label="초과 처방 연결 후보"
+                  value={`${receiptSummary?.shortageNotices.length ?? 0}건`}
+                  red
+                />
+              )}
             </>
           ) : (
             <>
@@ -8125,6 +8180,23 @@ function DoneScreen({
             </>
           )}
         </div>
+        {isReceipt && (receiptSummary?.shortageNotices.length ?? 0) > 0 && (
+          <div className="receipt-shortage-notice">
+            <strong>입고 재고와 연결할 초과 처방이 있습니다.</strong>
+            <span>
+              재고는 아직 차감하지 않았습니다. 약사가 초과 처방 화면에서
+              처방전과 수량을 확인한 뒤 직접 차감해야 합니다.
+            </span>
+            {(receiptSummary?.shortageNotices ?? [])
+              .slice(0, 3)
+              .map((notice) => (
+                <em key={notice.deductionId}>
+                  {notice.drugName} · 부족 {notice.shortageQuantity}개 · 차감
+                  가능 {notice.suggestedQuantity}개
+                </em>
+              ))}
+          </div>
+        )}
       </section>
       <BottomBar stack>
         <button className="primary-btn" type="button" onClick={onPrimary}>
@@ -8990,6 +9062,12 @@ type CmsDeductionRecord = {
   substituteStockBefore?: number;
   substituteStockAfter?: number;
   substituteProcessedAt?: string;
+  arrivalReconciledQuantity?: number;
+  arrivalReconciledAt?: string;
+  arrivalReconciledByAccountId?: string;
+  arrivalReconciliationAvailable?: boolean;
+  arrivalStockQuantity?: number;
+  arrivalSuggestedQuantity?: number;
   stockBefore?: number;
   stockAfter?: number;
   displayAfter?: number;
@@ -12498,6 +12576,66 @@ function CmsApp({
     }
   }
 
+  async function reconcileShortageArrival(
+    record: CmsDeductionRecord,
+    stockId: string,
+    quantity: number,
+    requestId: string,
+  ) {
+    if (record.shortageQuantity <= 0 || !stockId || quantity <= 0) {
+      return false;
+    }
+
+    try {
+      const response = await apiFetch<unknown>(
+        `/prescription-shortages/${record.id}/reconcile-arrival`,
+        {
+          method: "POST",
+          body: JSON.stringify({
+            requestId,
+            stockId,
+            quantity,
+            pharmacistConfirmed: true,
+            memo: `약사 확인 후 입고 재고로 초과 처방 해소: ${currency(quantity)}개`,
+          }),
+        },
+      );
+      const nextRecord =
+        deductionPayload(response).map(normalizeCmsDeduction)[0] ??
+        normalizeCmsDeduction(response, 0);
+      setDeductionRecords((current) =>
+        current.map((item) =>
+          item.id === record.id
+            ? { ...item, ...nextRecord, id: item.id }
+            : item,
+        ),
+      );
+      setSelectedShortageDetail((current) =>
+        current?.deduction.id === record.id
+          ? {
+              ...current,
+              deduction: {
+                ...current.deduction,
+                ...nextRecord,
+                id: current.deduction.id,
+              },
+            }
+          : current,
+      );
+      setApiState("connected");
+      setApiMessage(
+        nextRecord.shortageQuantity > 0
+          ? `입고 재고 ${currency(quantity)}개 차감 완료 · 부족 ${currency(nextRecord.shortageQuantity)}개 남음`
+          : `입고 재고 ${currency(quantity)}개 차감 완료 · 초과 처방 해소`,
+      );
+      void refreshCms();
+      return true;
+    } catch (error) {
+      cmsFallback(error);
+      return false;
+    }
+  }
+
   async function updateReturnReviewStatus(
     record: CmsReturnReview,
     status: CmsReturnReviewStatus,
@@ -12916,6 +13054,7 @@ function CmsApp({
               onEndDate={setShortageEndDate}
               onQuery={setShortageQuery}
               onShortageStatus={updateShortageStatus}
+              onReconcileArrival={reconcileShortageArrival}
               onSortDirection={setShortageSortDirection}
               onSortKey={setShortageSortKey}
               onStartDate={setShortageStartDate}
@@ -14838,6 +14977,22 @@ function normalizeCmsDeduction(
       item.substituteProcessedAt === null
         ? undefined
         : formatTransactionAt(item.substituteProcessedAt, "-"),
+    arrivalReconciledQuantity: finiteNumber(item.arrivalReconciledQuantity),
+    arrivalReconciledAt:
+      item.arrivalReconciledAt === undefined ||
+      item.arrivalReconciledAt === null
+        ? undefined
+        : formatTransactionAt(item.arrivalReconciledAt, "-"),
+    arrivalReconciledByAccountId:
+      item.arrivalReconciledByAccountId === undefined ||
+      item.arrivalReconciledByAccountId === null
+        ? undefined
+        : String(item.arrivalReconciledByAccountId),
+    arrivalReconciliationAvailable: normalizeBoolean(
+      item.arrivalReconciliationAvailable,
+    ),
+    arrivalStockQuantity: finiteNumber(item.arrivalStockQuantity),
+    arrivalSuggestedQuantity: finiteNumber(item.arrivalSuggestedQuantity),
     stockBefore:
       item.stockBeforeQuantity === undefined && item.stockBefore === undefined
         ? undefined
@@ -19104,6 +19259,7 @@ function CmsInventoryShortagePage({
   onQuery,
   onSelect,
   onShortageStatus,
+  onReconcileArrival,
   onSortDirection,
   onSortKey,
   onStartDate,
@@ -19130,6 +19286,12 @@ function CmsInventoryShortagePage({
     record: CmsDeductionRecord,
     shortageStatus: CmsShortageStatus,
   ) => void;
+  onReconcileArrival: (
+    record: CmsDeductionRecord,
+    stockId: string,
+    quantity: number,
+    requestId: string,
+  ) => Promise<boolean>;
   onSortDirection: (value: CmsStockSortDirection) => void;
   onSortKey: (value: CmsPrescriptionSortKey) => void;
   onStartDate: (value: string) => void;
@@ -19155,6 +19317,11 @@ function CmsInventoryShortagePage({
     "약품명 또는 보험코드를 입력해 주세요.",
   );
   const [substituteSubmitting, setSubstituteSubmitting] = useState(false);
+  const [arrivalModalOpen, setArrivalModalOpen] = useState(false);
+  const [arrivalConfirmOpen, setArrivalConfirmOpen] = useState(false);
+  const [arrivalQuantity, setArrivalQuantity] = useState(1);
+  const [arrivalRequestId, setArrivalRequestId] = useState("");
+  const [arrivalSubmitting, setArrivalSubmitting] = useState(false);
   const orderNeededRecords = records.filter((record) =>
     isOpenShortageStatus(record.shortageStatus),
   );
@@ -19228,6 +19395,21 @@ function CmsInventoryShortagePage({
     : 0;
   const substituteMakesNegative = Boolean(
     selectedSubstituteStock && substituteAfterQuantity < 0,
+  );
+  const arrivalStockQuantity = finiteNumber(activeRecord?.arrivalStockQuantity);
+  const arrivalMaximumQuantity = Math.min(
+    finiteNumber(activeRecord?.shortageQuantity),
+    arrivalStockQuantity,
+  );
+  const arrivalAvailable = Boolean(
+    activeRecord?.arrivalReconciliationAvailable &&
+    activeRecord.stockId &&
+    arrivalMaximumQuantity > 0,
+  );
+  const arrivalAfterStock = Math.max(0, arrivalStockQuantity - arrivalQuantity);
+  const arrivalRemainingShortage = Math.max(
+    0,
+    finiteNumber(activeRecord?.shortageQuantity) - arrivalQuantity,
   );
 
   function selectListFilter(nextFilter: CmsShortageListFilter) {
@@ -19328,6 +19510,46 @@ function CmsInventoryShortagePage({
       }
     } finally {
       setSubstituteSubmitting(false);
+    }
+  }
+
+  function openArrivalReconciliation() {
+    if (!activeRecord || !arrivalAvailable) return;
+    setArrivalQuantity(
+      Math.max(
+        1,
+        Math.min(
+          arrivalMaximumQuantity,
+          finiteNumber(activeRecord.arrivalSuggestedQuantity, 1),
+        ),
+      ),
+    );
+    setArrivalConfirmOpen(false);
+    setArrivalRequestId(
+      typeof crypto !== "undefined" && "randomUUID" in crypto
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
+    setArrivalModalOpen(true);
+  }
+
+  async function confirmArrivalReconciliation() {
+    if (!activeRecord?.stockId || !arrivalAvailable || !arrivalRequestId)
+      return;
+    setArrivalSubmitting(true);
+    try {
+      const ok = await onReconcileArrival(
+        activeRecord,
+        activeRecord.stockId,
+        arrivalQuantity,
+        arrivalRequestId,
+      );
+      if (ok) {
+        setArrivalConfirmOpen(false);
+        setArrivalModalOpen(false);
+      }
+    } finally {
+      setArrivalSubmitting(false);
     }
   }
 
@@ -19500,6 +19722,11 @@ function CmsInventoryShortagePage({
                     <strong>
                       {record.drugName}
                       <em>{record.insuranceCode}</em>
+                      {record.arrivalReconciliationAvailable && (
+                        <i className="cms-arrival-ready-badge">
+                          입고 재고 확인 필요
+                        </i>
+                      )}
                     </strong>
                     <span>{record.prescriptionCode}</span>
                     <b>
@@ -19611,6 +19838,41 @@ function CmsInventoryShortagePage({
                       </div>
                     </div>
                   </div>
+                  {arrivalAvailable && (
+                    <section className="cms-arrival-reconcile-card">
+                      <div>
+                        <span>입고 재고 연결 후보</span>
+                        <strong>
+                          동일 보험코드 재고 {currency(arrivalStockQuantity)}개
+                        </strong>
+                        <em>
+                          아직 재고를 차감하지 않았습니다. 처방전과 실제 조제
+                          여부를 확인한 뒤 약사가 수량을 선택해 주세요.
+                        </em>
+                      </div>
+                      <button type="button" onClick={openArrivalReconciliation}>
+                        입고 재고 확인
+                      </button>
+                    </section>
+                  )}
+                  {finiteNumber(activeRecord.arrivalReconciledQuantity) > 0 && (
+                    <div className="cms-arrival-reconciled-card">
+                      <span>입고 재고 차감 이력</span>
+                      <strong>
+                        누적{" "}
+                        {currency(
+                          finiteNumber(activeRecord.arrivalReconciledQuantity),
+                        )}
+                        개 차감
+                      </strong>
+                      <em>
+                        {activeRecord.arrivalReconciledAt ?? "처리 시각 미기록"}
+                        {activeRecord.arrivalReconciledByAccountId
+                          ? ` · 계정 #${activeRecord.arrivalReconciledByAccountId}`
+                          : ""}
+                      </em>
+                    </div>
+                  )}
                   {activeRecord.shortageStatus === "SUBSTITUTED" ? (
                     <div className="cms-substitute-done-card">
                       <span>대체 약품 처리 완료</span>
@@ -19751,6 +20013,150 @@ function CmsInventoryShortagePage({
           </>
         )}
       </div>
+      {arrivalModalOpen && activeRecord && activeRecord.stockId && (
+        <CmsModal
+          title="입고 재고로 초과 처방 해소"
+          subtitle={activeRecord.drugName}
+          onClose={() => {
+            if (!arrivalSubmitting) {
+              setArrivalModalOpen(false);
+              setArrivalConfirmOpen(false);
+            }
+          }}
+        >
+          <div className="cms-arrival-modal">
+            <div className="cms-arrival-safety-notice">
+              <strong>현재 단계에서는 재고가 감소하지 않습니다.</strong>
+              <span>
+                처방전 {activeRecord.prescriptionCode}의 실제 조제 여부와 입고
+                재고를 확인하고, 차감할 수량을 선택해 주세요.
+              </span>
+            </div>
+            <div className="cms-arrival-compare-grid">
+              <div>
+                <span>처방 부족 수량</span>
+                <strong>{currency(activeRecord.shortageQuantity)}개</strong>
+              </div>
+              <div>
+                <span>현재 동일코드 재고</span>
+                <strong>{currency(arrivalStockQuantity)}개</strong>
+              </div>
+            </div>
+            <section className="cms-connect-section">
+              <header>
+                <strong>이번에 차감할 수량</strong>
+                <span>
+                  최대 {currency(arrivalMaximumQuantity)}개까지 선택할 수
+                  있습니다.
+                </span>
+              </header>
+              <div className="cms-arrival-quantity-control">
+                <button
+                  type="button"
+                  disabled={arrivalQuantity <= 1}
+                  onClick={() =>
+                    setArrivalQuantity((current) => Math.max(1, current - 1))
+                  }
+                >
+                  -
+                </button>
+                <input
+                  aria-label="입고 재고 차감 수량"
+                  inputMode="numeric"
+                  value={arrivalQuantity}
+                  onChange={(event) => {
+                    const next = Number(event.target.value.replace(/\D/g, ""));
+                    setArrivalQuantity(
+                      Math.max(1, Math.min(arrivalMaximumQuantity, next || 1)),
+                    );
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={arrivalQuantity >= arrivalMaximumQuantity}
+                  onClick={() =>
+                    setArrivalQuantity((current) =>
+                      Math.min(arrivalMaximumQuantity, current + 1),
+                    )
+                  }
+                >
+                  +
+                </button>
+              </div>
+            </section>
+            <div className="cms-arrival-impact-card">
+              <span>확인 후 변경 예정</span>
+              <strong>
+                재고 {currency(arrivalStockQuantity)} →{" "}
+                {currency(arrivalAfterStock)}개
+              </strong>
+              <em>
+                초과 처방 부족 {currency(activeRecord.shortageQuantity)} →{" "}
+                {currency(arrivalRemainingShortage)}개
+              </em>
+            </div>
+            <div className="cms-connect-confirm-bar">
+              <button
+                className="cms-primary"
+                type="button"
+                disabled={arrivalQuantity <= 0 || arrivalSubmitting}
+                onClick={() => setArrivalConfirmOpen(true)}
+              >
+                차감 내용 확인
+              </button>
+            </div>
+          </div>
+        </CmsModal>
+      )}
+      {arrivalConfirmOpen && activeRecord && activeRecord.stockId && (
+        <CmsModal
+          title="입고 재고 차감 최종 확인"
+          subtitle={`${activeRecord.prescriptionCode} · ${activeRecord.insuranceCode}`}
+          variant="confirm"
+          onClose={() => {
+            if (!arrivalSubmitting) setArrivalConfirmOpen(false);
+          }}
+        >
+          <div className="cms-resolution-confirm">
+            <div className="cms-resolution-confirm-card is-stock">
+              <span>아래 내용으로 실제 재고를 차감합니다.</span>
+              <strong>{activeRecord.drugName}</strong>
+              <em>
+                {currency(arrivalQuantity)}개 차감 · 현재{" "}
+                {currency(arrivalStockQuantity)}개 → 처리 후{" "}
+                {currency(arrivalAfterStock)}개
+              </em>
+              <em>
+                처리 후 남은 초과 처방: {currency(arrivalRemainingShortage)}개
+              </em>
+            </div>
+            <p>
+              확인을 누르면 재고가 즉시 감소하고 처리 계정과 시각이 차감 이력에
+              기록됩니다. 처방전과 실제 조제 여부를 확인했습니까?
+            </p>
+            <div className="cms-confirm-actions">
+              <button
+                className="cms-confirm-button"
+                disabled={arrivalSubmitting}
+                type="button"
+                onClick={() => setArrivalConfirmOpen(false)}
+              >
+                다시 확인
+              </button>
+              <button
+                className="cms-confirm-button is-primary"
+                disabled={!arrivalAvailable || arrivalSubmitting}
+                type="button"
+                onClick={() => void confirmArrivalReconciliation()}
+              >
+                {arrivalSubmitting
+                  ? "차감 처리 중"
+                  : `${currency(arrivalQuantity)}개 차감 확정`}
+              </button>
+            </div>
+          </div>
+        </CmsModal>
+      )}
       {substituteModalOpen && activeRecord && (
         <CmsModal
           title="대체 약품 처리"
