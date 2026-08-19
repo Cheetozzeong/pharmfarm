@@ -8058,20 +8058,30 @@ body:has(.cms-shell) {
 }
 
 .cms-receipt-history-table {
-  min-width: 1180px;
+  min-width: 1320px;
 }
 
 .cms-receipt-history-row {
   display: grid;
-  min-height: 62px;
+  min-height: 76px;
   grid-template-columns:
-    136px minmax(250px, 1fr) minmax(150px, 0.7fr) 82px 90px
-    minmax(220px, 0.9fr) 96px;
+    136px minmax(250px, 1fr) minmax(150px, 0.7fr) 124px 90px
+    minmax(300px, 1.1fr) 96px;
   align-items: center;
   gap: 12px;
   border-bottom: 1px solid #f4f5f6;
   background: #fff;
   padding: 0 18px;
+}
+
+.cms-receipt-history-table.is-root-lookup {
+  min-width: 1460px;
+}
+
+.cms-receipt-history-table.is-root-lookup .cms-receipt-history-row {
+  grid-template-columns:
+    136px 118px minmax(250px, 1fr) minmax(150px, 0.7fr) 124px 90px
+    minmax(300px, 1.1fr) 96px;
 }
 
 .cms-receipt-history-row span,
@@ -8112,6 +8122,103 @@ body:has(.cms-shell) {
   font-weight: 750;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cms-receipt-history-row .cms-receipt-quantity-cell {
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  text-align: right;
+}
+
+.cms-receipt-history-row .cms-receipt-quantity-cell b {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 950;
+}
+
+.cms-receipt-history-row .cms-receipt-quantity-cell em {
+  margin-top: 0;
+}
+
+.cms-receipt-history-row .cms-receipt-trace-cell {
+  display: grid;
+  gap: 3px;
+  overflow: visible;
+  white-space: normal;
+}
+
+.cms-receipt-history-row .cms-receipt-trace-cell strong,
+.cms-receipt-history-row .cms-receipt-trace-cell em {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  margin-top: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cms-receipt-history-row .cms-receipt-trace-cell strong {
+  color: var(--ink);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.cms-receipt-pharmacy-lookup {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--line);
+  background: #f8fbff;
+  padding: 14px 18px;
+}
+
+.cms-receipt-pharmacy-lookup > div {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.cms-receipt-pharmacy-lookup > div strong {
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 950;
+}
+
+.cms-receipt-pharmacy-lookup > div span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.cms-receipt-pharmacy-lookup label {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.cms-receipt-pharmacy-lookup input {
+  width: 124px;
+  height: 40px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #fff;
+  padding: 0 12px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 850;
+}
+
+.cms-receipt-pharmacy-lookup input:focus {
+  border-color: var(--blue);
+  outline: 3px solid color-mix(in srgb, var(--blue) 16%, transparent);
 }
 
 .cms-receipt-history-controls {
@@ -10059,6 +10166,21 @@ body:has(.cms-shell) {
 }
 
 @media (max-width: 680px) {
+  .cms-receipt-pharmacy-lookup {
+    align-items: stretch;
+    flex-direction: column;
+    padding: 12px 10px;
+  }
+
+  .cms-receipt-pharmacy-lookup label {
+    justify-content: space-between;
+  }
+
+  .cms-receipt-pharmacy-lookup input {
+    min-width: 0;
+    flex: 1;
+  }
+
   .cms-receipt-history-controls {
     grid-template-columns: minmax(0, 1fr) 64px;
     padding: 10px;

@@ -611,6 +611,8 @@ const initialTraces: ReceiptTrace[] = [
 const demoCmsReceiptHistories: CmsReceiptHistory[] = [
   {
     id: "R-1001",
+    pharmacyId: "3",
+    pharmacyName: "데모약국",
     pc: "8806400017004",
     sn: "SN8842",
     lot: "LOT202606",
@@ -629,6 +631,8 @@ const demoCmsReceiptHistories: CmsReceiptHistory[] = [
   },
   {
     id: "R-1002",
+    pharmacyId: "3",
+    pharmacyName: "데모약국",
     pc: "669803820",
     sn: "SN9231",
     lot: "DIA2607",
@@ -8699,6 +8703,7 @@ type CmsReceiptHistory = {
 
 type CmsReceiptHistoryFilters = {
   endDate: string;
+  pharmacyId: string;
   query: string;
   startDate: string;
 };
@@ -10576,6 +10581,7 @@ function CmsApp({
   const [prescriptionSearchStatus, setPrescriptionSearchStatus] =
     useState<CmsPrescriptionSearchStatus>("idle");
   const [receiptQuery, setReceiptQuery] = useState("");
+  const [receiptPharmacyId, setReceiptPharmacyId] = useState("");
   const [receiptStartDate, setReceiptStartDate] = useState(
     () => recentWeekDateRange().startDate,
   );
@@ -10585,6 +10591,7 @@ function CmsApp({
   const [appliedReceiptFilters, setAppliedReceiptFilters] =
     useState<CmsReceiptHistoryFilters>(() => ({
       ...recentWeekDateRange(),
+      pharmacyId: "",
       query: "",
     }));
   const [receiptSearchStatus, setReceiptSearchStatus] =
@@ -11373,9 +11380,15 @@ function CmsApp({
         } else if (targetPage === "receipts") {
           const receiptFilters =
             options?.receiptFilters ?? appliedReceiptFilters;
+          const targetPharmacyId = receiptFilters.pharmacyId.trim();
+          const rootReceiptLookup = canAccessRootCms(nextAccount);
           const trimmed = receiptFilters.query.trim();
           const normalizedKeyword = normalizeSearchText(trimmed);
-          if (normalizedKeyword.length === 1) {
+          if (rootReceiptLookup && !targetPharmacyId) {
+            setReceiptHistories([]);
+            setReceiptSearchStatus("idle");
+            setApiMessage("조회할 약국 ID를 입력해 주세요.");
+          } else if (normalizedKeyword.length === 1) {
             setReceiptSearchStatus("short");
             setApiMessage("입고 이력 검색어는 2글자 이상 입력해 주세요.");
           } else {
@@ -11390,28 +11403,26 @@ function CmsApp({
             if (receiptFilters.endDate) {
               receiptParams.set("endDate", receiptFilters.endDate);
             }
+            if (rootReceiptLookup && targetPharmacyId) {
+              receiptParams.set("pharmacyId", targetPharmacyId);
+            }
             if (trimmed) receiptParams.set("keyword", trimmed);
             setReceiptSearchStatus("loading");
             const receiptResult = await optionalCmsApiFetch<unknown>(
               `/receipts?${receiptParams}`,
             );
-            const stockItemResult =
-              receiptResult ??
-              (await optionalCmsApiFetch<unknown>(
-                `/stock-items?${receiptParams}`,
-              ));
-            const nextHistories = stockItemResult
+            const nextHistories = receiptResult
               ? sortCmsReceiptHistories(
-                  receiptHistoryPayload(stockItemResult)
+                  receiptHistoryPayload(receiptResult)
                     .map(normalizeCmsReceiptHistory)
                     .filter((record) =>
-                      receiptHistoryMatchesQuery(record, trimmed),
+                      receiptHistoryMatchesFilters(record, receiptFilters),
                     ),
                 )
               : [];
             setReceiptHistories(nextHistories);
-            setReceiptSearchStatus(stockItemResult ? "done" : "error");
-            if (!stockItemResult) {
+            setReceiptSearchStatus(receiptResult ? "done" : "error");
+            if (!receiptResult) {
               setApiMessage("입고 이력 조회 API 응답을 받지 못했습니다.");
             }
           }
@@ -11638,9 +11649,16 @@ function CmsApp({
   function applyReceiptFilters() {
     const nextFilters: CmsReceiptHistoryFilters = {
       endDate: receiptEndDate,
+      pharmacyId: canAccessRootCms(authAccount) ? receiptPharmacyId.trim() : "",
       query: receiptQuery.trim(),
       startDate: receiptStartDate,
     };
+
+    if (canAccessRootCms(authAccount) && !nextFilters.pharmacyId) {
+      setReceiptSearchStatus("idle");
+      setApiMessage("조회할 약국 ID를 입력해 주세요.");
+      return;
+    }
 
     if (normalizeSearchText(nextFilters.query).length === 1) {
       setReceiptSearchStatus("short");
@@ -13090,13 +13108,16 @@ function CmsApp({
           {visiblePage === "receipts" && (
             <CmsReceiptHistoryPage
               appliedFilters={appliedReceiptFilters}
+              canLookupByPharmacyId={canAccessRootCms(authAccount)}
               endDate={receiptEndDate}
               histories={receiptHistories}
+              pharmacyId={receiptPharmacyId}
               query={receiptQuery}
               searchStatus={receiptSearchStatus}
               startDate={receiptStartDate}
               onApplyFilters={applyReceiptFilters}
               onEndDate={setReceiptEndDate}
+              onPharmacyId={setReceiptPharmacyId}
               onQuery={setReceiptQuery}
               onStartDate={setReceiptStartDate}
             />
@@ -14114,7 +14135,9 @@ function normalizeCmsReceiptHistory(
         item.createdBy ??
           item.created_by ??
           item.accountName ??
-          item.account_name,
+          item.account_name ??
+          item.createdByAccountId ??
+          item.created_by_account_id,
       ) ?? "-",
     status,
   };
@@ -14206,6 +14229,9 @@ function receiptHistoryMatchesFilters(
   record: CmsReceiptHistory,
   filters: CmsReceiptHistoryFilters,
 ) {
+  if (filters.pharmacyId && record.pharmacyId !== filters.pharmacyId) {
+    return false;
+  }
   if (!receiptHistoryMatchesQuery(record, filters.query)) return false;
   if (!filters.startDate && !filters.endDate) return true;
 
@@ -23276,24 +23302,30 @@ function CmsAgentControlPage({
 
 function CmsReceiptHistoryPage({
   appliedFilters,
+  canLookupByPharmacyId,
   endDate,
   histories,
+  pharmacyId,
   query,
   searchStatus,
   startDate,
   onApplyFilters,
   onEndDate,
+  onPharmacyId,
   onQuery,
   onStartDate,
 }: {
   appliedFilters: CmsReceiptHistoryFilters;
+  canLookupByPharmacyId: boolean;
   endDate: string;
   histories: CmsReceiptHistory[];
+  pharmacyId: string;
   query: string;
   searchStatus: CmsPrescriptionSearchStatus;
   startDate: string;
   onApplyFilters: () => void;
   onEndDate: (value: string) => void;
+  onPharmacyId: (value: string) => void;
   onQuery: (value: string) => void;
   onStartDate: (value: string) => void;
 }) {
@@ -23309,7 +23341,7 @@ function CmsReceiptHistoryPage({
   const pagination = usePagination(
     visibleHistories,
     CMS_PAGE_SIZES.receipts,
-    `${appliedFilters.query}|${appliedFilters.startDate}|${appliedFilters.endDate}|${visibleHistories.length}`,
+    `${appliedFilters.pharmacyId}|${appliedFilters.query}|${appliedFilters.startDate}|${appliedFilters.endDate}|${visibleHistories.length}`,
   );
   const totalReceivedQuantity = visibleHistories.reduce(
     (sum, history) => sum + history.productTotalQuantity,
@@ -23332,7 +23364,7 @@ function CmsReceiptHistoryPage({
           unit="건"
         />
         <CmsKpi
-          label="입고 수량"
+          label="재고 반영 수량"
           value={currency(totalReceivedQuantity)}
           unit="개"
           tone="blue"
@@ -23350,6 +23382,27 @@ function CmsReceiptHistoryPage({
         />
       </CmsKpiGrid>
       <div className="cms-table-card cms-receipt-history-card">
+        {canLookupByPharmacyId && (
+          <div className="cms-receipt-pharmacy-lookup">
+            <div>
+              <strong>약국별 입고 이력 조회</strong>
+              <span>
+                root 계정은 약국 ID를 지정해 해당 약국의 입고 이력을 조회합니다.
+              </span>
+            </div>
+            <label>
+              <span>약국 ID</span>
+              <input
+                inputMode="numeric"
+                placeholder="예: 3"
+                value={pharmacyId}
+                onChange={(event) =>
+                  onPharmacyId(event.target.value.replace(/[^\d]/g, ""))
+                }
+              />
+            </label>
+          </div>
+        )}
         <form
           className="cms-prescription-list-controls cms-receipt-history-controls"
           onSubmit={(event) => {
@@ -23360,7 +23413,7 @@ function CmsReceiptHistoryPage({
           <label className="cms-search">
             <span className="search-icon" />
             <input
-              placeholder="약명 · 보험코드 · SN · 도매처 검색"
+              placeholder="약명 · 보험코드 · PC · SN · 도매처 검색"
               value={query}
               onChange={(event) => onQuery(event.target.value)}
             />
@@ -23380,9 +23433,17 @@ function CmsReceiptHistoryPage({
           </button>
           <span className={`cms-list-search-state is-${searchStatus}`}>
             {prescriptionSearchStateText(searchStatus)} ·{" "}
+            {canLookupByPharmacyId
+              ? `약국 #${appliedFilters.pharmacyId || "미지정"} · `
+              : ""}
             {appliedFilters.startDate || "-"} ~ {appliedFilters.endDate || "-"}
           </span>
         </form>
+        {canLookupByPharmacyId && !appliedFilters.pharmacyId && (
+          <div className="cms-stock-decrease-notice is-needs-pharmacy">
+            조회할 약국 ID를 입력한 뒤 조회 버튼을 눌러주세요.
+          </div>
+        )}
         {searchStatus === "short" && (
           <div className="cms-stock-decrease-notice is-warning">
             검색어는 2글자 이상 입력해 주세요.
@@ -23395,19 +23456,33 @@ function CmsReceiptHistoryPage({
           </div>
         )}
         <div className="cms-table-scroll">
-          <div className="cms-receipt-history-table">
+          <div
+            className={`cms-receipt-history-table ${
+              canLookupByPharmacyId ? "is-root-lookup" : ""
+            }`}
+          >
             <div className="cms-receipt-history-row cms-th">
               <span>입고일시</span>
+              {canLookupByPharmacyId && <span>약국</span>}
               <span>약품</span>
               <span>도매처</span>
-              <span>수량</span>
+              <span>재고 반영 수량</span>
               <span>반품 가능</span>
-              <span>QR 추적값</span>
+              <span>PC · QR 추적값</span>
               <span>상태</span>
             </div>
             {pagination.items.map((history) => (
               <div className="cms-receipt-history-row" key={history.id}>
-                <span>{history.receivedAt}</span>
+                <span>
+                  {history.receivedAt}
+                  <em>등록 {history.createdBy || "-"}</em>
+                </span>
+                {canLookupByPharmacyId && (
+                  <span>
+                    {history.pharmacyName || "약국"}
+                    <em>#{history.pharmacyId || appliedFilters.pharmacyId}</em>
+                  </span>
+                )}
                 <strong>
                   {history.drugName}
                   <em>
@@ -23416,10 +23491,14 @@ function CmsReceiptHistoryPage({
                   </em>
                 </strong>
                 <span>{history.wholesalerName}</span>
-                <b>{currency(history.productTotalQuantity)}개</b>
+                <span className="cms-receipt-quantity-cell">
+                  <b>{currency(history.productTotalQuantity)}개</b>
+                  <em>PC 기준 재고 반영</em>
+                </span>
                 <b>{currency(history.returnableQuantity)}개</b>
-                <span>
-                  SN {shortCode(history.sn) || "-"}
+                <span className="cms-receipt-trace-cell">
+                  <strong title={history.pc}>PC {history.pc || "-"}</strong>
+                  <em title={history.sn}>SN {history.sn || "-"}</em>
                   <em>
                     LOT {history.lot || "-"} · EXP {history.exp || "-"}
                   </em>
@@ -23435,7 +23514,9 @@ function CmsReceiptHistoryPage({
             ))}
             {visibleHistories.length === 0 && (
               <p className="cms-empty table-empty">
-                표시할 입고 이력이 없습니다.
+                {canLookupByPharmacyId && !appliedFilters.pharmacyId
+                  ? "약국 ID를 입력하면 입고 이력이 표시됩니다."
+                  : "표시할 입고 이력이 없습니다."}
               </p>
             )}
           </div>
