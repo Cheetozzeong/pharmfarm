@@ -1889,7 +1889,7 @@ function normalizeManualReceiptCandidate(
     manufacturer: optionalText(
       item.manufacturer ?? item.companyName ?? item.manufacturerName,
     ),
-    packageType: optionalText(
+    packageType: normalizeManualReceiptPackageType(
       item.packageType ?? item.packageForm ?? item.packagingType,
     ),
     dosageForm: optionalText(item.dosageForm ?? item.formType),
@@ -3216,10 +3216,64 @@ function currency(value: number) {
   return new Intl.NumberFormat("ko-KR").format(finiteNumber(value));
 }
 
+function normalizeManualReceiptPackageType(value: unknown) {
+  const packageType = optionalText(value);
+  if (
+    !packageType ||
+    /^[+-]?\d+(?:\.\d+)?$/.test(packageType) ||
+    /^(null|none|n\/a)$/i.test(packageType)
+  ) {
+    return undefined;
+  }
+  return packageType;
+}
+
 function manualReceiptPackageLabel(value?: string) {
-  const packageType = value?.trim();
+  const packageType = normalizeManualReceiptPackageType(value);
   if (!packageType) return "";
   return packageType.includes("포장") ? packageType : `${packageType} 포장`;
+}
+
+function blockAmbiguousManualReceiptCandidates(
+  candidates: ManualReceiptCandidate[],
+) {
+  const groups = new Map<string, ManualReceiptCandidate[]>();
+  candidates.forEach((candidate) => {
+    const key = `${normalizeSearchText(candidate.name)}|${candidate.productTotalQuantity}`;
+    groups.set(key, [...(groups.get(key) ?? []), candidate]);
+  });
+
+  return candidates.map((candidate) => {
+    const key = `${normalizeSearchText(candidate.name)}|${candidate.productTotalQuantity}`;
+    const group = groups.get(key) ?? [];
+    if (group.length < 2) return candidate;
+
+    const packageType = normalizeManualReceiptPackageType(
+      candidate.packageType,
+    );
+    const samePackageTypeCount = packageType
+      ? group.filter(
+          (item) =>
+            normalizeSearchText(
+              normalizeManualReceiptPackageType(item.packageType) ?? "",
+            ) === normalizeSearchText(packageType),
+        ).length
+      : 0;
+    if (packageType && samePackageTypeCount === 1) return candidate;
+
+    const groupBlockedReason = group.find(
+      (item) => item.blockedReason,
+    )?.blockedReason;
+    return {
+      ...candidate,
+      packageType,
+      receivable: false,
+      blockedReason:
+        candidate.blockedReason ??
+        groupBlockedReason ??
+        "\uD3EC\uC7A5 \uD655\uC778 \uD544\uC694",
+    };
+  });
 }
 
 function compactKoreanCurrency(value: number) {
@@ -4626,24 +4680,26 @@ function MobileApp({
 
       setManualReceiptSearchStatus("loading");
       if (uiPreviewMode === "stock-adjust") {
-        const results = demoManualReceiptCandidates
-          .filter((candidate) =>
-            normalizeSearchText(
-              `${candidate.name} ${candidate.spec} ${candidate.pc} ${candidate.insuranceCode}`,
-            ).includes(normalizedKeyword),
-          )
-          .map((candidate) => {
-            const matchedStock = stocks.find(
-              (stock) =>
-                stock.insuranceCode === candidate.insuranceCode ||
-                stock.pc === candidate.pc,
-            );
-            return {
-              ...candidate,
-              currentStockQuantity:
-                matchedStock?.quantity ?? candidate.currentStockQuantity,
-            };
-          });
+        const results = blockAmbiguousManualReceiptCandidates(
+          demoManualReceiptCandidates
+            .filter((candidate) =>
+              normalizeSearchText(
+                `${candidate.name} ${candidate.spec} ${candidate.pc} ${candidate.insuranceCode}`,
+              ).includes(normalizedKeyword),
+            )
+            .map((candidate) => {
+              const matchedStock = stocks.find(
+                (stock) =>
+                  stock.insuranceCode === candidate.insuranceCode ||
+                  stock.pc === candidate.pc,
+              );
+              return {
+                ...candidate,
+                currentStockQuantity:
+                  matchedStock?.quantity ?? candidate.currentStockQuantity,
+              };
+            }),
+        );
         if (requestId !== manualReceiptSearchRequestRef.current) return;
         setManualReceiptCandidates(results);
         setManualReceiptSearchStatus("done");
@@ -4659,11 +4715,13 @@ function MobileApp({
           `/receipts/manual/candidates?${params}`,
         );
 
-        const results = arrayPayload(response)
-          .map((item, index) =>
-            normalizeManualReceiptCandidate(item, index, stocks),
-          )
-          .filter((candidate) => candidate.productTotalQuantity > 0);
+        const results = blockAmbiguousManualReceiptCandidates(
+          arrayPayload(response)
+            .map((item, index) =>
+              normalizeManualReceiptCandidate(item, index, stocks),
+            )
+            .filter((candidate) => candidate.productTotalQuantity > 0),
+        );
         if (requestId !== manualReceiptSearchRequestRef.current) return;
         setManualReceiptCandidates(results);
         setManualReceiptSearchStatus("done");
@@ -8715,7 +8773,8 @@ function StocksScreen({
 
   const normalizedQuery = normalizeSearchText(query);
   const visibleCandidates = candidates.filter(
-    (candidate) => candidate.productTotalQuantity > 0,
+    (candidate) =>
+      candidate.receivable && candidate.productTotalQuantity > 0,
   );
   const pharmacyName =
     account?.pharmacyName || account?.accountName || "파트 약사 계정";
