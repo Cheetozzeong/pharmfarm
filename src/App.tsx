@@ -200,6 +200,9 @@ type ManualReceiptCandidate = {
   name: string;
   spec: string;
   manufacturer?: string;
+  packageType?: string;
+  dosageForm?: string;
+  representativeCode?: string;
   productTotalQuantity: number;
   currentStockQuantity: number;
   receivable: boolean;
@@ -632,6 +635,7 @@ const demoManualReceiptCandidates: ManualReceiptCandidate[] = [
     name: "타이레놀정 500mg",
     spec: "30정/통",
     manufacturer: "한국얀센",
+    packageType: "PTP",
     productTotalQuantity: 30,
     currentStockQuantity: 30,
     receivable: true,
@@ -645,6 +649,7 @@ const demoManualReceiptCandidates: ManualReceiptCandidate[] = [
     name: "타이레놀정 500mg",
     spec: "100정/통",
     manufacturer: "한국얀센",
+    packageType: "병",
     productTotalQuantity: 100,
     currentStockQuantity: 30,
     receivable: true,
@@ -658,6 +663,7 @@ const demoManualReceiptCandidates: ManualReceiptCandidate[] = [
     name: "아목시실린캡슐 250mg",
     spec: "30캡슐/통",
     manufacturer: "한미약품",
+    packageType: "병",
     productTotalQuantity: 30,
     currentStockQuantity: 0,
     receivable: true,
@@ -1882,6 +1888,13 @@ function normalizeManualReceiptCandidate(
     ),
     manufacturer: optionalText(
       item.manufacturer ?? item.companyName ?? item.manufacturerName,
+    ),
+    packageType: optionalText(
+      item.packageType ?? item.packageForm ?? item.packagingType,
+    ),
+    dosageForm: optionalText(item.dosageForm ?? item.formType),
+    representativeCode: optionalText(
+      item.representativeCode ?? item.masterProductCode,
     ),
     productTotalQuantity,
     currentStockQuantity: finiteNumber(
@@ -3201,6 +3214,12 @@ function cmsDateRangePresets() {
 
 function currency(value: number) {
   return new Intl.NumberFormat("ko-KR").format(finiteNumber(value));
+}
+
+function manualReceiptPackageLabel(value?: string) {
+  const packageType = value?.trim();
+  if (!packageType) return "";
+  return packageType.includes("포장") ? packageType : `${packageType} 포장`;
 }
 
 function compactKoreanCurrency(value: number) {
@@ -4634,13 +4653,14 @@ function MobileApp({
       try {
         const params = new URLSearchParams({
           keyword: trimmed,
-          page: "0",
           size: "30",
         });
-        const response = await apiFetch<unknown>(`/drug-masters?${params}`);
+        const response = await apiFetch<unknown>(
+          `/receipts/manual/candidates?${params}`,
+        );
 
-        const results = normalizeCmsPageResponse(response, 30)
-          .items.map((item, index) =>
+        const results = arrayPayload(response)
+          .map((item, index) =>
             normalizeManualReceiptCandidate(item, index, stocks),
           )
           .filter((candidate) => candidate.productTotalQuantity > 0);
@@ -8856,7 +8876,12 @@ function StocksScreen({
                   <div className="manual-receipt-cart-copy">
                     <strong>{item.candidate.name}</strong>
                     <span>
-                      {item.candidate.spec} · PC {item.candidate.pc}
+                      {[
+                        manualReceiptPackageLabel(item.candidate.packageType),
+                        item.candidate.spec,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")} · PC {item.candidate.pc}
                     </span>
                     <em>
                       {currency(
@@ -8954,13 +8979,17 @@ function StocksScreen({
             <span>선택한 포장</span>
             <strong>{selectedCandidate.name}</strong>
             <em>
-              {[selectedCandidate.manufacturer, selectedCandidate.spec]
+              {[
+                manualReceiptPackageLabel(selectedCandidate.packageType),
+                selectedCandidate.manufacturer,
+                selectedCandidate.spec,
+              ]
                 .filter(Boolean)
                 .join(" · ")}
             </em>
             <small>PC {selectedCandidate.pc}</small>
             <div>
-              <span>현재 전산 재고</span>
+              <span>현재 총 재고</span>
               <b>{currency(selectedCandidate.currentStockQuantity)}개</b>
             </div>
           </div>
@@ -9147,17 +9176,24 @@ function StocksScreen({
               >
                 <div>
                   <strong>{candidate.name}</strong>
-                  <span>
-                    {[candidate.manufacturer, candidate.spec]
-                      .filter(Boolean)
-                      .join(" · ")}
+                  <span className="manual-receipt-candidate-meta">
+                    {candidate.packageType && (
+                      <b>{manualReceiptPackageLabel(candidate.packageType)}</b>
+                    )}
+                    <i>
+                      {[candidate.manufacturer, candidate.spec]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </i>
                   </span>
                   <em>PC {candidate.pc || "확인 필요"}</em>
                 </div>
                 <aside>
                   <span>1통당</span>
                   <b>{currency(candidate.productTotalQuantity)}개</b>
-                  <em>현재 {currency(candidate.currentStockQuantity)}개</em>
+                  <em>
+                    현재 총 {currency(candidate.currentStockQuantity)}개
+                  </em>
                 </aside>
                 <ChevronRight size={20} strokeWidth={2.5} />
                 {!candidate.receivable && (

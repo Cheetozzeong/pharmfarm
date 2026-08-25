@@ -2381,6 +2381,29 @@ p {
   font-size: 10px;
 }
 
+.manual-receipt-candidate > div .manual-receipt-candidate-meta {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.manual-receipt-candidate-meta > b {
+  flex: none;
+  border-radius: 6px;
+  background: #eaf2ff;
+  padding: 2px 6px;
+  color: #075bcf;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.manual-receipt-candidate-meta > i {
+  overflow: hidden;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .manual-receipt-candidate > aside {
   display: grid;
   min-width: 70px;
