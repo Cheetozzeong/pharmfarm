@@ -1046,6 +1046,7 @@ CMS 대시보드는 API 응답 중 개발자용 연동 상태를 화면 전면�
 | GET    | `/api/v1/pharmfarm/insurance-codes/exists`           | 보험코드 중복 여부 확인                                       |
 | POST   | `/api/v1/pharmfarm/insurance-codes/generate-virtual` | 로그인 약국 기준 임의 보험코드 생성                           |
 | POST   | `/api/v1/pharmfarm/receipts`                         | 도매처, QR 정보, 확정 약 정보를 받아 입고 처리                |
+| POST   | `/api/v1/pharmfarm/receipts/manual`                  | PC 포장 선택과 통 수를 받아 반품 불가 수기 입고 처리          |
 
 QR 검증 요청 예시:
 
@@ -1141,6 +1142,33 @@ GET /api/v1/pharmfarm/insurance-codes/exists?insuranceCode=2PF000001
 4. `priceMasterId`가 없으면 `virtualDrugName`, `virtualInsuranceCode`가 필수다.
 5. `virtualInsuranceCode`는 2번 기준 데이터의 활성 제품코드와 같은 약국의 활성 재고 보험코드와 중복되면 안 된다.
 6. 최종 입고 시에는 QR 검증 결과를 신뢰하지 않고 `pc`, `drugMasterId`, `priceMasterId`, 보험코드 중복 여부를 다시 검증한다.
+
+간편 수기 입고 요청 예시:
+
+```json
+{
+  "requestId": "MANUAL-RECEIPT-20260825-001",
+  "items": [
+    {
+      "drugMasterId": 100,
+      "pc": "8800000000000",
+      "priceMasterId": 200,
+      "insuranceCode": "643102120",
+      "packageCount": 3
+    }
+  ]
+}
+```
+
+간편 수기 입고 처리 규칙:
+
+1. 약품명은 검색에만 사용한다. 입고 확정 시 `pc`, `drugMasterId`, `priceMasterId`, `insuranceCode`의 연결을 서버에서 다시 검증한다.
+2. 증가 수량은 `packageCount × 입고 시점의 PC 포장 단위(productTotalQuantity)`로 계산한다. 클라이언트가 보낸 낱알 수량은 신뢰하지 않는다.
+3. 같은 약국과 보험코드의 재고를 잠근 뒤 기존 재고를 증가시키며, 검증된 재고가 없을 때만 새 재고를 생성한다.
+4. PC와 보험코드 연결이 불명확한 약품은 약국장 확인 대상으로 보내고 임의 재고를 자동 생성하지 않는다.
+5. `requestId`를 멱등 키로 사용해 재시도 또는 중복 클릭으로 같은 입고가 두 번 반영되지 않게 한다.
+6. `SN`, `LOT`, `EXP`가 없는 수기 입고는 `returnable=false`인 별도 입고 이력으로 저장하고 QR 반품 추적 데이터에는 포함하지 않는다.
+7. 장바구니 입고는 한 트랜잭션으로 처리한다. 한 항목이라도 검증이나 저장에 실패하면 전체 입고를 롤백한다.
 
 ### 재고
 

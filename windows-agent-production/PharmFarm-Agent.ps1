@@ -21,6 +21,7 @@ $CommandStateFile = Join-Path $InstallRoot "agent.command-state.json"
 $BootstrapStateFile = Join-Path $InstallRoot "bootstrap.state.json"
 $ControlledDrugReferenceFile = Join-Path $InstallRoot "controlled-drug-reference.csv"
 $SyncStateDir = Join-Path $InstallRoot "sync-state"
+$UiAlertDir = Join-Path $InstallRoot "ui-alerts"
 $LogFile = Join-Path $LogDir ("agent-{0}.log" -f (Get-Date -Format "yyyyMMdd"))
 $ControlledDrugReferenceCache = $null
 $Initialized = $false
@@ -32,7 +33,7 @@ $LastSqlOkAt = $null
 $LastApiOkAt = $null
 $RemoteCommandPollingUnavailable = $false
 $HeartbeatUnavailable = $false
-$AgentVersion = "1.2.0-ps"
+$AgentVersion = "1.3.0-ps"
 
 function Ensure-Directory {
   param([string]$Path)
@@ -2047,6 +2048,57 @@ function New-RequestHeaders {
   return $headers
 }
 
+function Save-PrescriptionStockAlert {
+  param(
+    [object]$Envelope,
+    [object]$Response
+  )
+
+  if ($null -eq $Envelope -or $Envelope.targetPath -ne "/agent/prescriptions" -or $null -eq $Response) {
+    return 0
+  }
+
+  $data = Get-AgentObjectValue -Object $Response -Name "data" -DefaultValue $null
+  if ($null -eq $data) {
+    return 0
+  }
+
+  $stockSource = Convert-AgentText (Get-AgentObjectValue -Object $data -Name "stockSource" -DefaultValue "")
+  if ($stockSource -ne "PHARMFARM_SERVICE") {
+    Write-AgentLog "prescription stock alert ignored because stock source is not service event=$($Envelope.eventId) source=$stockSource" "WARN"
+    return 0
+  }
+
+  $rowsValue = Get-AgentObjectValue -Object $data -Name "stockAlerts" -DefaultValue @()
+  $rows = @($rowsValue | Where-Object { $null -ne $_ })
+  if ($rows.Count -eq 0) {
+    return 0
+  }
+
+  Ensure-Directory $UiAlertDir
+  $eventId = Convert-AgentText (Get-AgentObjectValue -Object $Envelope -Name "eventId" -DefaultValue ([Guid]::NewGuid().ToString("N")))
+  $prescriptionCodes = @($rows | ForEach-Object {
+    Convert-AgentText (Get-AgentObjectValue -Object $_ -Name "prescriptionCode" -DefaultValue "")
+  } | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+  $alert = [ordered]@{
+    id = $eventId
+    eventId = $eventId
+    stockSource = "PHARMFARM_SERVICE"
+    prescriptionCodes = $prescriptionCodes
+    createdAt = Get-AgentTimestamp
+    rows = $rows
+  }
+  $path = Join-Path $UiAlertDir ("{0}.json" -f $eventId)
+  if (Test-Path -LiteralPath $path) {
+    Write-AgentLog "prescription stock alert already queued event=$eventId rows=$($rows.Count)"
+    return $rows.Count
+  }
+
+  Write-JsonFile -Path $path -Value $alert -Depth 20
+  Write-AgentLog "prescription stock alert queued event=$eventId rows=$($rows.Count) prescriptions=$($prescriptionCodes -join ',')"
+  return $rows.Count
+}
+
 function Submit-Envelope {
   param(
     [object]$Config,
@@ -2061,9 +2113,10 @@ function Submit-Envelope {
 
   try {
     Write-AgentLog "submit start event=$($Envelope.eventId) url=$url bytes=$($body.Length) items=$itemCount pharmacyId=$($Config.pharmacyId)"
-    [void](Invoke-RestMethod -Method Post -Uri $url -ContentType "application/json; charset=utf-8" -Headers $headers -Body $body -TimeoutSec 20)
+    $response = Invoke-RestMethod -Method Post -Uri $url -ContentType "application/json; charset=utf-8" -Headers $headers -Body $body -TimeoutSec 20
+    $stockAlertCount = Save-PrescriptionStockAlert -Envelope $Envelope -Response $response
     $script:LastApiOkAt = Get-AgentTimestamp
-    return @{ ok = $true; retry = $false; status = 200; message = "sent" }
+    return @{ ok = $true; retry = $false; status = 200; message = "sent"; stockAlertCount = $stockAlertCount }
   } catch {
     $statusCode = $null
     $responseBody = Get-ResponseBodyFromException $_

@@ -15,6 +15,9 @@ $SentDir = Join-Path $InstallRoot "sent"
 $DeadDir = Join-Path $InstallRoot "dead-letter"
 $BootstrapStateFile = Join-Path $InstallRoot "bootstrap.state.json"
 $SyncStateDir = Join-Path $InstallRoot "sync-state"
+$UiAlertDir = Join-Path $InstallRoot "ui-alerts"
+$UiAlertShownDir = Join-Path $InstallRoot "ui-alerts-shown"
+$UiAlertFailedDir = Join-Path $InstallRoot "ui-alerts-failed"
 
 function Ensure-Directory {
   param([string]$Path)
@@ -237,6 +240,208 @@ function Show-Balloon {
   $script:notifyIcon.ShowBalloonTip(2500)
 }
 
+function Get-AlertValue {
+  param(
+    [object]$Object,
+    [string]$Name,
+    $DefaultValue = $null
+  )
+
+  if ($null -eq $Object -or $null -eq $Object.PSObject -or $null -eq $Object.PSObject.Properties[$Name]) {
+    return $DefaultValue
+  }
+
+  return $Object.PSObject.Properties[$Name].Value
+}
+
+function Get-AlertQuantityText {
+  param(
+    $Value,
+    [string]$Fallback = "-"
+  )
+
+  if ($null -eq $Value -or $Value -is [DBNull]) {
+    return $Fallback
+  }
+
+  try {
+    return ([decimal]$Value).ToString("0.##")
+  } catch {
+    return $Fallback
+  }
+}
+
+function Add-AlertGridColumn {
+  param(
+    [System.Windows.Forms.DataGridView]$Grid,
+    [string]$Name,
+    [string]$Header,
+    [int]$Width,
+    [bool]$Fill = $false
+  )
+
+  $column = New-Object System.Windows.Forms.DataGridViewTextBoxColumn
+  $column.Name = $Name
+  $column.HeaderText = $Header
+  $column.SortMode = [System.Windows.Forms.DataGridViewColumnSortMode]::NotSortable
+  if ($Fill) {
+    $column.AutoSizeMode = [System.Windows.Forms.DataGridViewAutoSizeColumnMode]::Fill
+  } else {
+    $column.Width = $Width
+  }
+  [void]$Grid.Columns.Add($column)
+}
+
+function Show-PrescriptionStockAlert {
+  param([object]$Alert)
+
+  $rows = @((Get-AlertValue -Object $Alert -Name "rows" -DefaultValue @()) | Where-Object { $null -ne $_ })
+  if ($rows.Count -eq 0) {
+    return
+  }
+
+  $prescriptionCodes = @((Get-AlertValue -Object $Alert -Name "prescriptionCodes" -DefaultValue @()) | Where-Object { ![string]::IsNullOrWhiteSpace($_) })
+  $prescriptionLabel = if ($prescriptionCodes.Count -gt 0) { $prescriptionCodes -join ", " } else { "처방전" }
+  $shortageCount = @($rows | Where-Object { (Get-AlertValue -Object $_ -Name "alertType" -DefaultValue "") -eq "SHORTAGE" }).Count
+  $lowStockCount = $rows.Count - $shortageCount
+
+  $form = New-Object System.Windows.Forms.Form
+  $form.Text = "PharmFarm 처방 재고 알림"
+  $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+  $form.Size = New-Object System.Drawing.Size(920, ([Math]::Min(720, [Math]::Max(420, 250 + ($rows.Count * 34)))))
+  $form.MinimumSize = New-Object System.Drawing.Size(820, 420)
+  $form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+  $form.MaximizeBox = $false
+  $form.MinimizeBox = $false
+  $form.TopMost = $true
+  $form.ShowInTaskbar = $true
+  $form.BackColor = [System.Drawing.Color]::White
+
+  $title = New-Object System.Windows.Forms.Label
+  $title.Text = "처방 조제 전 재고를 확인해 주세요"
+  $title.Location = New-Object System.Drawing.Point(26, 22)
+  $title.Size = New-Object System.Drawing.Size(840, 32)
+  $title.Font = New-Object System.Drawing.Font("Segoe UI", 16, [System.Drawing.FontStyle]::Bold)
+  $title.ForeColor = [System.Drawing.Color]::FromArgb(170, 36, 36)
+  $form.Controls.Add($title)
+
+  $summary = New-Object System.Windows.Forms.Label
+  $summary.Text = "$prescriptionLabel · 부족 $shortageCount건 · 처방 후 1개 미만 $lowStockCount건"
+  $summary.Location = New-Object System.Drawing.Point(29, 58)
+  $summary.Size = New-Object System.Drawing.Size(840, 24)
+  $summary.Font = New-Object System.Drawing.Font("Segoe UI", 10)
+  $summary.ForeColor = [System.Drawing.Color]::FromArgb(80, 80, 80)
+  $form.Controls.Add($summary)
+
+  $source = New-Object System.Windows.Forms.Label
+  $source.Text = "기준 재고: PharmFarm 서비스 현재고"
+  $source.Location = New-Object System.Drawing.Point(29, 84)
+  $source.Size = New-Object System.Drawing.Size(840, 22)
+  $source.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+  $source.ForeColor = [System.Drawing.Color]::FromArgb(38, 108, 66)
+  $form.Controls.Add($source)
+
+  $grid = New-Object System.Windows.Forms.DataGridView
+  $grid.Location = New-Object System.Drawing.Point(28, 116)
+  $grid.Size = New-Object System.Drawing.Size(848, ($form.ClientSize.Height - 182))
+  $grid.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
+  $grid.AllowUserToAddRows = $false
+  $grid.AllowUserToDeleteRows = $false
+  $grid.AllowUserToResizeRows = $false
+  $grid.ReadOnly = $true
+  $grid.MultiSelect = $false
+  $grid.RowHeadersVisible = $false
+  $grid.SelectionMode = [System.Windows.Forms.DataGridViewSelectionMode]::FullRowSelect
+  $grid.BackgroundColor = [System.Drawing.Color]::White
+  $grid.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
+  $grid.AutoSizeRowsMode = [System.Windows.Forms.DataGridViewAutoSizeRowsMode]::AllCells
+  $grid.DefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9)
+  $grid.DefaultCellStyle.WrapMode = [System.Windows.Forms.DataGridViewTriState]::True
+  $grid.ColumnHeadersDefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+  $grid.ColumnHeadersHeight = 34
+  $grid.RowTemplate.Height = 32
+
+  Add-AlertGridColumn -Grid $grid -Name "line" -Header "행" -Width 52
+  Add-AlertGridColumn -Grid $grid -Name "drug" -Header "약품명" -Width 260 -Fill $true
+  Add-AlertGridColumn -Grid $grid -Name "requested" -Header "처방량" -Width 78
+  Add-AlertGridColumn -Grid $grid -Name "before" -Header "처방 전" -Width 78
+  Add-AlertGridColumn -Grid $grid -Name "after" -Header "처방 후" -Width 78
+  Add-AlertGridColumn -Grid $grid -Name "shortage" -Header "부족" -Width 70
+  Add-AlertGridColumn -Grid $grid -Name "status" -Header "상태" -Width 105
+
+  foreach ($row in $rows) {
+    $alertType = Get-AlertValue -Object $row -Name "alertType" -DefaultValue "SHORTAGE"
+    $matched = Get-AlertValue -Object $row -Name "matchedServiceStock" -DefaultValue $true
+    $statusText = if (!$matched) { "재고 연결 없음" } elseif ($alertType -eq "SHORTAGE") { "재고 부족" } else { "1개 미만" }
+    $beforeText = if (!$matched) { "연결 없음" } else { Get-AlertQuantityText -Value (Get-AlertValue -Object $row -Name "stockBeforeQuantity") }
+    $afterText = if (!$matched) { "-" } else { Get-AlertQuantityText -Value (Get-AlertValue -Object $row -Name "stockAfterQuantity") }
+    $rowIndex = $grid.Rows.Add(
+      (Get-AlertValue -Object $row -Name "lineNo" -DefaultValue "-"),
+      (Get-AlertValue -Object $row -Name "drugName" -DefaultValue "미확인 약품"),
+      (Get-AlertQuantityText -Value (Get-AlertValue -Object $row -Name "requestedQuantity")),
+      $beforeText,
+      $afterText,
+      (Get-AlertQuantityText -Value (Get-AlertValue -Object $row -Name "shortageQuantity") -Fallback "0"),
+      $statusText
+    )
+    $gridRow = $grid.Rows[$rowIndex]
+    if ($alertType -eq "SHORTAGE") {
+      $gridRow.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(255, 235, 235)
+      $gridRow.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(145, 30, 30)
+    } else {
+      $gridRow.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(255, 247, 224)
+      $gridRow.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(120, 76, 10)
+    }
+  }
+  $grid.ClearSelection()
+  $form.Controls.Add($grid)
+
+  $closeButton = New-Object System.Windows.Forms.Button
+  $closeButton.Text = "확인"
+  $closeButton.Size = New-Object System.Drawing.Size(110, 36)
+  $closeButton.Location = New-Object System.Drawing.Point(($form.ClientSize.Width - 138), ($form.ClientSize.Height - 50))
+  $closeButton.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
+  $closeButton.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
+  $closeButton.BackColor = [System.Drawing.Color]::FromArgb(190, 38, 38)
+  $closeButton.ForeColor = [System.Drawing.Color]::White
+  $closeButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+  $closeButton.Add_Click({ $form.DialogResult = [System.Windows.Forms.DialogResult]::OK; $form.Close() })
+  $form.AcceptButton = $closeButton
+  $form.Controls.Add($closeButton)
+
+  [System.Media.SystemSounds]::Exclamation.Play()
+  [void]$form.ShowDialog()
+  $form.Dispose()
+}
+
+function Check-PrescriptionStockAlerts {
+  if ($script:showingStockAlert) {
+    return
+  }
+
+  Ensure-Directory $UiAlertDir
+  $file = Get-ChildItem -LiteralPath $UiAlertDir -Filter "*.json" -File -ErrorAction SilentlyContinue |
+    Sort-Object LastWriteTime |
+    Select-Object -First 1
+  if ($null -eq $file) {
+    return
+  }
+
+  $script:showingStockAlert = $true
+  try {
+    $alert = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
+    Show-PrescriptionStockAlert -Alert $alert
+    Ensure-Directory $UiAlertShownDir
+    Move-Item -LiteralPath $file.FullName -Destination (Join-Path $UiAlertShownDir $file.Name) -Force
+  } catch {
+    Ensure-Directory $UiAlertFailedDir
+    Move-Item -LiteralPath $file.FullName -Destination (Join-Path $UiAlertFailedDir $file.Name) -Force -ErrorAction SilentlyContinue
+    Show-Balloon "PharmFarm" "처방 재고 알림을 표시하지 못했습니다. 로그 폴더를 확인하세요."
+  } finally {
+    $script:showingStockAlert = $false
+  }
+}
+
 function Update-TrayStatus {
   $state = Read-State
   $taskState = Get-AgentTaskState
@@ -272,6 +477,9 @@ Ensure-Directory $LogDir
 Ensure-Directory $QueueDir
 Ensure-Directory $SentDir
 Ensure-Directory $DeadDir
+Ensure-Directory $UiAlertDir
+Ensure-Directory $UiAlertShownDir
+Ensure-Directory $UiAlertFailedDir
 
 $script:notifyIcon = New-Object System.Windows.Forms.NotifyIcon
 $script:notifyIcon.Icon = [System.Drawing.SystemIcons]::Information
@@ -360,6 +568,7 @@ $exitItem = New-Object System.Windows.Forms.ToolStripMenuItem
 $exitItem.Text = "트레이 아이콘 종료"
 $exitItem.Add_Click({
   $script:timer.Stop()
+  $script:alertTimer.Stop()
   $script:notifyIcon.Visible = $false
   $script:notifyIcon.Dispose()
   [System.Windows.Forms.Application]::Exit()
@@ -373,6 +582,12 @@ $script:timer = New-Object System.Windows.Forms.Timer
 $script:timer.Interval = 10000
 $script:timer.Add_Tick({ Update-TrayStatus })
 $script:timer.Start()
+
+$script:showingStockAlert = $false
+$script:alertTimer = New-Object System.Windows.Forms.Timer
+$script:alertTimer.Interval = 1000
+$script:alertTimer.Add_Tick({ Check-PrescriptionStockAlerts })
+$script:alertTimer.Start()
 
 Update-TrayStatus
 Show-Balloon "PharmFarm" "PharmFarm 에이전트가 실행 중입니다."

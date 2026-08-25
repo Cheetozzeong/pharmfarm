@@ -25,14 +25,17 @@ import {
   Focus,
   HardDriveDownload,
   LogOut,
+  Minus,
   PackageCheck,
   PanelLeftClose,
   PanelLeftOpen,
   Phone,
+  Plus,
   RefreshCw,
   ScanLine,
   Send,
   ShieldCheck,
+  ShoppingCart,
   SwitchCamera,
   Trash2,
   WifiOff,
@@ -185,6 +188,32 @@ type StockItem = {
   matchStatus: MatchStatus;
   virtualStock?: boolean;
   controlledDrug: ControlledDrugInfo;
+};
+
+type ManualReceiptCandidate = {
+  id: string;
+  drugMasterId: string;
+  pc: string;
+  insuranceCode: string;
+  priceMasterId?: string;
+  name: string;
+  spec: string;
+  manufacturer?: string;
+  productTotalQuantity: number;
+  currentStockQuantity: number;
+  receivable: boolean;
+  blockedReason?: string;
+};
+
+type ManualReceiptCartItem = {
+  candidate: ManualReceiptCandidate;
+  packageCount: number;
+};
+
+type ManualReceiptSummary = {
+  itemCount: number;
+  packageCount: number;
+  totalQuantity: number;
 };
 
 type ControlledDrugInfo = {
@@ -589,6 +618,60 @@ const initialStocks: StockItem[] = [
     price: 0,
     matchStatus: "VIRTUAL",
     controlledDrug: { controlled: false },
+  },
+];
+
+const demoManualReceiptCandidates: ManualReceiptCandidate[] = [
+  {
+    id: "MR-001-30",
+    drugMasterId: "100",
+    pc: "8806400017004",
+    insuranceCode: "640001700",
+    priceMasterId: "200",
+    name: "타이레놀정 500mg",
+    spec: "30정/통",
+    manufacturer: "한국얀센",
+    productTotalQuantity: 30,
+    currentStockQuantity: 30,
+    receivable: true,
+  },
+  {
+    id: "MR-001-100",
+    drugMasterId: "101",
+    pc: "8806400017011",
+    insuranceCode: "640001700",
+    priceMasterId: "200",
+    name: "타이레놀정 500mg",
+    spec: "100정/통",
+    manufacturer: "한국얀센",
+    productTotalQuantity: 100,
+    currentStockQuantity: 30,
+    receivable: true,
+  },
+  {
+    id: "MR-002-30",
+    drugMasterId: "102",
+    pc: "8806526045210",
+    insuranceCode: "652604520",
+    priceMasterId: "201",
+    name: "아목시실린캡슐 250mg",
+    spec: "30캡슐/통",
+    manufacturer: "한미약품",
+    productTotalQuantity: 30,
+    currentStockQuantity: 0,
+    receivable: true,
+  },
+  {
+    id: "MR-003-20",
+    drugMasterId: "103",
+    pc: "8899000000201",
+    insuranceCode: "3PF000124",
+    name: "비급여 연고 20g",
+    spec: "20g/통",
+    productTotalQuantity: 1,
+    currentStockQuantity: 8,
+    receivable: false,
+    blockedReason: "보험코드 연결을 약국장님이 먼저 확인해야 합니다.",
   },
 ];
 
@@ -1238,6 +1321,17 @@ function getStoredAuthAccount(): AuthAccount | null {
   }
 }
 
+function isLimitedPharmacistAccount(account?: AuthAccount | null) {
+  const role = account?.role?.trim().toUpperCase();
+  const accountType = account?.accountType?.trim().toUpperCase();
+
+  return role === "PHARMACY_LIMITED" || accountType === "LIMITED";
+}
+
+function mobileHomeScreen(account?: AuthAccount | null): Screen {
+  return isLimitedPharmacistAccount(account) ? "stocks" : "wholesaler";
+}
+
 function clearAuthTokens() {
   localStorage.removeItem(storageKeys.accessToken);
   localStorage.removeItem(storageKeys.refreshToken);
@@ -1707,6 +1801,98 @@ function normalizeStock(raw: unknown, index: number): StockItem {
     matchStatus,
     virtualStock,
     controlledDrug,
+  };
+}
+
+function normalizeManualReceiptCandidate(
+  raw: unknown,
+  index: number,
+  stocks: StockItem[],
+): ManualReceiptCandidate {
+  const item = asRecord(raw);
+  const priceMasters = firstArrayPayload(item, [
+    "priceMasters",
+    "priceMasterCandidates",
+  ]);
+  const firstPrice = asRecord(priceMasters[0]);
+  const pc = String(item.pc ?? item.standardCode ?? item.standard_code ?? "");
+  const insuranceCode = String(
+    item.insuranceCode ??
+      item.productCode ??
+      item.insurance_code ??
+      firstPrice.productCode ??
+      "",
+  );
+  const productTotalQuantity = Math.max(
+    0,
+    Math.trunc(
+      finiteNumber(
+        item.productTotalQuantity ??
+          item.totalQuantity ??
+          item.packageQuantity ??
+          item.package_quantity,
+      ),
+    ),
+  );
+  const matchedStock = stocks.find(
+    (stock) =>
+      (insuranceCode && stock.insuranceCode === insuranceCode) ||
+      (pc && stock.pc === pc),
+  );
+  const drugMasterId = String(
+    item.drugMasterId ?? item.masterId ?? item.id ?? "",
+  );
+  const priceMasterId = optionalText(
+    item.priceMasterId ?? firstPrice.priceMasterId ?? firstPrice.id,
+  );
+  const explicitlyReceivable = optionalBoolean(
+    item.receivable ?? item.manualReceivable,
+  );
+  const blockedReason = optionalText(
+    item.blockedReason ?? item.receiptBlockedReason,
+  );
+  const receivable =
+    explicitlyReceivable ??
+    Boolean(pc && drugMasterId && insuranceCode && productTotalQuantity > 0);
+
+  return {
+    id: String(
+      item.candidateId ??
+        `${drugMasterId || index}-${pc || "no-pc"}-${priceMasterId ?? "no-price"}`,
+    ),
+    drugMasterId,
+    pc,
+    insuranceCode,
+    priceMasterId,
+    name: String(
+      item.name ??
+        item.drugName ??
+        item.koreanName ??
+        item.koreanProductName ??
+        "미확인 약품",
+    ),
+    spec: String(
+      item.spec ??
+        item.drugSpec ??
+        item.packageSpec ??
+        (productTotalQuantity > 0
+          ? `${productTotalQuantity}개/통`
+          : "포장 확인 필요"),
+    ),
+    manufacturer: optionalText(
+      item.manufacturer ?? item.companyName ?? item.manufacturerName,
+    ),
+    productTotalQuantity,
+    currentStockQuantity: finiteNumber(
+      item.currentStockQuantity ?? item.stockQuantity,
+      matchedStock?.quantity ?? 0,
+    ),
+    receivable,
+    blockedReason:
+      blockedReason ??
+      (receivable
+        ? undefined
+        : "PC·보험코드·포장수량 연결을 약국장님이 확인해야 합니다."),
   };
 }
 
@@ -3480,6 +3666,7 @@ function createVirtualInsuranceCodeCandidate(
 
 type UiPreviewMode =
   | "receipt-match"
+  | "stock-adjust"
   | "return-scan"
   | "return-confirmed"
   | "return-done";
@@ -3488,6 +3675,7 @@ function getUiPreviewMode(): UiPreviewMode | null {
   const preview = new URLSearchParams(window.location.search).get("preview");
   if (
     preview === "receipt-match" ||
+    preview === "stock-adjust" ||
     preview === "return-scan" ||
     preview === "return-confirmed" ||
     preview === "return-done"
@@ -3802,7 +3990,13 @@ function createReceiptMatchPreviewQueue(): ReceiptQueueItem[] {
   ];
 }
 
-function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
+function MobileApp({
+  navigate,
+  stockAdjustWeb = false,
+}: {
+  navigate?: (path: string) => void;
+  stockAdjustWeb?: boolean;
+}) {
   const uiPreviewMode = getUiPreviewMode();
   const receiptMatchPreview = uiPreviewMode === "receipt-match";
   const returnPreview = uiPreviewMode?.startsWith("return-") ?? false;
@@ -3813,6 +4007,7 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
   const alreadyProcessedAudioRef = useRef<HTMLAudioElement | null>(null);
   const scannerControlsRef = useRef<IScannerControls | null>(null);
   const wholesalerSearchRequestRef = useRef(0);
+  const manualReceiptSearchRequestRef = useRef(0);
   const lastDetectedRef = useRef({
     value: "",
     at: 0,
@@ -3828,10 +4023,16 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
 
   const [screen, setScreen] = useState<Screen>(() => {
     if (receiptMatchPreview) return "receiptMatch";
+    if (uiPreviewMode === "stock-adjust") return "stocks";
+    if (stockAdjustWeb) {
+      return hasStoredAuthTokens() ? "stocks" : "account";
+    }
     if (uiPreviewMode === "return-confirmed") return "returnConfirmed";
     if (uiPreviewMode === "return-done") return "returnDone";
     if (uiPreviewMode === "return-scan") return "scan";
-    return hasStoredAuthTokens() ? "wholesaler" : "account";
+    return hasStoredAuthTokens()
+      ? mobileHomeScreen(getStoredAuthAccount())
+      : "account";
   });
   const [mode, setMode] = useState<Mode>(returnPreview ? "return" : "receipt");
   const [cameraActive, setCameraActive] = useState(false);
@@ -3855,6 +4056,16 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
   );
   const [loginId, setLoginId] = useState("");
   const [password, setPassword] = useState("");
+  const [authAccount, setAuthAccount] = useState<AuthAccount | null>(() =>
+    uiPreviewMode === "stock-adjust"
+      ? {
+          accountName: "파트 약사",
+          pharmacyName: "우리약국",
+          role: "PHARMACY_LIMITED",
+          accountType: "LIMITED",
+        }
+      : getStoredAuthAccount(),
+  );
   const [wholesalers, setWholesalers] = useState<Wholesaler[]>(() =>
     receiptMatchPreview ? demoWholesalers : [],
   );
@@ -3868,9 +4079,17 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
     receiptMatchPreview ? (demoWholesalers[0]?.id ?? "") : "",
   );
   const [pendingWholesalerId, setPendingWholesalerId] = useState("");
-  const [stocks, setStocks] = useState(initialStocks);
+  const [stocks, setStocks] = useState<StockItem[]>(() =>
+    uiPreviewMode ? initialStocks : [],
+  );
   const [stocksLoading, setStocksLoading] = useState(false);
   const [stocksMessage, setStocksMessage] = useState("");
+  const [manualReceiptCandidates, setManualReceiptCandidates] = useState<
+    ManualReceiptCandidate[]
+  >([]);
+  const [manualReceiptSearchStatus, setManualReceiptSearchStatus] = useState<
+    "idle" | "short" | "loading" | "done" | "error"
+  >("idle");
   const [traces, setTraces] = useState(initialTraces);
   const [receiptQueue, setReceiptQueue] = useState<ReceiptQueueItem[]>(() =>
     receiptMatchPreview ? createReceiptMatchPreviewQueue() : [],
@@ -4321,6 +4540,7 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
   const setApiFallback = useCallback((error: unknown) => {
     if (error instanceof Error && error.message === "UNAUTHORIZED") {
       clearAuthTokens();
+      setAuthAccount(null);
       setApiState("unauthorized");
       setApiMessage("로그인이 필요합니다.");
       setScreen("account");
@@ -4336,6 +4556,12 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
   }, []);
 
   const loadStocks = useCallback(async () => {
+    if (uiPreviewMode === "stock-adjust") {
+      setStocks(initialStocks);
+      setStocksMessage("");
+      return true;
+    }
+
     if (!hasStoredAuthTokens()) {
       setApiState("unauthorized");
       setApiMessage("로그인이 필요합니다.");
@@ -4354,13 +4580,182 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
       setApiMessage("재고 목록 연동 완료");
       return true;
     } catch (error) {
+      setStocks([]);
       setStocksMessage("재고 목록을 불러오지 못했습니다.");
       setApiFallback(error);
       return false;
     } finally {
       setStocksLoading(false);
     }
-  }, [setApiFallback]);
+  }, [setApiFallback, uiPreviewMode]);
+
+  const searchManualReceiptCandidates = useCallback(
+    async (keyword: string) => {
+      const requestId = (manualReceiptSearchRequestRef.current += 1);
+      const trimmed = keyword.trim();
+      const normalizedKeyword = normalizeSearchText(trimmed);
+
+      if (normalizedKeyword.length < 2) {
+        setManualReceiptCandidates([]);
+        setManualReceiptSearchStatus(trimmed ? "short" : "idle");
+        return;
+      }
+
+      setManualReceiptSearchStatus("loading");
+      if (uiPreviewMode === "stock-adjust") {
+        const results = demoManualReceiptCandidates
+          .filter((candidate) =>
+            normalizeSearchText(
+              `${candidate.name} ${candidate.spec} ${candidate.pc} ${candidate.insuranceCode}`,
+            ).includes(normalizedKeyword),
+          )
+          .map((candidate) => {
+            const matchedStock = stocks.find(
+              (stock) =>
+                stock.insuranceCode === candidate.insuranceCode ||
+                stock.pc === candidate.pc,
+            );
+            return {
+              ...candidate,
+              currentStockQuantity:
+                matchedStock?.quantity ?? candidate.currentStockQuantity,
+            };
+          });
+        if (requestId !== manualReceiptSearchRequestRef.current) return;
+        setManualReceiptCandidates(results);
+        setManualReceiptSearchStatus("done");
+        return;
+      }
+
+      try {
+        const params = new URLSearchParams({
+          keyword: trimmed,
+          page: "0",
+          size: "30",
+        });
+        const response = await apiFetch<unknown>(`/drug-masters?${params}`);
+
+        const results = normalizeCmsPageResponse(response, 30)
+          .items.map((item, index) =>
+            normalizeManualReceiptCandidate(item, index, stocks),
+          )
+          .filter((candidate) => candidate.productTotalQuantity > 0);
+        if (requestId !== manualReceiptSearchRequestRef.current) return;
+        setManualReceiptCandidates(results);
+        setManualReceiptSearchStatus("done");
+      } catch (error) {
+        if (requestId !== manualReceiptSearchRequestRef.current) return;
+        setManualReceiptCandidates([]);
+        setManualReceiptSearchStatus("error");
+        if (
+          error instanceof Error &&
+          (error.message === "UNAUTHORIZED" || error.message === "FORBIDDEN")
+        ) {
+          setApiFallback(error);
+        }
+      }
+    },
+    [setApiFallback, stocks, uiPreviewMode],
+  );
+
+  const submitManualReceipts = useCallback(
+    async (items: ManualReceiptCartItem[]) => {
+      const validItems = items.filter(
+        (item) => item.candidate.receivable && item.packageCount > 0,
+      );
+      if (validItems.length === 0) return false;
+
+      const packageCount = validItems.reduce(
+        (sum, item) => sum + item.packageCount,
+        0,
+      );
+      const totalQuantity = validItems.reduce(
+        (sum, item) =>
+          sum + item.packageCount * item.candidate.productTotalQuantity,
+        0,
+      );
+
+      if (uiPreviewMode === "stock-adjust") {
+        setStocks((current) => {
+          const next = [...current];
+          validItems.forEach(({ candidate, packageCount: count }) => {
+            const increase = count * candidate.productTotalQuantity;
+            const existingIndex = next.findIndex(
+              (stock) =>
+                stock.insuranceCode === candidate.insuranceCode ||
+                stock.pc === candidate.pc,
+            );
+            if (existingIndex >= 0) {
+              next[existingIndex] = {
+                ...next[existingIndex],
+                quantity: next[existingIndex].quantity + increase,
+              };
+              return;
+            }
+            next.push({
+              id: createId("S"),
+              pc: candidate.pc,
+              insuranceCode: candidate.insuranceCode,
+              name: candidate.name,
+              quantity: increase,
+              price: 0,
+              matchStatus: "NORMAL",
+              controlledDrug: { controlled: false },
+            });
+          });
+          return next;
+        });
+        setStocksMessage(
+          `${validItems.length}품목 · ${packageCount}통 · ${currency(totalQuantity)}개 입고 완료`,
+        );
+        return true;
+      }
+
+      try {
+        await apiFetch<unknown>("/receipts/manual", {
+          method: "POST",
+          body: JSON.stringify({
+            requestId: createId("MANUAL-RECEIPT"),
+            items: validItems.map(({ candidate, packageCount: count }) => ({
+              drugMasterId: optionalId(candidate.drugMasterId),
+              pc: candidate.pc,
+              priceMasterId: candidate.priceMasterId
+                ? optionalId(candidate.priceMasterId)
+                : undefined,
+              insuranceCode: candidate.insuranceCode,
+              packageCount: count,
+            })),
+          }),
+        });
+        setStocksMessage(
+          `${validItems.length}품목 · ${packageCount}통 · ${currency(totalQuantity)}개 입고 완료`,
+        );
+        setApiState("connected");
+        setApiMessage("간편 입고 완료");
+        await loadStocks();
+        return true;
+      } catch (error) {
+        if (error instanceof Error && error.message === "UNAUTHORIZED") {
+          setApiFallback(error);
+          setStocksMessage("로그인이 만료되었습니다. 다시 로그인해 주세요.");
+          return false;
+        }
+        if (error instanceof Error && error.message === "FORBIDDEN") {
+          setApiState("forbidden");
+          setStocksMessage("현재 계정에는 간편 입고 권한이 없습니다.");
+          return false;
+        }
+        const message =
+          error instanceof ApiError && error.message
+            ? error.message
+            : "입고하지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.";
+        setStocksMessage(message);
+        setApiMessage(message);
+        return false;
+      }
+    },
+    [loadStocks, setApiFallback, uiPreviewMode],
+  );
 
   const refreshFromBackend = useCallback(async () => {
     setApiState("checking");
@@ -4457,9 +4852,10 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
     setApiMessage("자동 로그인 확인 중");
     try {
       const authData = await apiFetch<unknown>("/auth/me");
-      storeAuthAccount(
+      const currentAccount = storeAuthAccount(
         normalizeAuthAccount(authData, getStoredAccessToken() ?? undefined),
       );
+      setAuthAccount(currentAccount);
       const connected = await refreshFromBackend();
       if (connected) {
         setApiState("connected");
@@ -4471,7 +4867,7 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
       setReceiptSummary(null);
       setLastScanName("QR 스캔 대기");
       setMode("receipt");
-      setScreen("wholesaler");
+      setScreen(stockAdjustWeb ? "stocks" : mobileHomeScreen(currentAccount));
     } catch (error) {
       setApiFallback(error);
     }
@@ -4481,6 +4877,7 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
     resetReturnFlow,
     resetWholesalerSelection,
     setApiFallback,
+    stockAdjustWeb,
   ]);
 
   useEffect(() => {
@@ -5800,6 +6197,8 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
       setApiState("checking");
       setApiMessage("로그인 중");
       await login(loginId, password);
+      const currentAccount = getStoredAuthAccount();
+      setAuthAccount(currentAccount);
       const connected = await refreshFromBackend();
       if (connected) {
         setApiState("connected");
@@ -5812,7 +6211,7 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
       setReceiptSummary(null);
       setLastScanName("QR 스캔 대기");
       setMode("receipt");
-      setScreen("wholesaler");
+      setScreen(stockAdjustWeb ? "stocks" : mobileHomeScreen(currentAccount));
     } catch (error) {
       setApiState("unauthorized");
       setApiMessage(
@@ -5823,6 +6222,7 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
 
   function logoutMobile() {
     clearAuthTokens();
+    setAuthAccount(null);
     setCameraActive(false);
     setApiState("unauthorized");
     setApiMessage("로그아웃됨");
@@ -5839,7 +6239,9 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
     <main
       className={`phone ${screenClass(screen, mode)} ${
         scanPerformanceMode === "performance" ? "is-scan-performance" : ""
-      } ${scanCodeMode === "barcode" ? "is-barcode-scan" : ""}`}
+      } ${scanCodeMode === "barcode" ? "is-barcode-scan" : ""} ${
+        stockAdjustWeb ? "is-stock-adjust-web" : ""
+      }`}
     >
       {screen === "wholesaler" && (
         <WholesalerScreen
@@ -6127,11 +6529,19 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
 
       {screen === "stocks" && (
         <StocksScreen
+          account={authAccount}
+          candidates={manualReceiptCandidates}
           loading={stocksLoading}
           message={stocksMessage}
-          stocks={stocks}
-          onBack={() => setScreen("scan")}
-          onRefresh={loadStocks}
+          searchStatus={manualReceiptSearchStatus}
+          onBack={
+            stockAdjustWeb || isLimitedPharmacistAccount(authAccount)
+              ? undefined
+              : () => setScreen("scan")
+          }
+          onLogout={logoutMobile}
+          onSearch={searchManualReceiptCandidates}
+          onSubmit={submitManualReceipts}
         />
       )}
 
@@ -6139,8 +6549,16 @@ function MobileApp({ navigate }: { navigate?: (path: string) => void }) {
         <AccountScreen
           loginId={loginId}
           password={password}
+          stockAdjustOnly={stockAdjustWeb}
           onBack={
-            hasStoredAuthTokens() ? () => setScreen("wholesaler") : undefined
+            hasStoredAuthTokens()
+              ? () =>
+                  setScreen(
+                    stockAdjustWeb
+                      ? "stocks"
+                      : mobileHomeScreen(getStoredAuthAccount()),
+                  )
+              : undefined
           }
           onLoginId={setLoginId}
           onPassword={setPassword}
@@ -8218,73 +8636,528 @@ function DoneScreen({
 }
 
 function StocksScreen({
+  account,
+  candidates,
   loading,
   message,
-  stocks,
+  searchStatus,
   onBack,
-  onRefresh,
+  onLogout,
+  onSearch,
+  onSubmit,
 }: {
+  account?: AuthAccount | null;
+  candidates: ManualReceiptCandidate[];
   loading: boolean;
   message: string;
-  stocks: StockItem[];
-  onBack: () => void;
-  onRefresh: () => Promise<boolean>;
+  searchStatus: "idle" | "short" | "loading" | "done" | "error";
+  onBack?: () => void;
+  onLogout: () => void;
+  onSearch: (keyword: string) => Promise<void>;
+  onSubmit: (items: ManualReceiptCartItem[]) => Promise<boolean>;
 }) {
-  return (
-    <>
-      <Header title="재고 목록" note={`${stocks.length}건`} onBack={onBack} />
-      <section className="scroll-body">
-        <div className="list-toolbar">
-          <span>{message || "서버 재고 목록을 표시합니다."}</span>
+  const [query, setQuery] = useState("");
+  const [selectedCandidate, setSelectedCandidate] =
+    useState<ManualReceiptCandidate | null>(null);
+  const [packageCount, setPackageCount] = useState(1);
+  const [cart, setCart] = useState<ManualReceiptCartItem[]>([]);
+  const [view, setView] = useState<"search" | "quantity" | "cart" | "success">(
+    "search",
+  );
+  const [submitState, setSubmitState] = useState<
+    "idle" | "saving" | "success" | "error"
+  >("idle");
+  const [summary, setSummary] = useState<ManualReceiptSummary | null>(null);
+
+  const normalizedQuery = normalizeSearchText(query);
+  const visibleCandidates = candidates.filter(
+    (candidate) => candidate.productTotalQuantity > 0,
+  );
+  const pharmacyName =
+    account?.pharmacyName || account?.accountName || "파트 약사 계정";
+  const accountDetail =
+    account?.accountName && account.accountName !== pharmacyName
+      ? `${account.accountName} · `
+      : "";
+  const cartPackageCount = cart.reduce(
+    (sum, item) => sum + item.packageCount,
+    0,
+  );
+  const cartTotalQuantity = cart.reduce(
+    (sum, item) =>
+      sum + item.packageCount * item.candidate.productTotalQuantity,
+    0,
+  );
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void onSearch(query);
+    }, 260);
+    return () => window.clearTimeout(timer);
+  }, [onSearch, query]);
+
+  function chooseCandidate(candidate: ManualReceiptCandidate) {
+    if (!candidate.receivable) return;
+    setSelectedCandidate(candidate);
+    setPackageCount(1);
+    setSubmitState("idle");
+    setView("quantity");
+  }
+
+  function backToSearch(clearQuery = false) {
+    setSelectedCandidate(null);
+    setPackageCount(1);
+    setSubmitState("idle");
+    setView("search");
+    if (clearQuery) {
+      setQuery("");
+      void onSearch("");
+    }
+  }
+
+  function addToCart() {
+    if (!selectedCandidate || packageCount <= 0) return;
+    setCart((current) => {
+      const existing = current.find(
+        (item) => item.candidate.id === selectedCandidate.id,
+      );
+      if (existing) {
+        return current.map((item) =>
+          item.candidate.id === selectedCandidate.id
+            ? { ...item, packageCount: item.packageCount + packageCount }
+            : item,
+        );
+      }
+      return [...current, { candidate: selectedCandidate, packageCount }];
+    });
+    backToSearch(true);
+  }
+
+  function patchCartQuantity(candidateId: string, nextQuantity: number) {
+    setCart((current) =>
+      current
+        .map((item) =>
+          item.candidate.id === candidateId
+            ? { ...item, packageCount: Math.max(0, nextQuantity) }
+            : item,
+        )
+        .filter((item) => item.packageCount > 0),
+    );
+  }
+
+  function summarize(items: ManualReceiptCartItem[]): ManualReceiptSummary {
+    return {
+      itemCount: items.length,
+      packageCount: items.reduce((sum, item) => sum + item.packageCount, 0),
+      totalQuantity: items.reduce(
+        (sum, item) =>
+          sum + item.packageCount * item.candidate.productTotalQuantity,
+        0,
+      ),
+    };
+  }
+
+  async function submitItems(
+    items: ManualReceiptCartItem[],
+    clearCart: boolean,
+  ) {
+    if (items.length === 0 || submitState === "saving") return;
+    setSubmitState("saving");
+    const submitted = await onSubmit(items);
+    if (!submitted) {
+      setSubmitState("error");
+      return;
+    }
+
+    setSummary(summarize(items));
+    setSubmitState("success");
+    if (clearCart) setCart([]);
+    setSelectedCandidate(null);
+    setQuery("");
+    void onSearch("");
+    setView("success");
+  }
+
+  if (view === "success" && summary) {
+    return (
+      <>
+        <Header title="입고 완료" />
+        <section className="stock-adjust-success">
+          <div className="stock-adjust-success-icon">
+            <Check size={34} strokeWidth={3} />
+          </div>
+          <strong>{summary.itemCount}개 약품</strong>
+          <h1>{currency(summary.packageCount)}통 입고했어요</h1>
+          <p>재고에 총 {currency(summary.totalQuantity)}개가 증가했습니다.</p>
+        </section>
+        <BottomBar>
           <button
+            className="primary-btn"
             type="button"
-            disabled={loading}
             onClick={() => {
-              void onRefresh();
+              setSummary(null);
+              setSubmitState("idle");
+              setView("search");
             }}
           >
-            새로고침
+            계속 입고하기
           </button>
-        </div>
-        {loading && (
-          <div className="empty-state compact">
-            <strong>재고 목록 불러오는 중</strong>
-            <span>현재 재고를 불러오고 있습니다.</span>
+        </BottomBar>
+      </>
+    );
+  }
+
+  if (view === "cart") {
+    return (
+      <>
+        <Header
+          title="입고 장바구니"
+          note={`${cart.length}품목`}
+          onBack={() => setView("search")}
+        />
+        <section className="scroll-body manual-receipt-cart-body">
+          {cart.length === 0 ? (
+            <div className="empty-state manual-receipt-empty">
+              <ShoppingCart size={30} />
+              <strong>장바구니가 비어 있어요</strong>
+              <span>약품을 검색한 뒤 장바구니에 담아주세요.</span>
+            </div>
+          ) : (
+            <div className="manual-receipt-cart-list">
+              {cart.map((item) => (
+                <article
+                  className="manual-receipt-cart-item"
+                  key={item.candidate.id}
+                >
+                  <div className="manual-receipt-cart-copy">
+                    <strong>{item.candidate.name}</strong>
+                    <span>
+                      {item.candidate.spec} · PC {item.candidate.pc}
+                    </span>
+                    <em>
+                      {currency(
+                        item.packageCount * item.candidate.productTotalQuantity,
+                      )}
+                      개 증가
+                    </em>
+                  </div>
+                  <div className="manual-receipt-cart-quantity">
+                    <button
+                      aria-label={`${item.candidate.name} 1통 줄이기`}
+                      type="button"
+                      onClick={() =>
+                        patchCartQuantity(
+                          item.candidate.id,
+                          item.packageCount - 1,
+                        )
+                      }
+                    >
+                      <Minus size={16} />
+                    </button>
+                    <b>{item.packageCount}통</b>
+                    <button
+                      aria-label={`${item.candidate.name} 1통 늘리기`}
+                      type="button"
+                      onClick={() =>
+                        patchCartQuantity(
+                          item.candidate.id,
+                          item.packageCount + 1,
+                        )
+                      }
+                    >
+                      <Plus size={16} />
+                    </button>
+                  </div>
+                  <button
+                    aria-label={`${item.candidate.name} 장바구니에서 삭제`}
+                    className="manual-receipt-cart-remove"
+                    type="button"
+                    onClick={() =>
+                      setCart((current) =>
+                        current.filter(
+                          (candidate) =>
+                            candidate.candidate.id !== item.candidate.id,
+                        ),
+                      )
+                    }
+                  >
+                    <Trash2 size={17} />
+                  </button>
+                </article>
+              ))}
+            </div>
+          )}
+          {cart.length > 0 && (
+            <div className="manual-receipt-cart-summary">
+              <span>총 입고</span>
+              <strong>
+                {cart.length}품목 · {currency(cartPackageCount)}통
+              </strong>
+              <em>재고 +{currency(cartTotalQuantity)}개</em>
+            </div>
+          )}
+          {submitState === "error" && (
+            <p className="stock-adjust-error">
+              {message || "입고하지 못했습니다. 다시 시도해 주세요."}
+            </p>
+          )}
+        </section>
+        <BottomBar>
+          <button
+            className="primary-btn"
+            type="button"
+            disabled={cart.length === 0 || submitState === "saving"}
+            onClick={() => void submitItems(cart, true)}
+          >
+            {submitState === "saving"
+              ? "입고 처리 중..."
+              : `${currency(cartPackageCount)}통 모두 입고`}
+          </button>
+        </BottomBar>
+      </>
+    );
+  }
+
+  if (view === "quantity" && selectedCandidate) {
+    const increase = packageCount * selectedCandidate.productTotalQuantity;
+    const afterQuantity = selectedCandidate.currentStockQuantity + increase;
+
+    return (
+      <>
+        <Header title="입고 수량" onBack={() => backToSearch()} />
+        <section className="scroll-body stock-adjust-editor manual-receipt-quantity-body">
+          <div className="stock-adjust-selected manual-receipt-selected">
+            <span>선택한 포장</span>
+            <strong>{selectedCandidate.name}</strong>
+            <em>
+              {[selectedCandidate.manufacturer, selectedCandidate.spec]
+                .filter(Boolean)
+                .join(" · ")}
+            </em>
+            <small>PC {selectedCandidate.pc}</small>
+            <div>
+              <span>현재 전산 재고</span>
+              <b>{currency(selectedCandidate.currentStockQuantity)}개</b>
+            </div>
           </div>
-        )}
-        {!loading && stocks.length === 0 && (
-          <div className="empty-state compact">
-            <strong>재고가 없습니다</strong>
+
+          <div className="manual-receipt-package-copy">
+            <strong>몇 통 들어왔나요?</strong>
             <span>
-              입고를 확정하거나 관리자 페이지에서 재고를 확인해 주세요.
+              1통 = {currency(selectedCandidate.productTotalQuantity)}개
             </span>
           </div>
+          <div className="stock-adjust-quantity-control">
+            <button
+              aria-label="입고 수량 1통 줄이기"
+              type="button"
+              disabled={packageCount <= 1}
+              onClick={() =>
+                setPackageCount((current) => Math.max(1, current - 1))
+              }
+            >
+              <Minus size={26} strokeWidth={2.8} />
+            </button>
+            <div>
+              <input
+                aria-label="입고 통 수"
+                inputMode="numeric"
+                pattern="[0-9]*"
+                value={packageCount}
+                onChange={(event) => {
+                  const value = Math.max(
+                    1,
+                    Math.trunc(finiteNumber(event.target.value, 1)),
+                  );
+                  setPackageCount(value);
+                }}
+                onFocus={(event) => event.currentTarget.select()}
+              />
+              <span>통</span>
+            </div>
+            <button
+              aria-label="입고 수량 1통 늘리기"
+              type="button"
+              onClick={() => setPackageCount((current) => current + 1)}
+            >
+              <Plus size={26} strokeWidth={2.8} />
+            </button>
+          </div>
+          <div className="manual-receipt-calculation">
+            <div>
+              <span>입고 수량</span>
+              <strong>
+                {currency(packageCount)}통 ×{" "}
+                {currency(selectedCandidate.productTotalQuantity)}개
+              </strong>
+            </div>
+            <b>+{currency(increase)}개</b>
+            <p>
+              입고 후 재고 {currency(selectedCandidate.currentStockQuantity)}개
+              → <strong>{currency(afterQuantity)}개</strong>
+            </p>
+          </div>
+          {submitState === "error" && (
+            <p className="stock-adjust-error">
+              {message || "입고하지 못했습니다. 다시 시도해 주세요."}
+            </p>
+          )}
+        </section>
+        <BottomBar stack>
+          <button
+            className="secondary-btn manual-receipt-cart-action"
+            type="button"
+            disabled={submitState === "saving"}
+            onClick={addToCart}
+          >
+            <ShoppingCart size={18} />
+            장바구니 담기
+          </button>
+          <button
+            className="primary-btn"
+            type="button"
+            disabled={submitState === "saving"}
+            onClick={() =>
+              void submitItems(
+                [{ candidate: selectedCandidate, packageCount }],
+                false,
+              )
+            }
+          >
+            {submitState === "saving" ? "입고 처리 중..." : "바로 입고"}
+          </button>
+        </BottomBar>
+      </>
+    );
+  }
+
+  return (
+    <>
+      <Header
+        title="간편 입고"
+        note={cart.length > 0 ? `장바구니 ${cart.length}` : undefined}
+        onBack={onBack}
+      />
+      <section className="scroll-body stock-adjust-list-body manual-receipt-search-body">
+        <div className="stock-adjust-accountbar">
+          <div>
+            <strong>{pharmacyName}</strong>
+            <span>{accountDetail}약 이름으로 한 통씩 간편하게 입고하세요.</span>
+          </div>
+          <button type="button" onClick={onLogout}>
+            <LogOut size={15} strokeWidth={2.4} />
+            로그아웃
+          </button>
+        </div>
+
+        <div className="manual-receipt-hero">
+          <strong>어떤 약이 들어왔나요?</strong>
+          <span>약품명을 검색하고 정확한 포장 단위를 선택하세요.</span>
+        </div>
+        <div className="stock-adjust-search">
+          <span className="search-icon" aria-hidden="true" />
+          <input
+            aria-label="약품 이름 검색"
+            autoComplete="off"
+            autoFocus
+            placeholder="약품 이름 검색"
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+          />
+          {query && (
+            <button
+              aria-label="검색어 지우기"
+              type="button"
+              onClick={() => setQuery("")}
+            >
+              <X size={16} strokeWidth={2.5} />
+            </button>
+          )}
+        </div>
+
+        {loading && (
+          <p className="manual-receipt-stock-check">
+            <RefreshCw size={14} className="is-spinning" /> 현재 재고 연결 확인
+            중
+          </p>
         )}
-        {stocks.length > 0 && (
-          <div className="list-card stock-list">
-            {stocks.map((stock) => (
-              <div className="stock-row" key={stock.id}>
-                <div className="stock-main">
-                  <strong className="stock-name">{stock.name}</strong>
-                  <div className="stock-meta">
-                    <span>
-                      {formatInsuranceCodeForDisplay(stock.insuranceCode) ||
-                        "보험코드 없음"}
-                    </span>
-                    <span>예상 {currency(stock.quantity * stock.price)}원</span>
-                  </div>
-                </div>
-                <div className="stock-side">
-                  <span className={`badge ${statusClass(stock.matchStatus)}`}>
-                    {statusText(stock.matchStatus)}
+        {!normalizedQuery && searchStatus === "idle" && (
+          <div className="manual-receipt-search-guide">
+            <span className="search-icon" />
+            <strong>검색 전에는 약품 목록을 보여주지 않아요</strong>
+            <p>약품명 두 글자 이상을 입력해 주세요.</p>
+          </div>
+        )}
+        {searchStatus === "short" && (
+          <p className="manual-receipt-search-note">
+            약품명을 두 글자 이상 입력해 주세요.
+          </p>
+        )}
+        {searchStatus === "loading" && (
+          <div className="manual-receipt-search-note is-loading">
+            <RefreshCw size={16} className="is-spinning" /> 약품을 찾고 있어요
+          </div>
+        )}
+        {searchStatus === "error" && (
+          <p className="stock-adjust-error manual-receipt-search-error">
+            약품을 검색하지 못했습니다. 잠시 후 다시 시도해 주세요.
+          </p>
+        )}
+        {searchStatus === "done" && visibleCandidates.length === 0 && (
+          <div className="empty-state manual-receipt-empty">
+            <strong>검색 결과가 없어요</strong>
+            <span>제품명의 다른 부분으로 검색해 보세요.</span>
+          </div>
+        )}
+        {visibleCandidates.length > 0 && (
+          <div className="manual-receipt-candidates">
+            {visibleCandidates.map((candidate) => (
+              <button
+                className={`manual-receipt-candidate ${
+                  candidate.receivable ? "" : "is-blocked"
+                }`}
+                key={candidate.id}
+                type="button"
+                disabled={!candidate.receivable}
+                onClick={() => chooseCandidate(candidate)}
+              >
+                <div>
+                  <strong>{candidate.name}</strong>
+                  <span>
+                    {[candidate.manufacturer, candidate.spec]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </span>
-                  <b>{stock.quantity}개</b>
+                  <em>PC {candidate.pc || "확인 필요"}</em>
                 </div>
-              </div>
+                <aside>
+                  <span>1통당</span>
+                  <b>{currency(candidate.productTotalQuantity)}개</b>
+                  <em>현재 {currency(candidate.currentStockQuantity)}개</em>
+                </aside>
+                <ChevronRight size={20} strokeWidth={2.5} />
+                {!candidate.receivable && (
+                  <small>{candidate.blockedReason}</small>
+                )}
+              </button>
             ))}
           </div>
         )}
+        {cart.length > 0 && <div className="manual-receipt-cart-spacer" />}
       </section>
+      {cart.length > 0 && (
+        <button
+          className="manual-receipt-cart-dock"
+          type="button"
+          onClick={() => setView("cart")}
+        >
+          <ShoppingCart size={19} />
+          <span>
+            장바구니 <b>{cart.length}</b>품목 · {cartPackageCount}통
+          </span>
+          <strong>보기</strong>
+        </button>
+      )}
     </>
   );
 }
@@ -8292,6 +9165,7 @@ function StocksScreen({
 function AccountScreen({
   loginId,
   password,
+  stockAdjustOnly = false,
   onBack,
   onInquiry,
   onLoginId,
@@ -8300,6 +9174,7 @@ function AccountScreen({
 }: {
   loginId: string;
   password: string;
+  stockAdjustOnly?: boolean;
   onBack?: () => void;
   onInquiry?: () => void;
   onLoginId: (value: string) => void;
@@ -8313,7 +9188,11 @@ function AccountScreen({
         <div className="login-panel">
           <div className="app-login-hero">
             <BrandLockup className="app-login-logo" />
-            <span>약품 재고를 스캔으로 간편하게</span>
+            <span>
+              {stockAdjustOnly
+                ? "실제 재고 수량을 간편하게 맞춰보세요"
+                : "약품 재고를 스캔으로 간편하게"}
+            </span>
           </div>
           <form className="login-form" onSubmit={onSubmit}>
             <label>
@@ -9711,10 +10590,19 @@ function App() {
     );
   }
 
+  if (path.startsWith("/stock-adjust")) {
+    return (
+      <>
+        <KakaoExternalBrowserGate />
+        <MobileApp key="stock-adjust-web" navigate={navigate} stockAdjustWeb />
+      </>
+    );
+  }
+
   return (
     <>
       <KakaoExternalBrowserGate />
-      <MobileApp navigate={navigate} />
+      <MobileApp key="mobile" navigate={navigate} />
     </>
   );
 }

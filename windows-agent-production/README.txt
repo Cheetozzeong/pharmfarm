@@ -42,6 +42,8 @@ Runtime folders:
   dead-letter Payload errors that should not be retried
   logs        Daily log files
   sync-state  Local row hashes used to send only changed reference rows and changed prescription snapshots
+  ui-alerts   Pending prescription stock alerts waiting for the signed-in user
+  ui-alerts-shown  Prescription stock alerts acknowledged by the user
 
 Runtime state files:
 
@@ -77,9 +79,18 @@ Prescription substitution rows:
 - The recent prescription watch window defaults to 32 rows. Add prescriptionScanRows to agent.config.json to adjust it; values are clamped between 8 and 500.
 - The agent also rescans all of today's prescriptions every 5 minutes by default. Set prescriptionFullScanIntervalMinutes to 0 to disable it, or 1-1440 to adjust the interval.
 
+Prescription stock alert:
+
+- Agent version 1.3.0-ps reads stockAlerts returned by POST /agent/prescriptions.
+- The server must set stockSource=PHARMFARM_SERVICE. Alerts from any other stock source are ignored.
+- A centered, top-most window lists each prescription row whose shortageQuantity is greater than zero or whose stockAfterQuantity is less than 1.
+- The popup shows prescription row, drug name, requested quantity, service stock before/after deduction, shortage quantity, and match status.
+- Pending alerts remain in C:\ProgramData\PharmFarmAgent\ui-alerts until the signed-in user acknowledges them.
+- Closing the tray icon prevents UI display, but does not discard pending alerts. They are shown after the tray process starts again.
+
 Remote web commands:
 
-- Agent version 1.2.0-ps can poll the PharmFarm API for remote commands.
+- Agent version 1.3.0-ps can poll the PharmFarm API for remote commands.
 - Default polling: GET /agent/commands?limit=5 every 30 seconds.
 - The request includes the existing agent headers: X-PharmFarm-Agent-Version, X-PharmFarm-Device-Id, X-PharmFarm-Pharmacy-Id, and HMAC headers when agentSecret is configured.
 - The server may return an array, or an object with commands/items/data.
