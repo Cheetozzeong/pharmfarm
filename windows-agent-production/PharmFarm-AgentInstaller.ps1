@@ -10,6 +10,8 @@ $InstallRoot = Join-Path $env:ProgramData $AppName
 $SourceRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 $AgentSource = Join-Path $SourceRoot "PharmFarm-Agent.ps1"
 $AgentTarget = Join-Path $InstallRoot "PharmFarm-Agent.ps1"
+$IconSource = Join-Path $SourceRoot "PharmFarm-Agent.ico"
+$IconTarget = Join-Path $InstallRoot "PharmFarm-Agent.ico"
 $TraySource = Join-Path $SourceRoot "PharmFarm-AgentTray.ps1"
 $TrayTarget = Join-Path $InstallRoot "PharmFarm-AgentTray.ps1"
 $ResyncTodaySource = Join-Path $SourceRoot "resync-today-prescriptions.bat"
@@ -108,6 +110,9 @@ function Write-Config {
   Ensure-Directory $InstallRoot
   Copy-Item -LiteralPath $AgentSource -Destination $AgentTarget -Force
   Copy-Item -LiteralPath $TraySource -Destination $TrayTarget -Force
+  if (Test-Path -LiteralPath $IconSource) {
+    Copy-Item -LiteralPath $IconSource -Destination $IconTarget -Force
+  }
   if (Test-Path -LiteralPath $ResyncTodaySource) {
     Copy-Item -LiteralPath $ResyncTodaySource -Destination $ResyncTodayTarget -Force
   }
@@ -345,6 +350,9 @@ function Install-StartupShortcutFallback {
     $agentShortcut.Arguments = $AgentArgument
     $agentShortcut.WorkingDirectory = $InstallRoot
     $agentShortcut.WindowStyle = 7
+    if (Test-Path -LiteralPath $IconTarget) {
+      $agentShortcut.IconLocation = $IconTarget
+    }
     $agentShortcut.Save()
 
     $trayShortcut = $shell.CreateShortcut((Join-Path $startupDir "PharmFarmAgentTray.lnk"))
@@ -352,6 +360,9 @@ function Install-StartupShortcutFallback {
     $trayShortcut.Arguments = $TrayArgument
     $trayShortcut.WorkingDirectory = $InstallRoot
     $trayShortcut.WindowStyle = 7
+    if (Test-Path -LiteralPath $IconTarget) {
+      $trayShortcut.IconLocation = $IconTarget
+    }
     $trayShortcut.Save()
 
     $startResult = Start-AgentProcesses -PowerShellExe $PowerShellExe -AgentArgument $AgentArgument -TrayArgument $TrayArgument
@@ -418,6 +429,12 @@ $form.StartPosition = "CenterScreen"
 $form.FormBorderStyle = "FixedDialog"
 $form.MaximizeBox = $false
 $form.BackColor = [System.Drawing.Color]::FromArgb(245, 246, 239)
+if (Test-Path -LiteralPath $IconSource) {
+  try {
+    $form.Icon = New-Object System.Drawing.Icon($IconSource)
+  } catch {
+  }
+}
 
 $title = New-Object System.Windows.Forms.Label
 $title.Text = "PharmFarm Agent"

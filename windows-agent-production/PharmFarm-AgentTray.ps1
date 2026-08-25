@@ -7,6 +7,7 @@ $AppName = "PharmFarmAgent"
 $TaskName = "PharmFarmAgent"
 $InstallRoot = Join-Path $env:ProgramData $AppName
 $AgentScript = Join-Path $InstallRoot "PharmFarm-Agent.ps1"
+$IconFile = Join-Path $InstallRoot "PharmFarm-Agent.ico"
 $ConfigFile = Join-Path $InstallRoot "agent.config.json"
 $StateFile = Join-Path $InstallRoot "agent.state.json"
 $LogDir = Join-Path $InstallRoot "logs"
@@ -23,6 +24,25 @@ function Ensure-Directory {
   param([string]$Path)
   if (!(Test-Path -LiteralPath $Path)) {
     [void](New-Item -ItemType Directory -Force -Path $Path)
+  }
+}
+
+function Get-PharmFarmTrayIcon {
+  $script:ownsTrayIcon = $false
+  if (!(Test-Path -LiteralPath $IconFile)) {
+    return [System.Drawing.SystemIcons]::Application
+  }
+
+  try {
+    $sourceIcon = New-Object System.Drawing.Icon($IconFile)
+    try {
+      $script:ownsTrayIcon = $true
+      return $sourceIcon.Clone()
+    } finally {
+      $sourceIcon.Dispose()
+    }
+  } catch {
+    return [System.Drawing.SystemIcons]::Application
   }
 }
 
@@ -315,30 +335,45 @@ function Show-PrescriptionStockAlert {
   $form.MinimizeBox = $false
   $form.TopMost = $true
   $form.ShowInTaskbar = $true
-  $form.BackColor = [System.Drawing.Color]::White
+  $form.BackColor = [System.Drawing.Color]::FromArgb(247, 249, 243)
+
+  $brandImage = $null
+  if ($null -ne $script:trayIcon) {
+    try {
+      $brandImage = $script:trayIcon.ToBitmap()
+      $brand = New-Object System.Windows.Forms.PictureBox
+      $brand.Image = $brandImage
+      $brand.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
+      $brand.Location = New-Object System.Drawing.Point(26, 19)
+      $brand.Size = New-Object System.Drawing.Size(36, 36)
+      $form.Controls.Add($brand)
+    } catch {
+      $brandImage = $null
+    }
+  }
 
   $title = New-Object System.Windows.Forms.Label
-  $title.Text = "처방 조제 전 재고를 확인해 주세요"
-  $title.Location = New-Object System.Drawing.Point(26, 22)
-  $title.Size = New-Object System.Drawing.Size(840, 32)
-  $title.Font = New-Object System.Drawing.Font("Segoe UI", 16, [System.Drawing.FontStyle]::Bold)
-  $title.ForeColor = [System.Drawing.Color]::FromArgb(170, 36, 36)
+  $title.Text = "처방 재고를 확인해 주세요"
+  $title.Location = New-Object System.Drawing.Point(72, 18)
+  $title.Size = New-Object System.Drawing.Size(794, 32)
+  $title.Font = New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)
+  $title.ForeColor = [System.Drawing.Color]::FromArgb(32, 35, 29)
   $form.Controls.Add($title)
 
   $summary = New-Object System.Windows.Forms.Label
   $summary.Text = "$prescriptionLabel · 부족 $shortageCount건 · 처방 후 1개 미만 $lowStockCount건"
-  $summary.Location = New-Object System.Drawing.Point(29, 58)
-  $summary.Size = New-Object System.Drawing.Size(840, 24)
+  $summary.Location = New-Object System.Drawing.Point(75, 50)
+  $summary.Size = New-Object System.Drawing.Size(790, 24)
   $summary.Font = New-Object System.Drawing.Font("Segoe UI", 10)
-  $summary.ForeColor = [System.Drawing.Color]::FromArgb(80, 80, 80)
+  $summary.ForeColor = [System.Drawing.Color]::FromArgb(104, 112, 97)
   $form.Controls.Add($summary)
 
   $source = New-Object System.Windows.Forms.Label
   $source.Text = "기준 재고: PharmFarm 서비스 현재고"
-  $source.Location = New-Object System.Drawing.Point(29, 84)
+  $source.Location = New-Object System.Drawing.Point(29, 83)
   $source.Size = New-Object System.Drawing.Size(840, 22)
   $source.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
-  $source.ForeColor = [System.Drawing.Color]::FromArgb(38, 108, 66)
+  $source.ForeColor = [System.Drawing.Color]::FromArgb(47, 122, 77)
   $form.Controls.Add($source)
 
   $grid = New-Object System.Windows.Forms.DataGridView
@@ -352,12 +387,22 @@ function Show-PrescriptionStockAlert {
   $grid.MultiSelect = $false
   $grid.RowHeadersVisible = $false
   $grid.SelectionMode = [System.Windows.Forms.DataGridViewSelectionMode]::FullRowSelect
-  $grid.BackgroundColor = [System.Drawing.Color]::White
+  $grid.BackgroundColor = [System.Drawing.Color]::FromArgb(255, 255, 253)
   $grid.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
   $grid.AutoSizeRowsMode = [System.Windows.Forms.DataGridViewAutoSizeRowsMode]::AllCells
   $grid.DefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9)
   $grid.DefaultCellStyle.WrapMode = [System.Windows.Forms.DataGridViewTriState]::True
+  $grid.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(255, 255, 253)
+  $grid.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(32, 35, 29)
+  $grid.DefaultCellStyle.SelectionBackColor = [System.Drawing.Color]::FromArgb(225, 237, 219)
+  $grid.DefaultCellStyle.SelectionForeColor = [System.Drawing.Color]::FromArgb(32, 35, 29)
+  $grid.AlternatingRowsDefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(250, 251, 247)
+  $grid.EnableHeadersVisualStyles = $false
   $grid.ColumnHeadersDefaultCellStyle.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+  $grid.ColumnHeadersDefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(235, 241, 229)
+  $grid.ColumnHeadersDefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(58, 69, 52)
+  $grid.ColumnHeadersDefaultCellStyle.SelectionBackColor = [System.Drawing.Color]::FromArgb(235, 241, 229)
+  $grid.ColumnHeadersDefaultCellStyle.SelectionForeColor = [System.Drawing.Color]::FromArgb(58, 69, 52)
   $grid.ColumnHeadersHeight = 34
   $grid.RowTemplate.Height = 32
 
@@ -385,33 +430,45 @@ function Show-PrescriptionStockAlert {
       $statusText
     )
     $gridRow = $grid.Rows[$rowIndex]
-    if ($alertType -eq "SHORTAGE") {
-      $gridRow.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(255, 235, 235)
-      $gridRow.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(145, 30, 30)
+    if (!$matched) {
+      $gridRow.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(249, 247, 252)
+      $gridRow.Cells[6].Style.ForeColor = [System.Drawing.Color]::FromArgb(105, 78, 142)
+      $gridRow.Cells[6].Style.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+    } elseif ($alertType -eq "SHORTAGE") {
+      $gridRow.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(255, 251, 249)
+      $gridRow.Cells[5].Style.ForeColor = [System.Drawing.Color]::FromArgb(188, 68, 58)
+      $gridRow.Cells[5].Style.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
+      $gridRow.Cells[6].Style.ForeColor = [System.Drawing.Color]::FromArgb(188, 68, 58)
+      $gridRow.Cells[6].Style.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
     } else {
-      $gridRow.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(255, 247, 224)
-      $gridRow.DefaultCellStyle.ForeColor = [System.Drawing.Color]::FromArgb(120, 76, 10)
+      $gridRow.DefaultCellStyle.BackColor = [System.Drawing.Color]::FromArgb(255, 253, 247)
+      $gridRow.Cells[6].Style.ForeColor = [System.Drawing.Color]::FromArgb(164, 110, 30)
+      $gridRow.Cells[6].Style.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
     }
   }
   $grid.ClearSelection()
   $form.Controls.Add($grid)
 
   $closeButton = New-Object System.Windows.Forms.Button
-  $closeButton.Text = "확인"
+  $closeButton.Text = "확인했어요"
   $closeButton.Size = New-Object System.Drawing.Size(110, 36)
   $closeButton.Location = New-Object System.Drawing.Point(($form.ClientSize.Width - 138), ($form.ClientSize.Height - 50))
   $closeButton.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right
   $closeButton.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-  $closeButton.BackColor = [System.Drawing.Color]::FromArgb(190, 38, 38)
+  $closeButton.BackColor = [System.Drawing.Color]::FromArgb(63, 125, 88)
   $closeButton.ForeColor = [System.Drawing.Color]::White
   $closeButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
+  $closeButton.FlatAppearance.BorderSize = 0
   $closeButton.Add_Click({ $form.DialogResult = [System.Windows.Forms.DialogResult]::OK; $form.Close() })
   $form.AcceptButton = $closeButton
   $form.Controls.Add($closeButton)
 
-  [System.Media.SystemSounds]::Exclamation.Play()
+  [System.Media.SystemSounds]::Asterisk.Play()
   [void]$form.ShowDialog()
   $form.Dispose()
+  if ($null -ne $brandImage) {
+    $brandImage.Dispose()
+  }
 }
 
 function Check-PrescriptionStockAlerts {
@@ -454,14 +511,6 @@ function Update-TrayStatus {
     $message = if ($state.message) { $state.message.ToString() } else { "상태 메시지 없음" }
   }
 
-  if ($taskState -eq "Running") {
-    $script:notifyIcon.Icon = [System.Drawing.SystemIcons]::Information
-  } elseif ($taskState -eq "Ready") {
-    $script:notifyIcon.Icon = [System.Drawing.SystemIcons]::Application
-  } else {
-    $script:notifyIcon.Icon = [System.Drawing.SystemIcons]::Warning
-  }
-
   $tooltip = "PharmFarm 실행 중 · $taskState · 대기 $queueCount"
   if ($tooltip.Length -gt 63) {
     $tooltip = $tooltip.Substring(0, 63)
@@ -481,8 +530,9 @@ Ensure-Directory $UiAlertDir
 Ensure-Directory $UiAlertShownDir
 Ensure-Directory $UiAlertFailedDir
 
+$script:trayIcon = Get-PharmFarmTrayIcon
 $script:notifyIcon = New-Object System.Windows.Forms.NotifyIcon
-$script:notifyIcon.Icon = [System.Drawing.SystemIcons]::Information
+$script:notifyIcon.Icon = $script:trayIcon
 $script:notifyIcon.Text = "PharmFarm 실행 중"
 $script:notifyIcon.Visible = $true
 
@@ -571,6 +621,9 @@ $exitItem.Add_Click({
   $script:alertTimer.Stop()
   $script:notifyIcon.Visible = $false
   $script:notifyIcon.Dispose()
+  if ($script:ownsTrayIcon -and $null -ne $script:trayIcon) {
+    $script:trayIcon.Dispose()
+  }
   [System.Windows.Forms.Application]::Exit()
 })
 $menu.Items.Add($exitItem) | Out-Null

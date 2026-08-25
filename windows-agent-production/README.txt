@@ -20,14 +20,17 @@ Files:
    Shows a PharmFarm status icon in the Windows tray area.
    The installer registers it as PharmFarmAgentTray.
 
-4. run-agent-console.bat
+4. PharmFarm-Agent.ico
+   PharmFarm mascot icon used by the tray process, setup wizard, and Startup shortcuts.
+
+5. run-agent-console.bat
    Runs the agent in a visible console for troubleshooting.
 
-5. resync-today-prescriptions.bat
+6. resync-today-prescriptions.bat
    Runs a one-time test sync for today's prescription rows.
    It sends overwriteExisting=true so the server can replace already imported prescription lines.
 
-6. uninstall-pharmfarm-agent.bat
+7. uninstall-pharmfarm-agent.bat
    Removes the Scheduled Task and Startup fallback shortcuts.
    Runtime queue/log files remain in ProgramData for recovery/audit.
 
@@ -85,6 +88,7 @@ Prescription stock alert:
 - The server must set stockSource=PHARMFARM_SERVICE. Alerts from any other stock source are ignored.
 - A centered, top-most window lists each prescription row whose shortageQuantity is greater than zero or whose stockAfterQuantity is less than 1.
 - The popup shows prescription row, drug name, requested quantity, service stock before/after deduction, shortage quantity, and match status.
+- The popup uses the PharmFarm ivory/green palette. Red and amber are limited to shortage and low-stock values instead of filling the entire row.
 - Pending alerts remain in C:\ProgramData\PharmFarmAgent\ui-alerts until the signed-in user acknowledges them.
 - Closing the tray icon prevents UI display, but does not discard pending alerts. They are shown after the tray process starts again.
 
@@ -156,7 +160,7 @@ If data does not arrive:
 
 Tray icon:
 
-- Shows PharmFarm running status in the Windows notification area.
+- Shows the PharmFarm mascot in the Windows notification area. Runtime state remains available in the icon tooltip and context menu.
 - Right-click to refresh status, open logs, open queue, start/stop the agent, or close the tray icon.
 - Right-click "금일 처방 다시 가져오기" to resend today's prescription rows with overwriteExisting=true.
 - Right-click "향정 후보 다시 동기화" to rescan only controlled-drug candidate sources.

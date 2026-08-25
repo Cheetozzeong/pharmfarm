@@ -1219,6 +1219,65 @@ p {
   padding: 14px;
 }
 
+.manual-receipt-entry-card {
+  display: grid;
+  width: 100%;
+  min-height: 72px;
+  grid-template-columns: 40px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 11px;
+  margin: 0 0 14px;
+  border: 1px solid #cfe0fb;
+  border-radius: 15px;
+  background: #f4f8ff;
+  padding: 11px 13px;
+  text-align: left;
+}
+
+.manual-receipt-entry-card:hover,
+.manual-receipt-entry-card:active {
+  border-color: #9fc2f8;
+  background: #edf5ff;
+}
+
+.manual-receipt-entry-card > span {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 12px;
+  background: #fff;
+  color: #075bcf;
+  box-shadow: 0 4px 12px rgba(0, 91, 207, 0.08);
+}
+
+.manual-receipt-entry-card > div {
+  display: grid;
+  min-width: 0;
+  gap: 3px;
+}
+
+.manual-receipt-entry-card strong {
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 900;
+}
+
+.manual-receipt-entry-card em {
+  overflow: hidden;
+  color: #6f7b85;
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 650;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.manual-receipt-entry-card > svg {
+  color: #8ca6c7;
+}
+
 .selected-wholesaler {
   margin: 4px 0 14px;
 }

@@ -45,6 +45,7 @@ import {
 } from "lucide-react";
 import barGraphIcon from "../icons/20px/bargraph.svg";
 import briefcaseIcon from "../icons/20px/briefcase.svg";
+import checkFilledIcon from "../icons/20px/check-filled.svg";
 import fileTextIcon from "../icons/20px/filetext.svg";
 import homeIcon from "../icons/20px/home.svg";
 import pieGraphIcon from "../icons/20px/pieGraph.svg";
@@ -3998,6 +3999,9 @@ function MobileApp({
   stockAdjustWeb?: boolean;
 }) {
   const uiPreviewMode = getUiPreviewMode();
+  const stockAdjustFromCms =
+    stockAdjustWeb &&
+    new URLSearchParams(window.location.search).get("from") === "cms";
   const receiptMatchPreview = uiPreviewMode === "receipt-match";
   const returnPreview = uiPreviewMode?.startsWith("return-") ?? false;
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -6260,6 +6264,7 @@ function MobileApp({
               : undefined
           }
           onChoose={setPendingWholesalerId}
+          onManualReceipt={() => setScreen("stocks")}
           onReturnFirst={startReturnFirst}
           onSearch={searchWholesalers}
           onStart={() => {
@@ -6535,9 +6540,11 @@ function MobileApp({
           message={stocksMessage}
           searchStatus={manualReceiptSearchStatus}
           onBack={
-            stockAdjustWeb || isLimitedPharmacistAccount(authAccount)
-              ? undefined
-              : () => setScreen("scan")
+            stockAdjustFromCms && navigate
+              ? () => navigate("/cms")
+              : stockAdjustWeb || isLimitedPharmacistAccount(authAccount)
+                ? undefined
+                : () => setScreen("scan")
           }
           onLogout={logoutMobile}
           onSearch={searchManualReceiptCandidates}
@@ -6843,7 +6850,7 @@ function ScanScreen({
                   onStocks();
                 }}
               >
-                품목 확인 페이지
+                간편 입고
               </button>
               <button
                 type="button"
@@ -7105,6 +7112,7 @@ function WholesalerScreen({
   wholesalers,
   onBack,
   onChoose,
+  onManualReceipt,
   onReturnFirst,
   onSearch,
   onStart,
@@ -7117,6 +7125,7 @@ function WholesalerScreen({
   wholesalers: Wholesaler[];
   onBack?: () => void;
   onChoose: (id: string) => void;
+  onManualReceipt: () => void;
   onReturnFirst: () => void;
   onSearch: (keyword: string) => void;
   onStart: () => void;
@@ -7168,6 +7177,20 @@ function WholesalerScreen({
         />
       </label>
       <section className="scroll-body">
+        <button
+          className="manual-receipt-entry-card"
+          type="button"
+          onClick={onManualReceipt}
+        >
+          <span>
+            <PackageCheck size={22} strokeWidth={2.4} />
+          </span>
+          <div>
+            <strong>QR 없이 간편 입고</strong>
+            <em>약품명을 검색하고 들어온 통 수만 입력하세요.</em>
+          </div>
+          <ChevronRight size={19} strokeWidth={2.5} />
+        </button>
         {selected && (
           <div className="selected-wholesaler">
             <span>선택됨</span>
@@ -16533,7 +16556,7 @@ function CmsSidebar({
   page: CmsPage;
 }) {
   const canAccessPurchase = canAccessPurchaseCms(account);
-  const items: Array<[CmsPage, string, string, string]> = [
+  const items: Array<[string, string, string, string]> = [
     ["dashboard", "대시보드", "/cms", homeIcon],
     ...(canAccessMasterData
       ? ([["inquiries", "도입 문의", "/cms/inquiries", fileTextIcon]] as Array<
@@ -16560,6 +16583,7 @@ function CmsSidebar({
         ] as Array<[CmsPage, string, string, string]>)
       : []),
     ["inventory", "재고", "/cms/inventory", barGraphIcon],
+    ["manual-receipt", "간편 입고", "/stock-adjust?from=cms", checkFilledIcon],
     ...(canAccessMasterData
       ? ([
           [
