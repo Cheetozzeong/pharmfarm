@@ -6544,7 +6544,8 @@ function MobileApp({
               ? () => navigate("/cms")
               : stockAdjustWeb || isLimitedPharmacistAccount(authAccount)
                 ? undefined
-                : () => setScreen("scan")
+                : () =>
+                    setScreen(selectedWholesaler ? "scan" : "wholesaler")
           }
           onLogout={logoutMobile}
           onSearch={searchManualReceiptCandidates}
