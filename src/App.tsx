@@ -9177,9 +9177,10 @@ function StocksScreen({
                 <div>
                   <strong>{candidate.name}</strong>
                   <span className="manual-receipt-candidate-meta">
-                    {candidate.packageType && (
-                      <b>{manualReceiptPackageLabel(candidate.packageType)}</b>
-                    )}
+                    <b className={candidate.packageType ? "" : "is-missing"}>
+                      {manualReceiptPackageLabel(candidate.packageType) ||
+                        "포장정보 없음"}
+                    </b>
                     <i>
                       {[candidate.manufacturer, candidate.spec]
                         .filter(Boolean)

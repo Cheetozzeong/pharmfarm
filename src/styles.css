@@ -2397,6 +2397,11 @@ p {
   font-weight: 900;
 }
 
+.manual-receipt-candidate-meta > b.is-missing {
+  background: #eef0f2;
+  color: #747f88;
+}
+
 .manual-receipt-candidate-meta > i {
   overflow: hidden;
   font-style: normal;
