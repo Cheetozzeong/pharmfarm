@@ -320,13 +320,15 @@ function Show-PrescriptionStockAlert {
     return
   }
 
+  $isSuccessPreview = (Get-AlertValue -Object $Alert -Name "successPreview" -DefaultValue $false) -eq $true
+  $acceptedCount = Get-AlertValue -Object $Alert -Name "acceptedCount" -DefaultValue 0
   $prescriptionCodes = @((Get-AlertValue -Object $Alert -Name "prescriptionCodes" -DefaultValue @()) | Where-Object { ![string]::IsNullOrWhiteSpace($_) })
   $prescriptionLabel = if ($prescriptionCodes.Count -gt 0) { $prescriptionCodes -join ", " } else { "처방전" }
   $shortageCount = @($rows | Where-Object { (Get-AlertValue -Object $_ -Name "alertType" -DefaultValue "") -eq "SHORTAGE" }).Count
   $lowStockCount = $rows.Count - $shortageCount
 
   $form = New-Object System.Windows.Forms.Form
-  $form.Text = "PharmFarm 처방 재고 알림"
+  $form.Text = if ($isSuccessPreview) { "PharmFarm 처방 성공" } else { "PharmFarm 처방 재고 알림" }
   $form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
   $form.Size = New-Object System.Drawing.Size(920, ([Math]::Min(720, [Math]::Max(420, 250 + ($rows.Count * 34)))))
   $form.MinimumSize = New-Object System.Drawing.Size(820, 420)
@@ -353,7 +355,7 @@ function Show-PrescriptionStockAlert {
   }
 
   $title = New-Object System.Windows.Forms.Label
-  $title.Text = "처방 재고를 확인해 주세요"
+  $title.Text = if ($isSuccessPreview) { "처방 성공!" } else { "처방 재고를 확인해 주세요" }
   $title.Location = New-Object System.Drawing.Point(72, 18)
   $title.Size = New-Object System.Drawing.Size(794, 32)
   $title.Font = New-Object System.Drawing.Font("Segoe UI", 15, [System.Drawing.FontStyle]::Bold)
@@ -361,7 +363,11 @@ function Show-PrescriptionStockAlert {
   $form.Controls.Add($title)
 
   $summary = New-Object System.Windows.Forms.Label
-  $summary.Text = "$prescriptionLabel · 부족 $shortageCount건 · 처방 후 1개 미만 $lowStockCount건"
+  $summary.Text = if ($isSuccessPreview) {
+    "$prescriptionLabel · 처방 $acceptedCount개 행이 정상 반영됐어요."
+  } else {
+    "$prescriptionLabel · 부족 $shortageCount건 · 처방 후 1개 미만 $lowStockCount건"
+  }
   $summary.Location = New-Object System.Drawing.Point(75, 50)
   $summary.Size = New-Object System.Drawing.Size(790, 24)
   $summary.Font = New-Object System.Drawing.Font("Segoe UI", 10)
@@ -369,7 +375,11 @@ function Show-PrescriptionStockAlert {
   $form.Controls.Add($summary)
 
   $source = New-Object System.Windows.Forms.Label
-  $source.Text = "기준 재고: PharmFarm 서비스 현재고"
+  $source.Text = if ($isSuccessPreview) {
+    "부족 시 표시 예시 · 아래 내용은 실제 재고 결과가 아닙니다."
+  } else {
+    "기준 재고: PharmFarm 서비스 현재고"
+  }
   $source.Location = New-Object System.Drawing.Point(29, 83)
   $source.Size = New-Object System.Drawing.Size(840, 22)
   $source.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
@@ -450,7 +460,7 @@ function Show-PrescriptionStockAlert {
   $form.Controls.Add($grid)
 
   $closeButton = New-Object System.Windows.Forms.Button
-  $closeButton.Text = "확인했어요"
+  $closeButton.Text = if ($isSuccessPreview) { "확인" } else { "확인했어요" }
   $closeButton.Size = New-Object System.Drawing.Size(110, 36)
   $closeButton.Location = New-Object System.Drawing.Point(($form.ClientSize.Width - 138), ($form.ClientSize.Height - 50))
   $closeButton.Anchor = [System.Windows.Forms.AnchorStyles]::Bottom -bor [System.Windows.Forms.AnchorStyles]::Right

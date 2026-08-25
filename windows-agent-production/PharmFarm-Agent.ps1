@@ -33,7 +33,7 @@ $LastSqlOkAt = $null
 $LastApiOkAt = $null
 $RemoteCommandPollingUnavailable = $false
 $HeartbeatUnavailable = $false
-$AgentVersion = "1.3.0-ps"
+$AgentVersion = "1.3.1-ps"
 
 function Ensure-Directory {
   param([string]$Path)
@@ -2050,6 +2050,7 @@ function New-RequestHeaders {
 
 function Save-PrescriptionStockAlert {
   param(
+    [object]$Config,
     [object]$Envelope,
     [object]$Response
   )
@@ -2071,8 +2072,45 @@ function Save-PrescriptionStockAlert {
 
   $rowsValue = Get-AgentObjectValue -Object $data -Name "stockAlerts" -DefaultValue @()
   $rows = @($rowsValue | Where-Object { $null -ne $_ })
+  $accepted = 0
+  $failed = 0
+  try { $accepted = [int](Get-AgentObjectValue -Object $data -Name "accepted" -DefaultValue 0) } catch { $accepted = 0 }
+  try { $failed = [int](Get-AgentObjectValue -Object $data -Name "failedCount" -DefaultValue 0) } catch { $failed = 0 }
+  $successPreview = $false
+
   if ($rows.Count -eq 0) {
-    return 0
+    $previewEnabled = Test-AgentConfigEnabled -Config $Config -Name "prescriptionSuccessPreviewEnabled" -DefaultValue $false
+    if (!$previewEnabled -or $accepted -le 0 -or $failed -gt 0) {
+      return 0
+    }
+
+    $successPreview = $true
+    $rows = @(
+      [ordered]@{
+        lineNo = "예시 1"
+        insuranceCode = "000000001"
+        drugName = "[예시] 아모디핀정 5mg"
+        alertType = "SHORTAGE"
+        requestedQuantity = 30
+        stockBeforeQuantity = 12
+        stockAfterQuantity = 0
+        shortageQuantity = 18
+        matchedServiceStock = $true
+        message = "실제 재고가 부족하면 이와 같이 표시됩니다."
+      },
+      [ordered]@{
+        lineNo = "예시 2"
+        insuranceCode = "000000002"
+        drugName = "[예시] 메트포르민정 500mg"
+        alertType = "LOW_STOCK"
+        requestedQuantity = 29
+        stockBeforeQuantity = 29
+        stockAfterQuantity = 0
+        shortageQuantity = 0
+        matchedServiceStock = $true
+        message = "처방 후 재고가 1개 미만이면 이와 같이 표시됩니다."
+      }
+    )
   }
 
   Ensure-Directory $UiAlertDir
@@ -2080,9 +2118,19 @@ function Save-PrescriptionStockAlert {
   $prescriptionCodes = @($rows | ForEach-Object {
     Convert-AgentText (Get-AgentObjectValue -Object $_ -Name "prescriptionCode" -DefaultValue "")
   } | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+  if ($prescriptionCodes.Count -eq 0) {
+    $payload = Get-AgentObjectValue -Object $Envelope -Name "payload" -DefaultValue $null
+    $payloadItems = @((Get-AgentObjectValue -Object $payload -Name "items" -DefaultValue @()) | Where-Object { $null -ne $_ })
+    $prescriptionCodes = @($payloadItems | ForEach-Object {
+      Convert-AgentText (Get-AgentObjectValue -Object $_ -Name "prescriptionCode" -DefaultValue "")
+    } | Where-Object { ![string]::IsNullOrWhiteSpace($_) } | Select-Object -Unique)
+  }
   $alert = [ordered]@{
     id = $eventId
     eventId = $eventId
+    alertKind = if ($successPreview) { "SUCCESS_PREVIEW" } else { "STOCK_ALERT" }
+    successPreview = $successPreview
+    acceptedCount = $accepted
     stockSource = "PHARMFARM_SERVICE"
     prescriptionCodes = $prescriptionCodes
     createdAt = Get-AgentTimestamp
@@ -2090,12 +2138,12 @@ function Save-PrescriptionStockAlert {
   }
   $path = Join-Path $UiAlertDir ("{0}.json" -f $eventId)
   if (Test-Path -LiteralPath $path) {
-    Write-AgentLog "prescription stock alert already queued event=$eventId rows=$($rows.Count)"
+    Write-AgentLog "prescription ui alert already queued event=$eventId kind=$($alert.alertKind) rows=$($rows.Count)"
     return $rows.Count
   }
 
   Write-JsonFile -Path $path -Value $alert -Depth 20
-  Write-AgentLog "prescription stock alert queued event=$eventId rows=$($rows.Count) prescriptions=$($prescriptionCodes -join ',')"
+  Write-AgentLog "prescription ui alert queued event=$eventId kind=$($alert.alertKind) rows=$($rows.Count) prescriptions=$($prescriptionCodes -join ',')"
   return $rows.Count
 }
 
@@ -2114,7 +2162,7 @@ function Submit-Envelope {
   try {
     Write-AgentLog "submit start event=$($Envelope.eventId) url=$url bytes=$($body.Length) items=$itemCount pharmacyId=$($Config.pharmacyId)"
     $response = Invoke-RestMethod -Method Post -Uri $url -ContentType "application/json; charset=utf-8" -Headers $headers -Body $body -TimeoutSec 20
-    $stockAlertCount = Save-PrescriptionStockAlert -Envelope $Envelope -Response $response
+    $stockAlertCount = Save-PrescriptionStockAlert -Config $Config -Envelope $Envelope -Response $response
     $script:LastApiOkAt = Get-AgentTimestamp
     return @{ ok = $true; retry = $false; status = 200; message = "sent"; stockAlertCount = $stockAlertCount }
   } catch {
