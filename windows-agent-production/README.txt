@@ -84,10 +84,10 @@ Prescription substitution rows:
 
 Prescription stock alert:
 
-- Agent version 1.3.1-ps reads stockAlerts returned by POST /agent/prescriptions.
+- Agent version 1.3.2-ps reads stockAlerts returned by POST /agent/prescriptions.
 - The server must set stockSource=PHARMFARM_SERVICE. Alerts from any other stock source are ignored.
-- Test packages enable prescriptionSuccessPreviewEnabled. When a prescription succeeds with no real stock alert, the centered window shows "처방 성공!" and two clearly labeled dummy rows demonstrating shortage and low-stock states.
-- Dummy rows are marked as examples and are never written back to inventory. Set prescriptionSuccessPreviewEnabled=false in agent.config.json to disable the success preview.
+- Successful prescriptions with no shortage or low-stock row do not show a popup.
+- The agent decodes prescription API responses directly as UTF-8 so Korean drug names remain readable on Windows PowerShell 5.1.
 - A centered, top-most window lists each prescription row whose shortageQuantity is greater than zero or whose stockAfterQuantity is less than 1.
 - The popup shows prescription row, drug name, requested quantity, service stock before/after deduction, shortage quantity, and match status.
 - The popup uses the PharmFarm ivory/green palette. Red and amber are limited to shortage and low-stock values instead of filling the entire row.
@@ -96,7 +96,7 @@ Prescription stock alert:
 
 Remote web commands:
 
-- Agent version 1.3.1-ps can poll the PharmFarm API for remote commands.
+- Agent version 1.3.2-ps can poll the PharmFarm API for remote commands.
 - Default polling: GET /agent/commands?limit=5 every 30 seconds.
 - The request includes the existing agent headers: X-PharmFarm-Agent-Version, X-PharmFarm-Device-Id, X-PharmFarm-Pharmacy-Id, and HMAC headers when agentSecret is configured.
 - The server may return an array, or an object with commands/items/data.

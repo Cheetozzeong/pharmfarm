@@ -159,7 +159,7 @@ function Write-Config {
     remoteCommandPath = "/agent/commands"
     heartbeatEnabled = $true
     heartbeatIntervalSeconds = 60
-    prescriptionSuccessPreviewEnabled = $true
+    prescriptionSuccessPreviewEnabled = $false
     createdAt = (Get-Date).ToUniversalTime().ToString("o")
   }
 
