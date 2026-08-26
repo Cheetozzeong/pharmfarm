@@ -1234,6 +1234,16 @@ p {
   text-align: left;
 }
 
+.manual-receipt-entry-card.is-hidden,
+.secondary-btn.manual-only-hidden {
+  display: none;
+}
+
+.manual-receipt-entry-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.48;
+}
+
 .manual-receipt-entry-card:hover,
 .manual-receipt-entry-card:active {
   border-color: #9fc2f8;
@@ -1802,6 +1812,16 @@ p {
   font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.stock-adjust-accountbar .manual-receipt-wholesaler-name {
+  width: fit-content;
+  border-radius: 999px;
+  background: #eaf2ff;
+  padding: 3px 8px;
+  color: #075bcf;
+  font-size: 10px;
+  font-weight: 900;
 }
 
 .stock-adjust-accountbar span {

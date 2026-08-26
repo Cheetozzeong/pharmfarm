@@ -1328,17 +1328,6 @@ function getStoredAuthAccount(): AuthAccount | null {
   }
 }
 
-function isLimitedPharmacistAccount(account?: AuthAccount | null) {
-  const role = account?.role?.trim().toUpperCase();
-  const accountType = account?.accountType?.trim().toUpperCase();
-
-  return role === "PHARMACY_LIMITED" || accountType === "LIMITED";
-}
-
-function mobileHomeScreen(account?: AuthAccount | null): Screen {
-  return isLimitedPharmacistAccount(account) ? "stocks" : "wholesaler";
-}
-
 function clearAuthTokens() {
   localStorage.removeItem(storageKeys.accessToken);
   localStorage.removeItem(storageKeys.refreshToken);
@@ -4100,16 +4089,14 @@ function MobileApp({
 
   const [screen, setScreen] = useState<Screen>(() => {
     if (receiptMatchPreview) return "receiptMatch";
-    if (uiPreviewMode === "stock-adjust") return "stocks";
+    if (uiPreviewMode === "stock-adjust") return "wholesaler";
     if (stockAdjustWeb) {
-      return hasStoredAuthTokens() ? "stocks" : "account";
+      return hasStoredAuthTokens() ? "wholesaler" : "account";
     }
     if (uiPreviewMode === "return-confirmed") return "returnConfirmed";
     if (uiPreviewMode === "return-done") return "returnDone";
     if (uiPreviewMode === "return-scan") return "scan";
-    return hasStoredAuthTokens()
-      ? mobileHomeScreen(getStoredAuthAccount())
-      : "account";
+    return hasStoredAuthTokens() ? "wholesaler" : "account";
   });
   const [mode, setMode] = useState<Mode>(returnPreview ? "return" : "receipt");
   const [cameraActive, setCameraActive] = useState(false);
@@ -4144,7 +4131,9 @@ function MobileApp({
       : getStoredAuthAccount(),
   );
   const [wholesalers, setWholesalers] = useState<Wholesaler[]>(() =>
-    receiptMatchPreview ? demoWholesalers : [],
+    receiptMatchPreview || uiPreviewMode === "stock-adjust"
+      ? demoWholesalers
+      : [],
   );
   const [wholesalerSearchResults, setWholesalerSearchResults] = useState<
     Wholesaler[]
@@ -4153,7 +4142,9 @@ function MobileApp({
     "idle" | "short" | "loading" | "done" | "error"
   >("idle");
   const [selectedWholesalerId, setSelectedWholesalerId] = useState(
-    receiptMatchPreview ? (demoWholesalers[0]?.id ?? "") : "",
+    receiptMatchPreview || uiPreviewMode === "stock-adjust"
+      ? (demoWholesalers[0]?.id ?? "")
+      : "",
   );
   const [pendingWholesalerId, setPendingWholesalerId] = useState("");
   const [stocks, setStocks] = useState<StockItem[]>(() =>
@@ -4745,7 +4736,7 @@ function MobileApp({
       const validItems = items.filter(
         (item) => item.candidate.receivable && item.packageCount > 0,
       );
-      if (validItems.length === 0) return false;
+      if (validItems.length === 0 || !selectedWholesaler) return false;
 
       const packageCount = validItems.reduce(
         (sum, item) => sum + item.packageCount,
@@ -4798,6 +4789,10 @@ function MobileApp({
           method: "POST",
           body: JSON.stringify({
             requestId: createId("MANUAL-RECEIPT"),
+            wholesalerId: Number.isNaN(Number(selectedWholesaler.id))
+              ? selectedWholesaler.id
+              : Number(selectedWholesaler.id),
+            wholesalerName: selectedWholesaler.name,
             items: validItems.map(({ candidate, packageCount: count }) => ({
               drugMasterId: optionalId(candidate.drugMasterId),
               pc: candidate.pc,
@@ -4836,7 +4831,7 @@ function MobileApp({
         return false;
       }
     },
-    [loadStocks, setApiFallback, uiPreviewMode],
+    [loadStocks, selectedWholesaler, setApiFallback, uiPreviewMode],
   );
 
   const refreshFromBackend = useCallback(async () => {
@@ -4888,6 +4883,19 @@ function MobileApp({
         return;
       }
 
+      if (uiPreviewMode === "stock-adjust") {
+        const results = demoWholesalers.filter((wholesaler) =>
+          normalizeSearchText(`${wholesaler.name} ${wholesaler.meta}`).includes(
+            normalizeSearchText(trimmed),
+          ),
+        );
+        if (requestId !== wholesalerSearchRequestRef.current) return;
+        setWholesalerSearchResults(results);
+        setWholesalers((current) => mergeWholesalers(current, results));
+        setWholesalerSearchStatus("done");
+        return;
+      }
+
       setWholesalerSearchStatus("loading");
       try {
         const params = new URLSearchParams({ keyword: trimmed });
@@ -4913,7 +4921,7 @@ function MobileApp({
         setWholesalerSearchStatus("error");
       }
     },
-    [setApiFallback],
+    [setApiFallback, uiPreviewMode],
   );
 
   const bootstrapAuth = useCallback(async () => {
@@ -4949,7 +4957,7 @@ function MobileApp({
       setReceiptSummary(null);
       setLastScanName("QR 스캔 대기");
       setMode("receipt");
-      setScreen(stockAdjustWeb ? "stocks" : mobileHomeScreen(currentAccount));
+      setScreen("wholesaler");
     } catch (error) {
       setApiFallback(error);
     }
@@ -6293,7 +6301,7 @@ function MobileApp({
       setReceiptSummary(null);
       setLastScanName("QR 스캔 대기");
       setMode("receipt");
-      setScreen(stockAdjustWeb ? "stocks" : mobileHomeScreen(currentAccount));
+      setScreen("wholesaler");
     } catch (error) {
       setApiState("unauthorized");
       setApiMessage(
@@ -6328,13 +6336,18 @@ function MobileApp({
       {screen === "wholesaler" && (
         <WholesalerScreen
           currentWholesalerName={selectedWholesaler?.name ?? ""}
+          manualOnly={stockAdjustWeb}
           pendingId={pendingWholesalerId}
           preservedQueueCount={receiptQueue.length}
           searchResults={wholesalerSearchResults}
           searchStatus={wholesalerSearchStatus}
           wholesalers={wholesalers}
           onBack={
-            selectedWholesaler
+            stockAdjustWeb
+              ? stockAdjustFromCms && navigate
+                ? () => navigate("/cms")
+                : undefined
+              : selectedWholesaler
               ? () => {
                   resetWholesalerDraft();
                   setScreen("scan");
@@ -6342,7 +6355,14 @@ function MobileApp({
               : undefined
           }
           onChoose={setPendingWholesalerId}
-          onManualReceipt={() => setScreen("stocks")}
+          onManualReceipt={() => {
+            if (!pendingWholesaler) return;
+            const wholesaler = pendingWholesaler;
+            resetWholesalerDraft();
+            setSelectedWholesalerId(wholesaler.id);
+            setMode("receipt");
+            setScreen("stocks");
+          }}
           onReturnFirst={startReturnFirst}
           onSearch={searchWholesalers}
           onStart={() => {
@@ -6618,16 +6638,18 @@ function MobileApp({
           message={stocksMessage}
           searchStatus={manualReceiptSearchStatus}
           onBack={
-            stockAdjustFromCms && navigate
-              ? () => navigate("/cms")
-              : stockAdjustWeb || isLimitedPharmacistAccount(authAccount)
-                ? undefined
+            stockAdjustWeb
+              ? () => {
+                  setPendingWholesalerId(selectedWholesalerId);
+                  setScreen("wholesaler");
+                }
                 : () =>
                     setScreen(selectedWholesaler ? "scan" : "wholesaler")
           }
           onLogout={logoutMobile}
           onSearch={searchManualReceiptCandidates}
           onSubmit={submitManualReceipts}
+          wholesaler={selectedWholesaler}
         />
       )}
 
@@ -6638,12 +6660,7 @@ function MobileApp({
           stockAdjustOnly={stockAdjustWeb}
           onBack={
             hasStoredAuthTokens()
-              ? () =>
-                  setScreen(
-                    stockAdjustWeb
-                      ? "stocks"
-                      : mobileHomeScreen(getStoredAuthAccount()),
-                  )
+              ? () => setScreen("wholesaler")
               : undefined
           }
           onLoginId={setLoginId}
@@ -7184,6 +7201,7 @@ function apiStateLabel(state: ApiState) {
 
 function WholesalerScreen({
   currentWholesalerName,
+  manualOnly = false,
   pendingId,
   preservedQueueCount,
   searchResults,
@@ -7197,6 +7215,7 @@ function WholesalerScreen({
   onStart,
 }: {
   currentWholesalerName?: string;
+  manualOnly?: boolean;
   pendingId: string;
   preservedQueueCount: number;
   searchResults: Wholesaler[];
@@ -7257,8 +7276,9 @@ function WholesalerScreen({
       </label>
       <section className="scroll-body">
         <button
-          className="manual-receipt-entry-card"
+          className={`manual-receipt-entry-card ${manualOnly ? "is-hidden" : ""}`}
           type="button"
+          disabled={!selected}
           onClick={onManualReceipt}
         >
           <span>
@@ -7317,13 +7337,17 @@ function WholesalerScreen({
           className="primary-btn"
           type="button"
           disabled={!selected}
-          onClick={handleStart}
+          onClick={manualOnly ? onManualReceipt : handleStart}
         >
           {hasPreservedQueue
             ? "이 도매처로 전체 목록 변경"
             : "이 도매처로 입고 시작"}
         </button>
-        <button className="secondary-btn" type="button" onClick={onReturnFirst}>
+        <button
+          className={`secondary-btn ${manualOnly ? "manual-only-hidden" : ""}`}
+          type="button"
+          onClick={onReturnFirst}
+        >
           반품 먼저 하기
         </button>
       </BottomBar>
@@ -8747,6 +8771,7 @@ function StocksScreen({
   onLogout,
   onSearch,
   onSubmit,
+  wholesaler,
 }: {
   account?: AuthAccount | null;
   candidates: ManualReceiptCandidate[];
@@ -8757,6 +8782,7 @@ function StocksScreen({
   onLogout: () => void;
   onSearch: (keyword: string) => Promise<void>;
   onSubmit: (items: ManualReceiptCartItem[]) => Promise<boolean>;
+  wholesaler?: Wholesaler | null;
 }) {
   const [query, setQuery] = useState("");
   const [selectedCandidate, setSelectedCandidate] =
@@ -9154,6 +9180,11 @@ function StocksScreen({
         <div className="stock-adjust-accountbar">
           <div>
             <strong>{pharmacyName}</strong>
+            {wholesaler && (
+              <b className="manual-receipt-wholesaler-name">
+                {wholesaler.name}
+              </b>
+            )}
             <span>{accountDetail}약 이름으로 한 통씩 간편하게 입고하세요.</span>
           </div>
           <button type="button" onClick={onLogout}>
