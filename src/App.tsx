@@ -7275,21 +7275,6 @@ function WholesalerScreen({
         />
       </label>
       <section className="scroll-body">
-        <button
-          className={`manual-receipt-entry-card ${manualOnly ? "is-hidden" : ""}`}
-          type="button"
-          disabled={!selected}
-          onClick={onManualReceipt}
-        >
-          <span>
-            <PackageCheck size={22} strokeWidth={2.4} />
-          </span>
-          <div>
-            <strong>QR 없이 간편 입고</strong>
-            <em>약품명을 검색하고 들어온 통 수만 입력하세요.</em>
-          </div>
-          <ChevronRight size={19} strokeWidth={2.5} />
-        </button>
         {selected && (
           <div className="selected-wholesaler">
             <span>선택됨</span>
@@ -7330,6 +7315,22 @@ function WholesalerScreen({
               </div>
             )}
           </>
+        )}
+        {selected && !manualOnly && (
+          <button
+            className="manual-receipt-entry-card"
+            type="button"
+            onClick={onManualReceipt}
+          >
+            <span>
+              <PackageCheck size={22} strokeWidth={2.4} />
+            </span>
+            <div>
+              <strong>QR 없이 간편 입고</strong>
+              <em>약품명을 검색하고 들어온 통 수만 입력하세요.</em>
+            </div>
+            <ChevronRight size={19} strokeWidth={2.5} />
+          </button>
         )}
       </section>
       <BottomBar stack>

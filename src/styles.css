@@ -1226,7 +1226,7 @@ p {
   grid-template-columns: 40px minmax(0, 1fr) auto;
   align-items: center;
   gap: 11px;
-  margin: 0 0 14px;
+  margin: 14px 0 0;
   border: 1px solid #cfe0fb;
   border-radius: 15px;
   background: #f4f8ff;
@@ -1234,14 +1234,8 @@ p {
   text-align: left;
 }
 
-.manual-receipt-entry-card.is-hidden,
 .secondary-btn.manual-only-hidden {
   display: none;
-}
-
-.manual-receipt-entry-card:disabled {
-  cursor: not-allowed;
-  opacity: 0.48;
 }
 
 .manual-receipt-entry-card:hover,
