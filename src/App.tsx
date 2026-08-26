@@ -9926,7 +9926,7 @@ type CmsPrescriptionSubstitutionRole =
   | "SURCHARGE";
 type CmsShortageListFilter = "OPEN" | "ORDERED" | "HOLD" | "SUBSTITUTED";
 type CmsReturnReviewStatus = "OPEN" | "HOLD" | "RESOLVED" | "CANCELLED";
-type CmsReturnReviewFilter = "OPEN" | "RESOLVED";
+type CmsReturnReviewFilter = "OPEN" | "RESOLVED" | "HISTORY";
 
 type CmsReturnReview = {
   id: string;
@@ -21502,12 +21502,14 @@ function CmsReturnReviewPage({
   const cancelledRecords = records.filter(
     (record) => record.status === "CANCELLED",
   );
-  const visibleRecords = records.filter((record) =>
-    listFilter === "RESOLVED"
-      ? record.status === "RESOLVED"
-      : record.status === "OPEN" ||
-        (includeHoldRecords && record.status === "HOLD"),
-  );
+  const visibleRecords = records.filter((record) => {
+    if (listFilter === "RESOLVED") return record.status === "RESOLVED";
+    if (listFilter === "HISTORY") return false;
+    return (
+      record.status === "OPEN" ||
+      (includeHoldRecords && record.status === "HOLD")
+    );
+  });
   const recordPagination = usePagination(
     visibleRecords,
     CMS_PAGE_SIZES.shortages,
@@ -21586,6 +21588,7 @@ function CmsReturnReviewPage({
   }> = [
     { count: openRecords.length, label: "확인 필요", value: "OPEN" },
     { count: resolvedRecords.length, label: "처리 완료", value: "RESOLVED" },
+    { count: histories.length, label: "반품 처리 이력", value: "HISTORY" },
   ];
   const emptyMessage =
     listFilter === "RESOLVED"
@@ -21720,22 +21723,28 @@ function CmsReturnReviewPage({
               value={listFilter}
               onChange={selectListFilter}
             />
-            <label className="cms-check cms-return-hold-toggle">
-              <input
-                type="checkbox"
-                checked={includeHoldRecords}
-                onChange={(event) =>
-                  setIncludeHoldRecords(event.target.checked)
-                }
-              />
-              보류도 보기
-              <span>{holdRecords.length}건</span>
-            </label>
+            {listFilter === "OPEN" && (
+              <label className="cms-check cms-return-hold-toggle">
+                <input
+                  type="checkbox"
+                  checked={includeHoldRecords}
+                  onChange={(event) =>
+                    setIncludeHoldRecords(event.target.checked)
+                  }
+                />
+                보류도 보기
+                <span>{holdRecords.length}건</span>
+              </label>
+            )}
           </div>
         </>
       )}
 
-      <div className={`cms-shortage-layout ${detailMode ? "is-detail" : ""}`}>
+      <div
+        className={`cms-shortage-layout ${detailMode ? "is-detail" : ""} ${
+          !detailMode && listFilter === "HISTORY" ? "is-hidden" : ""
+        }`}
+      >
         {!detailMode && (
           <div className="cms-table-card">
             <div className="cms-table-scroll">
@@ -22055,7 +22064,7 @@ function CmsReturnReviewPage({
         )}
       </div>
 
-      {!detailMode && (
+      {!detailMode && listFilter === "HISTORY" && (
         <div className="cms-table-card cms-return-history-card">
           <div className="cms-return-history-head">
             <div>

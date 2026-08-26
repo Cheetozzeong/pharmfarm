@@ -9222,6 +9222,14 @@ body:has(.cms-shell) {
   align-items: center;
 }
 
+.cms-return-review-filterbar:has(.cms-shortage-filter:only-child) {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.cms-shortage-layout.is-hidden {
+  display: none;
+}
+
 .cms-return-hold-toggle {
   min-height: 42px;
   border: 1px solid var(--line);
@@ -9237,7 +9245,7 @@ body:has(.cms-shell) {
 }
 
 .cms-return-history-card {
-  flex: 0 0 min(360px, 42vh);
+  flex: 1 1 auto;
 }
 
 .cms-return-history-head {
