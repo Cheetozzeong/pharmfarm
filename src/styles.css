@@ -1799,7 +1799,15 @@ p {
   gap: 4px;
 }
 
+.stock-adjust-account-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 7px;
+}
+
 .stock-adjust-accountbar strong {
+  min-width: 0;
   overflow: hidden;
   color: var(--ink);
   font-size: 15px;
@@ -1809,6 +1817,7 @@ p {
 }
 
 .stock-adjust-accountbar .manual-receipt-wholesaler-name {
+  flex: 0 0 auto;
   width: fit-content;
   border-radius: 999px;
   background: #eaf2ff;

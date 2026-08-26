@@ -9180,12 +9180,14 @@ function StocksScreen({
       <section className="scroll-body stock-adjust-list-body manual-receipt-search-body">
         <div className="stock-adjust-accountbar">
           <div>
-            <strong>{pharmacyName}</strong>
-            {wholesaler && (
-              <b className="manual-receipt-wholesaler-name">
-                {wholesaler.name}
-              </b>
-            )}
+            <div className="stock-adjust-account-title-row">
+              <strong>{pharmacyName}</strong>
+              {wholesaler && (
+                <b className="manual-receipt-wholesaler-name">
+                  {wholesaler.name}
+                </b>
+              )}
+            </div>
             <span>{accountDetail}약 이름으로 한 통씩 간편하게 입고하세요.</span>
           </div>
           <button type="button" onClick={onLogout}>
