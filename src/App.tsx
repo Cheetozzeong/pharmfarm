@@ -21527,6 +21527,8 @@ function CmsReturnReviewPage({
   );
   const selectedStock = stocks.find((stock) => stock.id === resolveStockId);
   const maxQuantity = Math.max(0, selectedStock?.quantity ?? 0);
+  const resolveQuantityExceedsStock =
+    Boolean(selectedStock) && resolveQuantity > maxQuantity;
   const stockAfterReturn = selectedStock
     ? Math.max(0, maxQuantity - resolveQuantity)
     : 0;
@@ -21640,9 +21642,7 @@ function CmsReturnReviewPage({
 
   function selectReturnStock(stock: StockItem) {
     setResolveStockId(stock.id);
-    setResolveQuantity((current) =>
-      Math.min(Math.max(1, current), Math.max(1, stock.quantity)),
-    );
+    setResolveQuantity((current) => Math.max(1, current));
   }
 
   function confirmReturnAction() {
@@ -21997,22 +21997,27 @@ function CmsReturnReviewPage({
                         <label className="cms-field">
                           <span>반품 수량</span>
                           <input
-                            min={1}
-                            max={Math.max(1, maxQuantity)}
-                            type="number"
-                            value={resolveQuantity}
-                            onChange={(event) =>
-                              setResolveQuantity(
-                                Math.max(
-                                  1,
-                                  Math.min(
-                                    Math.max(1, maxQuantity),
-                                    Number(event.target.value) || 1,
-                                  ),
-                                ),
-                              )
-                            }
+                            aria-invalid={resolveQuantityExceedsStock}
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            type="text"
+                            value={resolveQuantity > 0 ? resolveQuantity : ""}
+                            onFocus={(event) => {
+                              if (event.currentTarget.value) {
+                                setResolveQuantity(0);
+                              }
+                            }}
+                            onChange={(event) => {
+                              const digits = event.target.value.replace(/\D/g, "");
+                              setResolveQuantity(digits ? Number(digits) : 0);
+                            }}
                           />
+                          {resolveQuantityExceedsStock && (
+                            <small className="cms-field-error" role="alert">
+                              선택한 재고의 최대 반품 가능 수량 {maxQuantity}개를
+                              초과했습니다.
+                            </small>
+                          )}
                         </label>
                       </div>
                       <div className="cms-return-action-panel">

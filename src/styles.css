@@ -7428,6 +7428,20 @@ body:has(.cms-shell) {
   outline: 0;
 }
 
+.cms-field input[aria-invalid="true"] {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px rgba(231, 76, 60, 0.1);
+}
+
+.cms-field .cms-field-error {
+  display: block;
+  margin-top: 7px;
+  color: var(--red);
+  font-size: 12px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
 .cms-input input:disabled,
 .cms-input select:disabled {
   background: #f6f7f8;
