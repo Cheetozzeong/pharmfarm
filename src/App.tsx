@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, FormEvent, ReactNode, RefObject } from "react";
-import {
+import type {
   BrowserDatamatrixCodeReader,
   BrowserMultiFormatOneDReader,
-  type IScannerControls,
+  IScannerControls,
 } from "@zxing/browser";
-import { BarcodeFormat, DecodeHintType } from "@zxing/library";
+import type { DecodeHintType } from "@zxing/library";
 import {
   AlertTriangle,
   ArrowDown,
@@ -847,10 +847,15 @@ function postNativeScannerMessage(
   return true;
 }
 
-function createScannerReader(
+async function createScannerReader(
   scanPerformanceMode: ScanPerformanceMode,
   scanCodeMode: ScanCodeMode,
 ) {
+  const [
+    { BrowserDatamatrixCodeReader, BrowserMultiFormatOneDReader },
+    library,
+  ] = await Promise.all([import("@zxing/browser"), import("@zxing/library")]);
+  const { BarcodeFormat, DecodeHintType } = library;
   const hints = new Map<DecodeHintType, unknown>();
   hints.set(DecodeHintType.CHARACTER_SET, "UTF-8");
   const performanceMode = isScanPerformanceMode(scanPerformanceMode);
@@ -1624,10 +1629,16 @@ async function apiFetch<T>(
   return parseApiResponse<T>(response);
 }
 
-async function optionalCmsApiFetch<T>(path: string): Promise<T | null> {
+async function optionalCmsApiFetch<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T | null> {
   try {
-    return await apiFetch<T>(path);
+    return await apiFetch<T>(path, options);
   } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw error;
+    }
     if (
       error instanceof Error &&
       (error.message === "UNAUTHORIZED" || error.message === "FORBIDDEN")
@@ -5848,7 +5859,10 @@ function MobileApp({
         const video = videoRef.current;
         if (!video) throw new Error("카메라 화면을 준비하지 못했습니다.");
 
-        const reader = createScannerReader(scanPerformanceMode, scanCodeMode);
+        const reader = await createScannerReader(
+          scanPerformanceMode,
+          scanCodeMode,
+        );
         const codeModeLabel = scanCodeModeLabel(scanCodeMode);
         const selectedCameraDeviceId = selectedCameraDeviceIdRef.current;
         const availableDevices = selectedCameraDeviceId
@@ -6643,8 +6657,8 @@ function MobileApp({
                   setPendingWholesalerId(selectedWholesalerId);
                   setScreen("wholesaler");
                 }
-                : () =>
-                    setScreen(selectedWholesaler ? "scan" : "wholesaler")
+              : () =>
+                  setScreen(selectedWholesaler ? "scan" : "wholesaler")
           }
           onLogout={logoutMobile}
           onSearch={searchManualReceiptCandidates}
@@ -10713,8 +10727,13 @@ function App() {
   }, []);
 
   const navigate = useCallback((nextPath: string) => {
-    window.history.pushState(null, "", nextPath);
-    setPath(nextPath);
+    const nextUrl = new URL(nextPath, window.location.origin);
+    const nextLocation = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
+    const currentLocation = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    if (nextLocation !== currentLocation) {
+      window.history.pushState(null, "", nextLocation);
+    }
+    setPath(nextUrl.pathname);
   }, []);
 
   if (path.startsWith("/introduce") || path.startsWith("/inquiry")) {
@@ -11687,6 +11706,22 @@ function CmsApp({
   const previousVisiblePageRef = useRef(visiblePage);
   const previousShortageRouteIdRef = useRef(shortageRouteId);
   const previousReturnReviewRouteIdRef = useRef(returnReviewRouteId);
+  const cmsRefreshRequestIdRef = useRef(0);
+  const cmsRefreshAbortRef = useRef<AbortController | null>(null);
+  const purchaseAutoRefreshStateRef = useRef({
+    page: visiblePage,
+    pharmacyId: baropharmCookieDraft.pharmacyId,
+  });
+  const masterAutoRefreshStateRef = useRef({
+    includeInactive,
+    page: visiblePage,
+    pageNumber: masterPage,
+    query: masterQuery,
+  });
+  const accountsAutoRefreshStateRef = useRef({
+    page: visiblePage,
+    query: accountQuery,
+  });
 
   const selectedMaster =
     masters.find((master) => master.id === selectedMasterId) ?? masters[0];
@@ -12097,6 +12132,36 @@ function CmsApp({
       prescriptionFilter?: CmsDeductionFilter;
       receiptFilters?: CmsReceiptHistoryFilters;
     }) => {
+      const requestId = ++cmsRefreshRequestIdRef.current;
+      const requestedPath = window.location.pathname;
+      cmsRefreshAbortRef.current?.abort();
+      const abortController = new AbortController();
+      cmsRefreshAbortRef.current = abortController;
+      const requestOptions: RequestInit = {
+        signal: abortController.signal,
+      };
+      const isCurrentRequest = () =>
+        requestId === cmsRefreshRequestIdRef.current &&
+        requestedPath === window.location.pathname;
+      const assertCurrentRequest = () => {
+        if (isCurrentRequest()) return;
+        abortController.abort();
+        throw new DOMException("Stale CMS request", "AbortError");
+      };
+      async function fetchCms<T>(requestPath: string) {
+        const result = await apiFetch<T>(requestPath, requestOptions);
+        assertCurrentRequest();
+        return result;
+      }
+      async function fetchOptionalCms<T>(requestPath: string) {
+        const result = await optionalCmsApiFetch<T>(
+          requestPath,
+          requestOptions,
+        );
+        assertCurrentRequest();
+        return result;
+      }
+
       if (inquiryPreviewMode) {
         setInquiries(demoCmsInquiries);
         setApiState("demo");
@@ -12113,14 +12178,18 @@ function CmsApp({
       }
 
       setApiState("checking");
+      setApiMessage("최신 관리자 데이터를 불러오는 중");
       try {
-        const accountResponse = await apiFetch<unknown>("/auth/me");
-        const nextAccount = storeAuthAccount(
-          normalizeAuthAccount(
-            accountResponse,
-            getStoredAccessToken() ?? undefined,
-          ),
-        );
+        let nextAccount = getStoredAuthAccount();
+        if (!nextAccount) {
+          const accountResponse = await fetchCms<unknown>("/auth/me");
+          nextAccount = storeAuthAccount(
+            normalizeAuthAccount(
+              accountResponse,
+              getStoredAccessToken() ?? undefined,
+            ),
+          );
+        }
         setAuthAccount(nextAccount);
 
         const targetPage = canAccessCmsPage(nextAccount, page)
@@ -12136,8 +12205,8 @@ function CmsApp({
 
         if (targetPage === "dashboard") {
           const [dashboardResult, receiptResult] = await Promise.all([
-            optionalCmsApiFetch<unknown>("/dashboard"),
-            optionalCmsApiFetch<unknown>(
+            fetchOptionalCms<unknown>("/dashboard"),
+            fetchOptionalCms<unknown>(
               "/receipts?size=5&sortBy=receivedAt&sortDirection=desc",
             ),
           ]);
@@ -12162,7 +12231,7 @@ function CmsApp({
             masterParams.set("keyword", masterQuery.trim());
           }
           if (includeInactive) masterParams.set("includeInactive", "true");
-          const response = await apiFetch<unknown>(
+          const response = await fetchCms<unknown>(
             `/drug-masters${masterParams.toString() ? `?${masterParams}` : ""}`,
           );
           const pageResponse = normalizeCmsPageResponse(
@@ -12176,7 +12245,7 @@ function CmsApp({
           if (accountQuery.trim()) {
             accountParams.set("keyword", accountQuery.trim());
           }
-          const response = await apiFetch<unknown>(
+          const response = await fetchCms<unknown>(
             `/auth/admin/accounts${accountParams.toString() ? `?${accountParams}` : ""}`,
           );
           const results = arrayPayload(response).map(normalizeCmsAccount);
@@ -12187,7 +12256,7 @@ function CmsApp({
               : (results[0]?.id ?? ""),
           );
         } else if (targetPage === "inquiries") {
-          const response = await apiFetch<unknown>("/admin/inquiries");
+          const response = await fetchCms<unknown>("/admin/inquiries");
           const results = arrayPayload(response).map(normalizeCmsInquiry);
           setInquiries(results);
           setSelectedInquiryId((current) =>
@@ -12209,7 +12278,7 @@ function CmsApp({
               stockParams.set("controlledOnly", "true");
             }
             setCmsStockSearchStatus("loading");
-            const response = await apiFetch<unknown>(`/stocks?${stockParams}`);
+            const response = await fetchCms<unknown>(`/stocks?${stockParams}`);
             const results = sortStockItems(
               filterStocksByControlledFilter(
                 arrayPayload(response).map(normalizeStock),
@@ -12252,7 +12321,7 @@ function CmsApp({
               decreaseParams.set("endDate", stockDecreaseEndDate);
             }
             setStockDecreaseSearchStatus("loading");
-            const movementValue = await optionalCmsApiFetch<unknown>(
+            const movementValue = await fetchOptionalCms<unknown>(
               `/stock-movements/decreases?${decreaseParams}`,
             );
 
@@ -12272,10 +12341,10 @@ function CmsApp({
               setStockDecreaseSearchStatus("done");
             } else {
               const [deductionResult, returnResult] = await Promise.allSettled([
-                optionalCmsApiFetch<unknown>(
+                fetchOptionalCms<unknown>(
                   `/prescription-deductions?${decreaseParams}`,
                 ),
-                optionalCmsApiFetch<unknown>(
+                fetchOptionalCms<unknown>(
                   `/returns/histories?${decreaseParams}`,
                 ),
               ]);
@@ -12336,7 +12405,7 @@ function CmsApp({
             });
             if (trimmedQuery) diffParams.set("keyword", trimmedQuery);
             setStockSnapshotDiffSearchStatus("loading");
-            const response = await apiFetch<unknown>(
+            const response = await fetchCms<unknown>(
               `/stocks/snapshot-differences?${diffParams}`,
             );
             setStockSnapshotDiffRecords(
@@ -12362,7 +12431,7 @@ function CmsApp({
             if (shortageEndDate) shortageParams.set("endDate", shortageEndDate);
             if (trimmed) shortageParams.set("keyword", trimmed);
             setShortageSearchStatus("loading");
-            const response = await optionalCmsApiFetch<unknown>(
+            const response = await fetchOptionalCms<unknown>(
               `/prescription-shortages?${shortageParams}`,
             );
             setDeductionRecords(
@@ -12375,9 +12444,9 @@ function CmsApp({
         } else if (targetPage === "return-reviews") {
           const [reviewResult, historyResult, stockResult] =
             await Promise.allSettled([
-              apiFetch<unknown>("/returns/reviews"),
-              apiFetch<unknown>("/returns/histories"),
-              apiFetch<unknown>(
+              fetchCms<unknown>("/returns/reviews"),
+              fetchCms<unknown>("/returns/histories"),
+              fetchCms<unknown>(
                 "/stocks?includeZero=false&sortBy=name&sortDirection=asc",
               ),
             ]);
@@ -12402,8 +12471,8 @@ function CmsApp({
           }
         } else if (targetPage === "agent-control") {
           const [deviceResponse, commandResponse] = await Promise.all([
-            apiFetch<unknown>("/admin/agent-devices"),
-            apiFetch<unknown>("/admin/agent-commands?size=100"),
+            fetchCms<unknown>("/admin/agent-devices"),
+            fetchCms<unknown>("/admin/agent-commands?size=100"),
           ]);
           const nextDevices = agentDevicePayload(deviceResponse).map(
             normalizeCmsAgentDevice,
@@ -12450,7 +12519,7 @@ function CmsApp({
             }
             if (trimmed) receiptParams.set("keyword", trimmed);
             setReceiptSearchStatus("loading");
-            const receiptResult = await optionalCmsApiFetch<unknown>(
+            const receiptResult = await fetchOptionalCms<unknown>(
               `/receipts?${receiptParams}`,
             );
             const nextHistories = receiptResult
@@ -12493,7 +12562,7 @@ function CmsApp({
             }
             setPrescriptionSearchStatus("loading");
             const queryString = prescriptionParams.toString();
-            const prescriptionResult = await optionalCmsApiFetch<unknown>(
+            const prescriptionResult = await fetchOptionalCms<unknown>(
               `/prescription-overviews?${queryString}`,
             );
             if (prescriptionResult) {
@@ -12505,8 +12574,8 @@ function CmsApp({
             } else {
               const [deductionResult, shortageResult] =
                 await Promise.allSettled([
-                  apiFetch<unknown>(`/prescription-deductions?${queryString}`),
-                  optionalCmsApiFetch<unknown>(
+                  fetchCms<unknown>(`/prescription-deductions?${queryString}`),
+                  fetchOptionalCms<unknown>(
                     `/prescription-shortages?${queryString}`,
                   ),
                 ]);
@@ -12538,7 +12607,7 @@ function CmsApp({
             ? `?${new URLSearchParams({ pharmacyId: targetPharmacyId })}`
             : "";
           const cookieRequest = targetPharmacyId
-            ? apiFetch<unknown>(
+            ? fetchCms<unknown>(
                 `/baropharm/cookie?${new URLSearchParams({
                   pharmacyId: targetPharmacyId,
                 })}`,
@@ -12553,10 +12622,10 @@ function CmsApp({
             await Promise.allSettled([
               cookieRequest,
               targetPharmacyId
-                ? apiFetch<unknown>(`/purchase-histories${pharmacyParams}`)
+                ? fetchCms<unknown>(`/purchase-histories${pharmacyParams}`)
                 : Promise.resolve([]),
               targetPharmacyId
-                ? apiFetch<unknown>(
+                ? fetchCms<unknown>(
                     `/purchase-histories/sync-jobs${pharmacyParams}`,
                   )
                 : Promise.resolve([]),
@@ -12579,7 +12648,7 @@ function CmsApp({
         } else if (targetPage === "wholesaler") {
           if (normalizeSearchText(wholesalerQuery).length >= 2) {
             const params = new URLSearchParams({ keyword: wholesalerQuery });
-            const response = await apiFetch<unknown>(`/wholesalers?${params}`);
+            const response = await fetchCms<unknown>(`/wholesalers?${params}`);
             const results = arrayPayload(response).map(normalizeWholesaler);
             setWholesalers(results);
             setSelectedWholesalerId((current) =>
@@ -12595,11 +12664,18 @@ function CmsApp({
           }
         }
 
+        if (!isCurrentRequest()) return false;
         setApiState("connected");
         setApiMessage("현재 화면 데이터 갱신 완료");
         setCmsReady(true);
         return true;
       } catch (error) {
+        if (
+          !isCurrentRequest() ||
+          (error instanceof DOMException && error.name === "AbortError")
+        ) {
+          return false;
+        }
         cmsFallback(error);
         return false;
       }
@@ -12641,10 +12717,30 @@ function CmsApp({
 
   useEffect(() => {
     void refreshCms();
-  }, [visiblePage]);
+  }, [isCmsLoginRoute, visiblePage]);
+
+  useEffect(
+    () => () => {
+      cmsRefreshRequestIdRef.current += 1;
+      cmsRefreshAbortRef.current?.abort();
+    },
+    [],
+  );
 
   useEffect(() => {
-    if (visiblePage !== "purchase" || !hasStoredAuthTokens()) return;
+    const previous = purchaseAutoRefreshStateRef.current;
+    purchaseAutoRefreshStateRef.current = {
+      page: visiblePage,
+      pharmacyId: baropharmCookieDraft.pharmacyId,
+    };
+    if (
+      visiblePage !== "purchase" ||
+      previous.page !== "purchase" ||
+      previous.pharmacyId === baropharmCookieDraft.pharmacyId ||
+      !hasStoredAuthTokens()
+    ) {
+      return;
+    }
 
     const timer = window.setTimeout(() => {
       void refreshCms();
@@ -12654,7 +12750,25 @@ function CmsApp({
   }, [baropharmCookieDraft.pharmacyId, refreshCms, visiblePage]);
 
   useEffect(() => {
-    if (visiblePage !== "master" || !hasStoredAuthTokens()) return;
+    const previous = masterAutoRefreshStateRef.current;
+    masterAutoRefreshStateRef.current = {
+      includeInactive,
+      page: visiblePage,
+      pageNumber: masterPage,
+      query: masterQuery,
+    };
+    const filtersUnchanged =
+      previous.includeInactive === includeInactive &&
+      previous.pageNumber === masterPage &&
+      previous.query === masterQuery;
+    if (
+      visiblePage !== "master" ||
+      previous.page !== "master" ||
+      filtersUnchanged ||
+      !hasStoredAuthTokens()
+    ) {
+      return;
+    }
 
     const timer = window.setTimeout(() => {
       void refreshCms();
@@ -12664,7 +12778,19 @@ function CmsApp({
   }, [includeInactive, masterPage, masterQuery, visiblePage]);
 
   useEffect(() => {
-    if (visiblePage !== "accounts" || !hasStoredAuthTokens()) return;
+    const previous = accountsAutoRefreshStateRef.current;
+    accountsAutoRefreshStateRef.current = {
+      page: visiblePage,
+      query: accountQuery,
+    };
+    if (
+      visiblePage !== "accounts" ||
+      previous.page !== "accounts" ||
+      previous.query === accountQuery ||
+      !hasStoredAuthTokens()
+    ) {
+      return;
+    }
 
     const timer = window.setTimeout(() => {
       void refreshCms();
@@ -12714,26 +12840,27 @@ function CmsApp({
 
   async function submitCmsLogin(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (apiState === "checking") return;
+
     try {
+      setCmsReady(false);
       setApiState("checking");
       setApiMessage("관리자 로그인 중");
       await login(loginId, password);
-      setAuthAccount(getStoredAuthAccount());
-      const connected = await refreshCms();
-      if (connected) {
-        const nextAccount = getStoredAuthAccount();
-        const nextPage = getCmsPage(postLoginPath);
-        const nextPath =
-          postLoginPath === "/cms/login" ||
-          !canAccessCmsPage(nextAccount, nextPage)
-            ? "/cms"
-            : postLoginPath;
-        setApiState("connected");
-        setApiMessage("관리자 로그인 완료");
-        navigate(nextPath);
-      }
+      const nextAccount = getStoredAuthAccount();
+      const nextPage = getCmsPage(postLoginPath);
+      const nextPath =
+        postLoginPath === "/cms/login" ||
+        !canAccessCmsPage(nextAccount, nextPage)
+          ? "/cms"
+          : postLoginPath;
+      setAuthAccount(nextAccount);
+      setApiState("connected");
+      setApiMessage("관리자 로그인 완료");
+      navigate(nextPath);
       setPassword("");
     } catch (error) {
+      setCmsReady(true);
       setApiState("unauthorized");
       setApiMessage(
         error instanceof Error
@@ -13897,31 +14024,31 @@ function CmsApp({
     );
   }
 
-  if (!cmsReady && apiState === "checking") {
-    return <CmsLoadingPage apiMessage={apiMessage} />;
-  }
+  const cmsInitialLoading = !cmsReady && apiState === "checking";
 
   return (
-    <div
-      className={`cms-shell ${
-        effectiveSidebarCollapsed ? "is-sidebar-collapsed" : ""
-      }`}
-    >
-      <CmsSidebar
-        account={authAccount}
-        canAccessMasterData={canAccessMasterData}
-        collapsed={effectiveSidebarCollapsed}
-        page={visiblePage}
-        navigate={navigate}
-        onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
-      />
-      <main className="cms-main">
-        <CmsHeader
-          onLogout={hasStoredAuthTokens() ? logoutCms : undefined}
+    <>
+      <div
+        className={`cms-shell ${
+          effectiveSidebarCollapsed ? "is-sidebar-collapsed" : ""
+        } ${cmsInitialLoading ? "is-loading-preview" : ""}`}
+        aria-hidden={cmsInitialLoading || undefined}
+      >
+        <CmsSidebar
+          account={authAccount}
+          canAccessMasterData={canAccessMasterData}
+          collapsed={effectiveSidebarCollapsed}
           page={visiblePage}
-          onRefresh={refreshCms}
+          navigate={navigate}
+          onToggleCollapsed={() => setSidebarCollapsed((current) => !current)}
         />
-        <>
+        <main className="cms-main">
+          <CmsHeader
+            onLogout={hasStoredAuthTokens() ? logoutCms : undefined}
+            page={visiblePage}
+            onRefresh={refreshCms}
+          />
+          <>
           {visiblePage === "dashboard" && (
             <CmsDashboard
               account={authAccount}
@@ -14227,9 +14354,11 @@ function CmsApp({
               onSyncStartDate={setSyncStartDate}
             />
           )}
-        </>
-      </main>
-    </div>
+          </>
+        </main>
+      </div>
+      {cmsInitialLoading && <CmsLoadingPage apiMessage={apiMessage} />}
+    </>
   );
 }
 
@@ -16878,26 +17007,31 @@ function CmsHeader({
 
 function CmsLoadingPage({ apiMessage }: { apiMessage: string }) {
   return (
-    <section className="cms-loading">
+    <section
+      className="cms-loading"
+      role="status"
+      aria-live="polite"
+      aria-label="관리자 화면을 준비하고 있습니다."
+    >
       <div className="cms-loading-shell">
         <div className="cms-loading-brand">
           <BrandMark className="cms-loading-logo" />
           <div>
             <strong>PharmFarm 관리자</strong>
-            <span>{apiMessage || "관리자 데이터를 불러오는 중입니다."}</span>
+            <span>안전한 약국 재고 관리</span>
           </div>
         </div>
-        <div className="cms-loading-spinner" aria-hidden="true" />
-        <div className="cms-loading-steps">
-          <span>인증 확인</span>
-          <span>기준 데이터 · 재고 조회</span>
-          <span>처방전 차감 기록 동기화</span>
+        <div className="cms-loading-state">
+          <div className="cms-loading-spinner" aria-hidden="true" />
+          <div className="cms-loading-copy">
+            <strong>관리자 화면을 준비하고 있어요</strong>
+            <span>{apiMessage || "최신 데이터를 불러오는 중입니다."}</span>
+          </div>
         </div>
-        <div className="cms-loading-skeleton" aria-hidden="true">
-          <i />
-          <i />
-          <i />
+        <div className="cms-loading-progress" aria-hidden="true">
+          <span />
         </div>
+        <small>잠시만 기다려 주세요. 곧 최신 화면이 표시됩니다.</small>
       </div>
     </section>
   );
@@ -17543,8 +17677,12 @@ function CmsLoginPage({
               onChange={(event) => onPassword(event.target.value)}
             />
           </label>
-          <button className="cms-primary" type="submit">
-            로그인
+          <button
+            className="cms-primary"
+            type="submit"
+            disabled={apiState === "checking"}
+          >
+            {apiState === "checking" ? "로그인 중..." : "로그인"}
           </button>
           <div className="cms-login-help">
             <span>계정이 없으신가요?</span>
@@ -18660,6 +18798,7 @@ function CmsInventoryPage({
   const [syncPharmacyId, setSyncPharmacyId] = useState(
     syncSnapshotDefaultPharmacyId,
   );
+  const automaticSearchReadyRef = useRef(false);
   const [debugLargeAmount, setDebugLargeAmount] = useState(false);
   const normalizedQuery = normalizeSearchText(query);
   const stockPagination = usePagination(
@@ -18692,6 +18831,16 @@ function CmsInventoryPage({
     createDraft.productTotalQuantity >= 0;
 
   useEffect(() => {
+    const timer = window.setTimeout(() => {
+      automaticSearchReadyRef.current = true;
+    }, 0);
+
+    return () => window.clearTimeout(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!automaticSearchReadyRef.current) return;
+
     const timer = window.setTimeout(() => {
       onSearch(query, controlledFilter, sortKey, sortDirection);
     }, 250);
