@@ -45,7 +45,6 @@ import {
 } from "lucide-react";
 import barGraphIcon from "../icons/20px/bargraph.svg";
 import briefcaseIcon from "../icons/20px/briefcase.svg";
-import checkFilledIcon from "../icons/20px/check-filled.svg";
 import fileTextIcon from "../icons/20px/filetext.svg";
 import homeIcon from "../icons/20px/home.svg";
 import pieGraphIcon from "../icons/20px/pieGraph.svg";
@@ -16910,7 +16909,6 @@ function CmsSidebar({
         ] as Array<[CmsPage, string, string, string]>)
       : []),
     ["inventory", "재고", "/cms/inventory", barGraphIcon],
-    ["manual-receipt", "간편 입고", "/stock-adjust?from=cms", checkFilledIcon],
     ...(canAccessMasterData
       ? ([
           [
@@ -17045,6 +17043,18 @@ function CmsHeader({
         <span>{subtitles[page]}</span>
       </div>
       <div className="cms-header-actions">
+        <a
+          className="cms-header-action is-manual-receipt"
+          aria-label="새 창에서 간편 입고"
+          href="/stock-adjust?from=cms"
+          rel="noopener noreferrer"
+          role="button"
+          target="_blank"
+          title="새 창에서 간편 입고"
+        >
+          <PackageCheck size={17} strokeWidth={2.2} aria-hidden="true" />
+          <span className="cms-header-action-label">간편 입고</span>
+        </a>
         <button
           className="cms-header-action is-refresh"
           type="button"

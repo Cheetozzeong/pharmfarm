@@ -11929,11 +11929,11 @@ body:has(.cms-shell) {
   }
 
   .cms-header-actions,
-  .cms-header button {
+  .cms-header .cms-header-action {
     width: 100%;
   }
 
-  .cms-header-actions button {
+  .cms-header-actions .cms-header-action {
     flex: 1 1 130px;
   }
 
@@ -11951,7 +11951,7 @@ body:has(.cms-shell) {
     font-size: 12px;
   }
 
-  .cms-header button {
+  .cms-header .cms-header-action {
     min-height: 34px;
     padding: 0 10px;
   }
@@ -13755,10 +13755,18 @@ body:has(.cms-shell) {
   color: oklch(42% 0.025 230);
   font-size: 0.875rem;
   font-weight: 800;
+  text-decoration: none;
 }
 
 .cms-header .cms-header-action.is-refresh {
   color: oklch(47% 0.18 255);
+}
+
+.cms-header .cms-header-action.is-manual-receipt {
+  border-color: oklch(56% 0.2 255);
+  background: oklch(55% 0.2 255);
+  color: #fff;
+  box-shadow: 0 5px 14px oklch(55% 0.2 255 / 0.18);
 }
 
 .cms-header .cms-header-action.is-logout {
@@ -13777,6 +13785,12 @@ body:has(.cms-shell) {
 
 .cms-header .cms-header-action.is-refresh:hover {
   color: oklch(39% 0.17 255);
+}
+
+.cms-header .cms-header-action.is-manual-receipt:hover {
+  border-color: oklch(48% 0.2 255);
+  background: oklch(48% 0.2 255);
+  color: #fff;
 }
 
 .cms-header .cms-header-action.is-logout:hover {
