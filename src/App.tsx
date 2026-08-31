@@ -55,6 +55,7 @@ import pharmfarmMark from "./assets/brand/pharmfarm-mark.png";
 
 const APP_BUILD_TIME = __APP_BUILD_TIME__;
 const APP_COMMIT_SHA = __APP_COMMIT_SHA__;
+const CMS_DASHBOARD_FULL_REFRESH_TTL_MS = 5 * 60 * 1000;
 
 function BrandMark({
   className = "",
@@ -3115,6 +3116,15 @@ function recentWeekDateRange() {
   const end = new Date();
   const start = new Date();
   start.setDate(end.getDate() - 6);
+  return {
+    endDate: dateInputValue(end),
+    startDate: dateInputValue(start),
+  };
+}
+
+function currentMonthDateRange() {
+  const end = new Date();
+  const start = new Date(end.getFullYear(), end.getMonth(), 1);
   return {
     endDate: dateInputValue(end),
     startDate: dateInputValue(start),
@@ -6361,11 +6371,11 @@ function MobileApp({
                 ? () => navigate("/cms")
                 : undefined
               : selectedWholesaler
-              ? () => {
-                  resetWholesalerDraft();
-                  setScreen("scan");
-                }
-              : undefined
+                ? () => {
+                    resetWholesalerDraft();
+                    setScreen("scan");
+                  }
+                : undefined
           }
           onChoose={setPendingWholesalerId}
           onManualReceipt={() => {
@@ -6656,8 +6666,7 @@ function MobileApp({
                   setPendingWholesalerId(selectedWholesalerId);
                   setScreen("wholesaler");
                 }
-              : () =>
-                  setScreen(selectedWholesaler ? "scan" : "wholesaler")
+              : () => setScreen(selectedWholesaler ? "scan" : "wholesaler")
           }
           onLogout={logoutMobile}
           onSearch={searchManualReceiptCandidates}
@@ -6672,9 +6681,7 @@ function MobileApp({
           password={password}
           stockAdjustOnly={stockAdjustWeb}
           onBack={
-            hasStoredAuthTokens()
-              ? () => setScreen("wholesaler")
-              : undefined
+            hasStoredAuthTokens() ? () => setScreen("wholesaler") : undefined
           }
           onLoginId={setLoginId}
           onPassword={setPassword}
@@ -8813,8 +8820,7 @@ function StocksScreen({
 
   const normalizedQuery = normalizeSearchText(query);
   const visibleCandidates = candidates.filter(
-    (candidate) =>
-      candidate.receivable && candidate.productTotalQuantity > 0,
+    (candidate) => candidate.receivable && candidate.productTotalQuantity > 0,
   );
   const pharmacyName =
     account?.pharmacyName || account?.accountName || "파트 약사 계정";
@@ -8980,7 +8986,8 @@ function StocksScreen({
                         item.candidate.spec,
                       ]
                         .filter(Boolean)
-                        .join(" · ")} · PC {item.candidate.pc}
+                        .join(" · ")}{" "}
+                      · PC {item.candidate.pc}
                     </span>
                     <em>
                       {currency(
@@ -9298,9 +9305,7 @@ function StocksScreen({
                 <aside>
                   <span>1통당</span>
                   <b>{currency(candidate.productTotalQuantity)}개</b>
-                  <em>
-                    현재 총 {currency(candidate.currentStockQuantity)}개
-                  </em>
+                  <em>현재 총 {currency(candidate.currentStockQuantity)}개</em>
                 </aside>
                 <ChevronRight size={20} strokeWidth={2.5} />
                 {!candidate.receivable && (
@@ -10243,6 +10248,19 @@ type CmsDashboardData = {
     lastPurchaseSyncAt: string;
   };
   recentActivities: CmsDashboardActivity[];
+};
+
+type CmsDashboardTaskCounts = Pick<
+  CmsDashboardData["tasks"],
+  | "failedDeductions"
+  | "openShortages"
+  | "orderedShortages"
+  | "holdShortages"
+  | "substitutedShortages"
+  | "shortageDeductions"
+  | "prescriptionIssues"
+> & {
+  calculatedAt: string;
 };
 
 type CmsDashboardActivity = {
@@ -11540,6 +11558,10 @@ function CmsApp({
   const [dashboardData, setDashboardData] = useState<CmsDashboardData | null>(
     null,
   );
+  const [dashboardTaskCountsRefreshing, setDashboardTaskCountsRefreshing] =
+    useState(false);
+  const [dashboardTaskCountsUpdatedAt, setDashboardTaskCountsUpdatedAt] =
+    useState("");
   const [masterQuery, setMasterQuery] = useState("");
   const [includeInactive, setIncludeInactive] = useState(false);
   const [masters, setMasters] = useState<CmsMaster[]>([]);
@@ -11669,10 +11691,10 @@ function CmsApp({
   const [agentCommandSubmitting, setAgentCommandSubmitting] = useState(false);
   const [shortageQuery, setShortageQuery] = useState("");
   const [shortageStartDate, setShortageStartDate] = useState(
-    () => recentWeekDateRange().startDate,
+    () => currentMonthDateRange().startDate,
   );
   const [shortageEndDate, setShortageEndDate] = useState(
-    () => recentWeekDateRange().endDate,
+    () => currentMonthDateRange().endDate,
   );
   const [shortageSortKey, setShortageSortKey] =
     useState<CmsPrescriptionSortKey>("createdAt");
@@ -11714,6 +11736,8 @@ function CmsApp({
   const previousReturnReviewRouteIdRef = useRef(returnReviewRouteId);
   const cmsRefreshRequestIdRef = useRef(0);
   const cmsRefreshAbortRef = useRef<AbortController | null>(null);
+  const dashboardFullRefreshAtRef = useRef(0);
+  const dashboardTaskCountsRequestIdRef = useRef(0);
   const purchaseAutoRefreshStateRef = useRef({
     page: visiblePage,
     pharmacyId: baropharmCookieDraft.pharmacyId,
@@ -12216,9 +12240,13 @@ function CmsApp({
               "/receipts?size=5&sortBy=receivedAt&sortDirection=desc",
             ),
           ]);
-          setDashboardData(
-            dashboardResult ? normalizeCmsDashboard(dashboardResult) : null,
-          );
+          if (dashboardResult) {
+            setDashboardData(normalizeCmsDashboard(dashboardResult));
+            dashboardFullRefreshAtRef.current = Date.now();
+            setDashboardTaskCountsUpdatedAt(
+              formatApiDateTime(new Date().toISOString(), ""),
+            );
+          }
           if (receiptResult) {
             setReceiptHistories(
               sortCmsReceiptHistories(
@@ -12721,14 +12749,70 @@ function CmsApp({
     ],
   );
 
+  const refreshDashboardTaskCounts = useCallback(async () => {
+    if (!hasStoredAuthTokens()) return false;
+
+    const requestId = ++dashboardTaskCountsRequestIdRef.current;
+    setDashboardTaskCountsRefreshing(true);
+    try {
+      const response = await apiFetch<unknown>("/dashboard/task-counts");
+      if (requestId !== dashboardTaskCountsRequestIdRef.current) return false;
+
+      const snapshot = normalizeCmsDashboardTaskCounts(response);
+      setDashboardData((current) =>
+        current
+          ? {
+              ...current,
+              tasks: {
+                ...current.tasks,
+                failedDeductions: snapshot.failedDeductions,
+                openShortages: snapshot.openShortages,
+                orderedShortages: snapshot.orderedShortages,
+                holdShortages: snapshot.holdShortages,
+                substitutedShortages: snapshot.substitutedShortages,
+                shortageDeductions: snapshot.shortageDeductions,
+                prescriptionIssues: snapshot.prescriptionIssues,
+              },
+            }
+          : current,
+      );
+      setDashboardTaskCountsUpdatedAt(snapshot.calculatedAt);
+      return true;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message === "UNAUTHORIZED" || error.message === "FORBIDDEN")
+      ) {
+        cmsFallback(error);
+      }
+      return false;
+    } finally {
+      if (requestId === dashboardTaskCountsRequestIdRef.current) {
+        setDashboardTaskCountsRefreshing(false);
+      }
+    }
+  }, [cmsFallback]);
+
   useEffect(() => {
-    void refreshCms();
+    if (visiblePage !== "dashboard" || !dashboardData) {
+      void refreshCms();
+      return;
+    }
+
+    void refreshDashboardTaskCounts();
+    if (
+      Date.now() - dashboardFullRefreshAtRef.current >=
+      CMS_DASHBOARD_FULL_REFRESH_TTL_MS
+    ) {
+      void refreshCms();
+    }
   }, [isCmsLoginRoute, visiblePage]);
 
   useEffect(
     () => () => {
       cmsRefreshRequestIdRef.current += 1;
       cmsRefreshAbortRef.current?.abort();
+      dashboardTaskCountsRequestIdRef.current += 1;
     },
     [],
   );
@@ -13233,9 +13317,7 @@ function CmsApp({
       const updated = normalizeCmsReceiptHistory(response, 0);
       setReceiptHistories((current) =>
         current.map((item) =>
-          item.id === history.id
-            ? { ...item, ...updated, id: item.id }
-            : item,
+          item.id === history.id ? { ...item, ...updated, id: item.id } : item,
         ),
       );
       setApiState("connected");
@@ -14073,6 +14155,19 @@ function CmsApp({
     }
   }, [stockSnapshotDiffRouteInsuranceCode, visiblePage]);
 
+  const navigateFromDashboard = useCallback(
+    (nextPath: string) => {
+      if (nextPath.startsWith("/cms/inventory/shortages")) {
+        const range = currentMonthDateRange();
+        setShortageQuery("");
+        setShortageStartDate(range.startDate);
+        setShortageEndDate(range.endDate);
+      }
+      navigate(nextPath);
+    },
+    [navigate],
+  );
+
   if (apiState === "unauthorized" || (isCmsLoginRoute && !hasCmsSession)) {
     return (
       <CmsLoginPage
@@ -14112,314 +14207,318 @@ function CmsApp({
             onRefresh={refreshCms}
           />
           <>
-          {visiblePage === "dashboard" && (
-            <CmsDashboard
-              account={authAccount}
-              cookieState={cookieState}
-              dashboard={dashboardData}
-              deductionRecords={deductionRecords}
-              receiptHistories={receiptHistories}
-              returnReviews={returnReviews}
-              stocks={stocks}
-              syncJobs={syncJobs}
-              navigate={navigate}
-            />
-          )}
-          {visiblePage === "master" && (
-            <CmsMasterPage
-              includeInactive={includeInactive}
-              masterQuery={masterQuery}
-              masters={masters}
-              pagination={masterPagination}
-              selectedMaster={selectedMaster}
-              onIncludeInactive={updateIncludeInactive}
-              onMasterChange={updateMaster}
-              onQuery={updateMasterQuery}
-              onRematch={rematchMaster}
-              onSave={saveMaster}
-              onSelect={setSelectedMasterId}
-              onUpload={uploadMasterCsv}
-            />
-          )}
-          {visiblePage === "import" && (
-            <CmsImportPage jobs={importJobs} onUpload={uploadMasterCsv} />
-          )}
-          {visiblePage === "signup" && (
-            <CmsSignupPage
-              draft={signupDraft}
-              submitting={signupSubmitting}
-              onChange={updateSignupDraft}
-              onSubmit={submitSignup}
-            />
-          )}
-          {visiblePage === "accounts" && (
-            <CmsAccountPage
-              accounts={accounts}
-              currentAccountId={authAccount?.accountId ?? ""}
-              draft={accountDraft}
-              query={accountQuery}
-              selectedAccount={selectedAccount}
-              submitting={accountSubmitting}
-              onChange={updateAccountDraft}
-              onQuery={setAccountQuery}
-              onSave={submitAccountUpdate}
-              onSelect={setSelectedAccountId}
-            />
-          )}
-          {visiblePage === "inquiries" && (
-            <CmsInquiryPage
-              inquiries={filteredInquiries}
-              query={inquiryQuery}
-              selectedInquiry={selectedInquiry}
-              statusFilter={inquiryStatusFilter}
-              submitting={inquirySubmitting}
-              totalCount={inquiries.length}
-              onQuery={setInquiryQuery}
-              onSave={updateInquiry}
-              onSelect={setSelectedInquiryId}
-              onStatusFilter={setInquiryStatusFilter}
-            />
-          )}
-          {visiblePage === "agent-control" && (
-            <CmsAgentControlPage
-              commands={agentCommands}
-              devices={agentDevices}
-              selectedDeviceKey={selectedAgentDeviceKey}
-              submitting={agentCommandSubmitting}
-              onCommand={(commandType) => void createAgentCommand(commandType)}
-              onSelectDevice={setSelectedAgentDeviceKey}
-            />
-          )}
-          {visiblePage === "inventory" && (
-            <CmsInventoryPage
-              adjustDirection={adjustDirection}
-              adjustMemo={adjustMemo}
-              adjustQuantity={adjustQuantity}
-              mergeInsuranceCode={mergeInsuranceCode}
-              controlledFilter={stockControlledFilter}
-              query={stockQuery}
-              searchStatus={cmsStockSearchStatus}
-              selectedStock={selectedStock}
-              sortDirection={stockSortDirection}
-              sortKey={stockSortKey}
-              stocks={stocks}
-              canSyncSnapshot={canSyncStockSnapshotCms(authAccount)}
-              syncSnapshotDefaultPharmacyId={authAccount?.pharmacyId ?? ""}
-              onAdjust={adjustStock}
-              onAdjustDirection={setAdjustDirection}
-              onAdjustMemo={setAdjustMemo}
-              onAdjustQuantity={(value) =>
-                setAdjustQuantity(Math.max(1, Math.min(999, value)))
-              }
-              onCreateStock={createCmsStock}
-              onControlledFilter={(nextFilter) => {
-                setStockControlledFilter(nextFilter);
-                if (path === "/cms/inventory/unpriced") {
-                  navigate("/cms/inventory");
+            {visiblePage === "dashboard" && (
+              <CmsDashboard
+                account={authAccount}
+                cookieState={cookieState}
+                dashboard={dashboardData}
+                taskCountsRefreshing={dashboardTaskCountsRefreshing}
+                taskCountsUpdatedAt={dashboardTaskCountsUpdatedAt}
+                deductionRecords={deductionRecords}
+                receiptHistories={receiptHistories}
+                returnReviews={returnReviews}
+                stocks={stocks}
+                syncJobs={syncJobs}
+                navigate={navigateFromDashboard}
+              />
+            )}
+            {visiblePage === "master" && (
+              <CmsMasterPage
+                includeInactive={includeInactive}
+                masterQuery={masterQuery}
+                masters={masters}
+                pagination={masterPagination}
+                selectedMaster={selectedMaster}
+                onIncludeInactive={updateIncludeInactive}
+                onMasterChange={updateMaster}
+                onQuery={updateMasterQuery}
+                onRematch={rematchMaster}
+                onSave={saveMaster}
+                onSelect={setSelectedMasterId}
+                onUpload={uploadMasterCsv}
+              />
+            )}
+            {visiblePage === "import" && (
+              <CmsImportPage jobs={importJobs} onUpload={uploadMasterCsv} />
+            )}
+            {visiblePage === "signup" && (
+              <CmsSignupPage
+                draft={signupDraft}
+                submitting={signupSubmitting}
+                onChange={updateSignupDraft}
+                onSubmit={submitSignup}
+              />
+            )}
+            {visiblePage === "accounts" && (
+              <CmsAccountPage
+                accounts={accounts}
+                currentAccountId={authAccount?.accountId ?? ""}
+                draft={accountDraft}
+                query={accountQuery}
+                selectedAccount={selectedAccount}
+                submitting={accountSubmitting}
+                onChange={updateAccountDraft}
+                onQuery={setAccountQuery}
+                onSave={submitAccountUpdate}
+                onSelect={setSelectedAccountId}
+              />
+            )}
+            {visiblePage === "inquiries" && (
+              <CmsInquiryPage
+                inquiries={filteredInquiries}
+                query={inquiryQuery}
+                selectedInquiry={selectedInquiry}
+                statusFilter={inquiryStatusFilter}
+                submitting={inquirySubmitting}
+                totalCount={inquiries.length}
+                onQuery={setInquiryQuery}
+                onSave={updateInquiry}
+                onSelect={setSelectedInquiryId}
+                onStatusFilter={setInquiryStatusFilter}
+              />
+            )}
+            {visiblePage === "agent-control" && (
+              <CmsAgentControlPage
+                commands={agentCommands}
+                devices={agentDevices}
+                selectedDeviceKey={selectedAgentDeviceKey}
+                submitting={agentCommandSubmitting}
+                onCommand={(commandType) =>
+                  void createAgentCommand(commandType)
                 }
-              }}
-              onMergeInsuranceCode={setMergeInsuranceCode}
-              onMergeVirtual={mergeVirtualStock}
-              onQuery={setStockQuery}
-              onSearch={searchCmsStocks}
-              onSelect={setSelectedStockId}
-              onSort={(nextKey) => {
-                setStockSortDirection((currentDirection) =>
-                  nextStockSortDirection(
-                    stockSortKey,
-                    currentDirection,
-                    nextKey,
-                  ),
-                );
-                setStockSortKey(nextKey);
-              }}
-              onSyncSnapshot={syncStocksFromSnapshot}
-              onUpdatePrice={updateCmsStockPrice}
-            />
-          )}
-          {visiblePage === "inventory-decreases" && (
-            <CmsStockDecreaseHistoryPage
-              coverage={stockDecreaseCoverage}
-              endDate={stockDecreaseEndDate}
-              filter={stockDecreaseFilter}
-              pharmacyId={stockDecreasePharmacyId}
-              query={stockDecreaseQuery}
-              records={stockDecreaseRecords}
-              searchStatus={stockDecreaseSearchStatus}
-              startDate={stockDecreaseStartDate}
-              onApplyFilters={() => void refreshCms()}
-              onEndDate={setStockDecreaseEndDate}
-              onFilter={setStockDecreaseFilter}
-              onPharmacyId={(value) =>
-                setStockDecreasePharmacyId(value.replace(/[^\d]/g, ""))
-              }
-              onQuery={setStockDecreaseQuery}
-              onStartDate={setStockDecreaseStartDate}
-            />
-          )}
-          {visiblePage === "inventory-snapshot-diff" && (
-            <CmsStockSnapshotDiffPage
-              detail={stockSnapshotDiffDetail}
-              detailLoading={stockSnapshotDiffDetailLoading}
-              pharmacyId={stockSnapshotDiffPharmacyId}
-              query={stockSnapshotDiffQuery}
-              records={stockSnapshotDiffRecords}
-              routeInsuranceCode={stockSnapshotDiffRouteInsuranceCode}
-              searchStatus={stockSnapshotDiffSearchStatus}
-              onApplyFilters={() => void refreshCms()}
-              onCloseDetail={() => navigate("/cms/inventory/snapshot-diff")}
-              onOpenDetail={(record) =>
-                navigate(
-                  `/cms/inventory/snapshot-diff/${encodeURIComponent(
-                    record.insuranceCode,
-                  )}`,
-                )
-              }
-              onPharmacyId={setStockSnapshotDiffPharmacyId}
-              onQuery={setStockSnapshotDiffQuery}
-            />
-          )}
-          {visiblePage === "inventory-shortages" && (
-            <CmsInventoryShortagePage
-              detail={selectedShortageDetail}
-              detailLoading={shortageDetailLoading}
-              detailMode={Boolean(shortageRouteId)}
-              endDate={shortageEndDate}
-              query={shortageQuery}
-              records={shortageRecords}
-              searchStatus={shortageSearchStatus}
-              selectedRecord={selectedShortage}
-              sortDirection={shortageSortDirection}
-              sortKey={shortageSortKey}
-              startDate={shortageStartDate}
-              onBack={() =>
-                shortageRouteId
-                  ? navigate("/cms/inventory/shortages")
-                  : setSelectedShortageId("")
-              }
-              onOpenDetail={(record) =>
-                navigate(
-                  `/cms/inventory/shortages/${encodeURIComponent(record.id)}`,
-                )
-              }
-              onSelect={(record) => setSelectedShortageId(record.id)}
-              onApplyFilters={() => void refreshCms()}
-              onEndDate={setShortageEndDate}
-              onQuery={setShortageQuery}
-              onShortageStatus={updateShortageStatus}
-              onReconcileArrival={reconcileShortageArrival}
-              onSortDirection={setShortageSortDirection}
-              onSortKey={setShortageSortKey}
-              onStartDate={setShortageStartDate}
-              onSubstituteShortage={substituteShortage}
-            />
-          )}
-          {visiblePage === "return-reviews" && (
-            <CmsReturnReviewPage
-              detailMode={Boolean(returnReviewRouteId)}
-              histories={returnHistories}
-              records={returnReviews}
-              selectedRecord={selectedReturnReview}
-              stocks={stocks}
-              onBack={() =>
-                returnReviewRouteId
-                  ? navigate("/cms/inventory/returns")
-                  : setSelectedReturnReviewId("")
-              }
-              onOpenDetail={(record) =>
-                navigate(
-                  `/cms/inventory/returns/${encodeURIComponent(record.id)}`,
-                )
-              }
-              onCancelHistory={cancelReturnHistory}
-              onResolve={resolveReturnReview}
-              onSelect={(record) => setSelectedReturnReviewId(record.id)}
-              onStatus={updateReturnReviewStatus}
-            />
-          )}
-          {visiblePage === "receipts" && (
-            <CmsReceiptHistoryPage
-              appliedFilters={appliedReceiptFilters}
-              canChangeWholesaler={canChangeReceiptWholesalerCms(authAccount)}
-              canLookupByPharmacyId={canAccessRootCms(authAccount)}
-              endDate={receiptEndDate}
-              histories={receiptHistories}
-              pharmacyId={receiptPharmacyId}
-              query={receiptQuery}
-              searchStatus={receiptSearchStatus}
-              startDate={receiptStartDate}
-              onApplyFilters={applyReceiptFilters}
-              onChangeWholesaler={changeReceiptWholesaler}
-              onEndDate={setReceiptEndDate}
-              onPharmacyId={setReceiptPharmacyId}
-              onQuery={setReceiptQuery}
-              onSearchWholesalers={searchReceiptWholesalers}
-              onStartDate={setReceiptStartDate}
-            />
-          )}
-          {visiblePage === "wholesaler" && (
-            <CmsWholesalerPage
-              editingName={editingWholesalerName}
-              newName={newWholesalerName}
-              query={wholesalerQuery}
-              searchStatus={cmsWholesalerSearchStatus}
-              selectedWholesaler={selectedWholesaler}
-              wholesalers={wholesalers}
-              onCreate={createCmsWholesaler}
-              onEditingName={setEditingWholesalerName}
-              onNewName={setNewWholesalerName}
-              onQuery={setWholesalerQuery}
-              onSave={saveCmsWholesaler}
-              onSearch={searchCmsWholesalers}
-              onSelect={setSelectedWholesalerId}
-            />
-          )}
-          {visiblePage === "prescriptions" && (
-            <CmsPrescriptionSummaryPage
-              endDate={prescriptionEndDate}
-              filter={deductionFilter}
-              prescriptions={prescriptionRecords}
-              query={prescriptionQuery}
-              searchStatus={prescriptionSearchStatus}
-              selectedPrescription={selectedPrescription}
-              sortDirection={prescriptionSortDirection}
-              sortKey={prescriptionSortKey}
-              startDate={prescriptionStartDate}
-              onApplyFilters={() => void refreshCms()}
-              onEndDate={setPrescriptionEndDate}
-              onFilter={(nextFilter) => {
-                setDeductionFilter(nextFilter);
-                setSelectedPrescriptionId("");
-                if (
-                  nextFilter === "SUBSTITUTION_ITEMS" ||
-                  deductionFilter === "SUBSTITUTION_ITEMS"
-                ) {
-                  void refreshCms({ prescriptionFilter: nextFilter });
+                onSelectDevice={setSelectedAgentDeviceKey}
+              />
+            )}
+            {visiblePage === "inventory" && (
+              <CmsInventoryPage
+                adjustDirection={adjustDirection}
+                adjustMemo={adjustMemo}
+                adjustQuantity={adjustQuantity}
+                mergeInsuranceCode={mergeInsuranceCode}
+                controlledFilter={stockControlledFilter}
+                query={stockQuery}
+                searchStatus={cmsStockSearchStatus}
+                selectedStock={selectedStock}
+                sortDirection={stockSortDirection}
+                sortKey={stockSortKey}
+                stocks={stocks}
+                canSyncSnapshot={canSyncStockSnapshotCms(authAccount)}
+                syncSnapshotDefaultPharmacyId={authAccount?.pharmacyId ?? ""}
+                onAdjust={adjustStock}
+                onAdjustDirection={setAdjustDirection}
+                onAdjustMemo={setAdjustMemo}
+                onAdjustQuantity={(value) =>
+                  setAdjustQuantity(Math.max(1, Math.min(999, value)))
                 }
-              }}
-              onQuery={setPrescriptionQuery}
-              onSelectPrescription={setSelectedPrescriptionId}
-              onSortDirection={setPrescriptionSortDirection}
-              onSortKey={setPrescriptionSortKey}
-              onStartDate={setPrescriptionStartDate}
-            />
-          )}
-          {visiblePage === "purchase" && (
-            <CmsPurchasePage
-              cookieDraft={baropharmCookieDraft}
-              cookieState={cookieState}
-              histories={purchaseHistories}
-              syncEndDate={syncEndDate}
-              syncJobs={syncJobs}
-              syncStartDate={syncStartDate}
-              onCookieDraftChange={setBaropharmCookieDraft}
-              onRegisterCookie={registerBaropharmCookie}
-              onResume={resumePurchaseSync}
-              onSync={startPurchaseSync}
-              onSyncEndDate={setSyncEndDate}
-              onSyncStartDate={setSyncStartDate}
-            />
-          )}
+                onCreateStock={createCmsStock}
+                onControlledFilter={(nextFilter) => {
+                  setStockControlledFilter(nextFilter);
+                  if (path === "/cms/inventory/unpriced") {
+                    navigate("/cms/inventory");
+                  }
+                }}
+                onMergeInsuranceCode={setMergeInsuranceCode}
+                onMergeVirtual={mergeVirtualStock}
+                onQuery={setStockQuery}
+                onSearch={searchCmsStocks}
+                onSelect={setSelectedStockId}
+                onSort={(nextKey) => {
+                  setStockSortDirection((currentDirection) =>
+                    nextStockSortDirection(
+                      stockSortKey,
+                      currentDirection,
+                      nextKey,
+                    ),
+                  );
+                  setStockSortKey(nextKey);
+                }}
+                onSyncSnapshot={syncStocksFromSnapshot}
+                onUpdatePrice={updateCmsStockPrice}
+              />
+            )}
+            {visiblePage === "inventory-decreases" && (
+              <CmsStockDecreaseHistoryPage
+                coverage={stockDecreaseCoverage}
+                endDate={stockDecreaseEndDate}
+                filter={stockDecreaseFilter}
+                pharmacyId={stockDecreasePharmacyId}
+                query={stockDecreaseQuery}
+                records={stockDecreaseRecords}
+                searchStatus={stockDecreaseSearchStatus}
+                startDate={stockDecreaseStartDate}
+                onApplyFilters={() => void refreshCms()}
+                onEndDate={setStockDecreaseEndDate}
+                onFilter={setStockDecreaseFilter}
+                onPharmacyId={(value) =>
+                  setStockDecreasePharmacyId(value.replace(/[^\d]/g, ""))
+                }
+                onQuery={setStockDecreaseQuery}
+                onStartDate={setStockDecreaseStartDate}
+              />
+            )}
+            {visiblePage === "inventory-snapshot-diff" && (
+              <CmsStockSnapshotDiffPage
+                detail={stockSnapshotDiffDetail}
+                detailLoading={stockSnapshotDiffDetailLoading}
+                pharmacyId={stockSnapshotDiffPharmacyId}
+                query={stockSnapshotDiffQuery}
+                records={stockSnapshotDiffRecords}
+                routeInsuranceCode={stockSnapshotDiffRouteInsuranceCode}
+                searchStatus={stockSnapshotDiffSearchStatus}
+                onApplyFilters={() => void refreshCms()}
+                onCloseDetail={() => navigate("/cms/inventory/snapshot-diff")}
+                onOpenDetail={(record) =>
+                  navigate(
+                    `/cms/inventory/snapshot-diff/${encodeURIComponent(
+                      record.insuranceCode,
+                    )}`,
+                  )
+                }
+                onPharmacyId={setStockSnapshotDiffPharmacyId}
+                onQuery={setStockSnapshotDiffQuery}
+              />
+            )}
+            {visiblePage === "inventory-shortages" && (
+              <CmsInventoryShortagePage
+                detail={selectedShortageDetail}
+                detailLoading={shortageDetailLoading}
+                detailMode={Boolean(shortageRouteId)}
+                endDate={shortageEndDate}
+                query={shortageQuery}
+                records={shortageRecords}
+                searchStatus={shortageSearchStatus}
+                selectedRecord={selectedShortage}
+                sortDirection={shortageSortDirection}
+                sortKey={shortageSortKey}
+                startDate={shortageStartDate}
+                onBack={() =>
+                  shortageRouteId
+                    ? navigate("/cms/inventory/shortages")
+                    : setSelectedShortageId("")
+                }
+                onOpenDetail={(record) =>
+                  navigate(
+                    `/cms/inventory/shortages/${encodeURIComponent(record.id)}`,
+                  )
+                }
+                onSelect={(record) => setSelectedShortageId(record.id)}
+                onApplyFilters={() => void refreshCms()}
+                onEndDate={setShortageEndDate}
+                onQuery={setShortageQuery}
+                onShortageStatus={updateShortageStatus}
+                onReconcileArrival={reconcileShortageArrival}
+                onSortDirection={setShortageSortDirection}
+                onSortKey={setShortageSortKey}
+                onStartDate={setShortageStartDate}
+                onSubstituteShortage={substituteShortage}
+              />
+            )}
+            {visiblePage === "return-reviews" && (
+              <CmsReturnReviewPage
+                detailMode={Boolean(returnReviewRouteId)}
+                histories={returnHistories}
+                records={returnReviews}
+                selectedRecord={selectedReturnReview}
+                stocks={stocks}
+                onBack={() =>
+                  returnReviewRouteId
+                    ? navigate("/cms/inventory/returns")
+                    : setSelectedReturnReviewId("")
+                }
+                onOpenDetail={(record) =>
+                  navigate(
+                    `/cms/inventory/returns/${encodeURIComponent(record.id)}`,
+                  )
+                }
+                onCancelHistory={cancelReturnHistory}
+                onResolve={resolveReturnReview}
+                onSelect={(record) => setSelectedReturnReviewId(record.id)}
+                onStatus={updateReturnReviewStatus}
+              />
+            )}
+            {visiblePage === "receipts" && (
+              <CmsReceiptHistoryPage
+                appliedFilters={appliedReceiptFilters}
+                canChangeWholesaler={canChangeReceiptWholesalerCms(authAccount)}
+                canLookupByPharmacyId={canAccessRootCms(authAccount)}
+                endDate={receiptEndDate}
+                histories={receiptHistories}
+                pharmacyId={receiptPharmacyId}
+                query={receiptQuery}
+                searchStatus={receiptSearchStatus}
+                startDate={receiptStartDate}
+                onApplyFilters={applyReceiptFilters}
+                onChangeWholesaler={changeReceiptWholesaler}
+                onEndDate={setReceiptEndDate}
+                onPharmacyId={setReceiptPharmacyId}
+                onQuery={setReceiptQuery}
+                onSearchWholesalers={searchReceiptWholesalers}
+                onStartDate={setReceiptStartDate}
+              />
+            )}
+            {visiblePage === "wholesaler" && (
+              <CmsWholesalerPage
+                editingName={editingWholesalerName}
+                newName={newWholesalerName}
+                query={wholesalerQuery}
+                searchStatus={cmsWholesalerSearchStatus}
+                selectedWholesaler={selectedWholesaler}
+                wholesalers={wholesalers}
+                onCreate={createCmsWholesaler}
+                onEditingName={setEditingWholesalerName}
+                onNewName={setNewWholesalerName}
+                onQuery={setWholesalerQuery}
+                onSave={saveCmsWholesaler}
+                onSearch={searchCmsWholesalers}
+                onSelect={setSelectedWholesalerId}
+              />
+            )}
+            {visiblePage === "prescriptions" && (
+              <CmsPrescriptionSummaryPage
+                endDate={prescriptionEndDate}
+                filter={deductionFilter}
+                prescriptions={prescriptionRecords}
+                query={prescriptionQuery}
+                searchStatus={prescriptionSearchStatus}
+                selectedPrescription={selectedPrescription}
+                sortDirection={prescriptionSortDirection}
+                sortKey={prescriptionSortKey}
+                startDate={prescriptionStartDate}
+                onApplyFilters={() => void refreshCms()}
+                onEndDate={setPrescriptionEndDate}
+                onFilter={(nextFilter) => {
+                  setDeductionFilter(nextFilter);
+                  setSelectedPrescriptionId("");
+                  if (
+                    nextFilter === "SUBSTITUTION_ITEMS" ||
+                    deductionFilter === "SUBSTITUTION_ITEMS"
+                  ) {
+                    void refreshCms({ prescriptionFilter: nextFilter });
+                  }
+                }}
+                onQuery={setPrescriptionQuery}
+                onSelectPrescription={setSelectedPrescriptionId}
+                onSortDirection={setPrescriptionSortDirection}
+                onSortKey={setPrescriptionSortKey}
+                onStartDate={setPrescriptionStartDate}
+              />
+            )}
+            {visiblePage === "purchase" && (
+              <CmsPurchasePage
+                cookieDraft={baropharmCookieDraft}
+                cookieState={cookieState}
+                histories={purchaseHistories}
+                syncEndDate={syncEndDate}
+                syncJobs={syncJobs}
+                syncStartDate={syncStartDate}
+                onCookieDraftChange={setBaropharmCookieDraft}
+                onRegisterCookie={registerBaropharmCookie}
+                onResume={resumePurchaseSync}
+                onSync={startPurchaseSync}
+                onSyncEndDate={setSyncEndDate}
+                onSyncStartDate={setSyncStartDate}
+              />
+            )}
           </>
         </main>
       </div>
@@ -16800,6 +16899,28 @@ function normalizeCmsDashboard(raw: unknown): CmsDashboardData {
   };
 }
 
+function normalizeCmsDashboardTaskCounts(raw: unknown): CmsDashboardTaskCounts {
+  const item = unwrapObjectPayload(raw);
+  const failedDeductions = Number(item.failedDeductions ?? 0);
+  const openShortages = Number(item.openShortages ?? 0);
+
+  return {
+    failedDeductions,
+    openShortages,
+    orderedShortages: Number(item.orderedShortages ?? 0),
+    holdShortages: Number(item.holdShortages ?? 0),
+    substitutedShortages: Number(item.substitutedShortages ?? 0),
+    shortageDeductions: Number(item.shortageDeductions ?? 0),
+    prescriptionIssues: Number(
+      item.prescriptionIssues ?? failedDeductions + openShortages,
+    ),
+    calculatedAt: formatApiDateTime(
+      item.calculatedAt ?? new Date().toISOString(),
+      "",
+    ),
+  };
+}
+
 function normalizeCmsDashboardActivity(
   raw: unknown,
   index: number,
@@ -17781,6 +17902,8 @@ function CmsDashboard({
   returnReviews,
   stocks,
   syncJobs,
+  taskCountsRefreshing,
+  taskCountsUpdatedAt,
 }: {
   account?: AuthAccount | null;
   cookieState: CmsCookieState;
@@ -17791,6 +17914,8 @@ function CmsDashboard({
   returnReviews: CmsReturnReview[];
   stocks: StockItem[];
   syncJobs: CmsSyncJob[];
+  taskCountsRefreshing: boolean;
+  taskCountsUpdatedAt: string;
 }) {
   const data =
     dashboard ??
@@ -18006,6 +18131,21 @@ function CmsDashboard({
           <p>
             처방 이슈와 재고 변동을 우선순위에 따라 확인하고 바로 처리하세요.
           </p>
+          <div
+            className={`cms-dashboard-freshness ${
+              taskCountsRefreshing ? "is-refreshing" : ""
+            }`}
+            aria-live="polite"
+          >
+            <RefreshCw size={13} strokeWidth={2.4} aria-hidden="true" />
+            <span>
+              {taskCountsRefreshing
+                ? "처방 업무 수 갱신 중"
+                : taskCountsUpdatedAt
+                  ? `처방 업무 ${taskCountsUpdatedAt} 갱신`
+                  : "처방 업무 최신 상태"}
+            </span>
+          </div>
         </div>
         <details className="cms-dashboard-period">
           <summary>
@@ -22243,14 +22383,17 @@ function CmsReturnReviewPage({
                               }
                             }}
                             onChange={(event) => {
-                              const digits = event.target.value.replace(/\D/g, "");
+                              const digits = event.target.value.replace(
+                                /\D/g,
+                                "",
+                              );
                               setResolveQuantity(digits ? Number(digits) : 0);
                             }}
                           />
                           {resolveQuantityExceedsStock && (
                             <small className="cms-field-error" role="alert">
-                              선택한 재고의 최대 반품 가능 수량 {maxQuantity}개를
-                              초과했습니다.
+                              선택한 재고의 최대 반품 가능 수량 {maxQuantity}
+                              개를 초과했습니다.
                             </small>
                           )}
                         </label>
@@ -24634,8 +24777,7 @@ function CmsReceiptHistoryPage({
   const [receiptWholesalerStatus, setReceiptWholesalerStatus] = useState<
     "idle" | "loading" | "done" | "error"
   >("idle");
-  const [receiptWholesalerSaving, setReceiptWholesalerSaving] =
-    useState(false);
+  const [receiptWholesalerSaving, setReceiptWholesalerSaving] = useState(false);
   const [receiptWholesalerError, setReceiptWholesalerError] = useState("");
 
   useEffect(() => {
@@ -24955,8 +25097,7 @@ function CmsReceiptHistoryPage({
                 disabled={
                   receiptWholesalerSaving ||
                   !selectedReceiptWholesalerId ||
-                  selectedReceiptWholesalerId ===
-                    editingHistory.wholesalerId ||
+                  selectedReceiptWholesalerId === editingHistory.wholesalerId ||
                   !receiptWholesalerReason.trim()
                 }
                 type="button"

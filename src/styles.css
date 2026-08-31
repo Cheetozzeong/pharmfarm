@@ -5145,7 +5145,11 @@ body:has(.cms-shell) {
   inset: 0;
   background:
     radial-gradient(circle at 50% 42%, rgba(0, 100, 255, 0.1), transparent 34%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(235, 241, 247, 0.18));
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.12),
+      rgba(235, 241, 247, 0.18)
+    );
   content: "";
   pointer-events: none;
 }
@@ -12879,6 +12883,32 @@ body:has(.cms-shell) {
   font-size: var(--dashboard-font-sm);
   font-weight: 600;
   line-height: 1.5;
+}
+
+.cms-dashboard-freshness {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  margin-top: var(--dashboard-space-3);
+  border: 1px solid var(--dashboard-line);
+  border-radius: 999px;
+  background: var(--dashboard-surface);
+  padding: 4px 10px;
+  color: var(--dashboard-text-muted);
+  font-size: var(--dashboard-font-xs);
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.cms-dashboard-freshness.is-refreshing {
+  border-color: oklch(85% 0.055 255);
+  background: var(--dashboard-brand-soft);
+  color: var(--dashboard-brand-strong);
+}
+
+.cms-dashboard-freshness.is-refreshing svg {
+  animation: stock-adjust-spin 700ms linear infinite;
 }
 
 .cms-dashboard-period {
