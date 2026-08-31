@@ -9625,6 +9625,107 @@ body:has(.cms-shell) {
   line-height: 1.5;
 }
 
+.cms-receipt-wholesaler-audits {
+  overflow: hidden;
+  border: 1px solid #d8e3ee;
+  border-radius: 11px;
+  background: #fff;
+}
+
+.cms-receipt-wholesaler-audits > header {
+  display: flex;
+  min-height: 42px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid #e6edf3;
+  background: #f8fafc;
+  padding: 9px 12px;
+}
+
+.cms-receipt-wholesaler-audits > header div,
+.cms-receipt-wholesaler-audits > header strong {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.cms-receipt-wholesaler-audits > header strong {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.cms-receipt-wholesaler-audits > header span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.cms-receipt-wholesaler-audit-list {
+  display: grid;
+  max-height: 210px;
+  overflow: auto;
+}
+
+.cms-receipt-wholesaler-audit-list > p {
+  margin: 0;
+  padding: 20px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.cms-receipt-wholesaler-audit-list > p.is-error {
+  color: #b33b2e;
+}
+
+.cms-receipt-wholesaler-audit-list article {
+  display: grid;
+  gap: 6px;
+  border-bottom: 1px solid #edf1f5;
+  padding: 11px 12px;
+}
+
+.cms-receipt-wholesaler-audit-list article:last-child {
+  border-bottom: 0;
+}
+
+.cms-receipt-wholesaler-audit-list article > div,
+.cms-receipt-wholesaler-audit-list article > strong {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+
+.cms-receipt-wholesaler-audit-list article > div {
+  justify-content: space-between;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.cms-receipt-wholesaler-audit-list article > strong {
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.cms-receipt-wholesaler-audit-list article > strong svg {
+  flex: 0 0 auto;
+  color: var(--blue);
+}
+
+.cms-receipt-wholesaler-audit-list article > p {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
 .cms-receipt-wholesaler-search,
 .cms-receipt-wholesaler-reason {
   margin-bottom: 0;
@@ -9789,6 +9890,215 @@ body:has(.cms-shell) {
 
   .cms-receipt-wholesaler-footer {
     grid-template-columns: 88px minmax(0, 1fr);
+  }
+}
+
+.cms-wholesaler-audit-card {
+  overflow: hidden;
+}
+
+.cms-wholesaler-audit-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 18px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(135deg, #f7faff 0%, #eef5ff 100%);
+  padding: 20px 22px;
+}
+
+.cms-wholesaler-audit-heading span,
+.cms-wholesaler-audit-heading strong,
+.cms-wholesaler-audit-heading p {
+  display: block;
+  margin: 0;
+}
+
+.cms-wholesaler-audit-heading span {
+  margin-bottom: 5px;
+  color: var(--blue);
+  font-size: 10px;
+  font-weight: 950;
+  letter-spacing: 0.12em;
+}
+
+.cms-wholesaler-audit-heading strong {
+  color: var(--ink);
+  font-size: 18px;
+  font-weight: 950;
+}
+
+.cms-wholesaler-audit-heading p {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 750;
+}
+
+.cms-wholesaler-audit-heading > svg {
+  flex: 0 0 auto;
+  color: var(--blue);
+}
+
+.cms-wholesaler-audit-search {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr)) auto;
+  align-items: end;
+  gap: 10px;
+  border-bottom: 1px solid var(--line);
+  padding: 16px 18px;
+}
+
+.cms-wholesaler-audit-search label {
+  display: grid;
+  gap: 6px;
+}
+
+.cms-wholesaler-audit-search label span {
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 900;
+}
+
+.cms-wholesaler-audit-search input {
+  min-width: 0;
+  min-height: 42px;
+  border: 1px solid var(--line-strong);
+  border-radius: 9px;
+  background: #fff;
+  padding: 0 11px;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.cms-wholesaler-audit-search .cms-primary {
+  min-height: 42px;
+  padding: 0 18px;
+  white-space: nowrap;
+}
+
+.cms-wholesaler-audit-state {
+  border-bottom: 1px solid var(--line);
+  background: #f8fafc;
+  padding: 10px 18px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.cms-wholesaler-audit-state.is-error {
+  background: #fff5f4;
+  color: #b33b2e;
+}
+
+.cms-wholesaler-audit-list {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+}
+
+.cms-wholesaler-audit-list article {
+  display: grid;
+  grid-template-columns: 120px minmax(180px, 1.2fr) minmax(220px, 1.5fr) minmax(180px, 1fr);
+  align-items: center;
+  gap: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  padding: 13px 14px;
+}
+
+.cms-wholesaler-audit-meta,
+.cms-wholesaler-audit-context,
+.cms-wholesaler-audit-list article footer {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.cms-wholesaler-audit-meta span,
+.cms-wholesaler-audit-list article footer span {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 850;
+}
+
+.cms-wholesaler-audit-meta time,
+.cms-wholesaler-audit-context span,
+.cms-wholesaler-audit-list article footer em {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  font-style: normal;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cms-wholesaler-audit-context strong,
+.cms-wholesaler-audit-list article footer strong {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 950;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cms-wholesaler-audit-change {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.cms-wholesaler-audit-change span,
+.cms-wholesaler-audit-change strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cms-wholesaler-audit-change span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.cms-wholesaler-audit-change strong {
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 950;
+}
+
+.cms-wholesaler-audit-change svg {
+  flex: 0 0 auto;
+  color: var(--blue);
+}
+
+.cms-wholesaler-audit-list article > p {
+  margin: 0;
+  color: var(--muted-strong);
+  font-size: 11px;
+  font-weight: 750;
+  line-height: 1.45;
+}
+
+@media (max-width: 980px) {
+  .cms-wholesaler-audit-search {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cms-wholesaler-audit-list article {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .cms-wholesaler-audit-search,
+  .cms-wholesaler-audit-list article {
+    grid-template-columns: 1fr;
   }
 }
 

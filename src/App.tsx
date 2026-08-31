@@ -9650,6 +9650,7 @@ type CmsPage =
   | "inventory-shortages"
   | "return-reviews"
   | "receipts"
+  | "receipt-wholesaler-audits"
   | "agent-control"
   | "wholesaler"
   | "prescriptions"
@@ -9750,6 +9751,25 @@ type CmsReceiptHistory = {
   createdAt: string;
   createdBy: string;
   status: "RETURNABLE" | "RETURNED" | "UNKNOWN";
+};
+
+type CmsReceiptWholesalerAudit = {
+  id: string;
+  receiptId: string;
+  pharmacyId: string;
+  drugName: string;
+  pc: string;
+  sn: string;
+  receivedAt: string;
+  previousWholesalerId: string;
+  previousWholesalerName: string;
+  newWholesalerId: string;
+  newWholesalerName: string;
+  reason: string;
+  changedByAccountId: string;
+  changedByLoginId: string;
+  changedByAccountName: string;
+  changedAt: string;
 };
 
 type CmsReceiptHistoryFilters = {
@@ -11373,6 +11393,9 @@ function getCmsPage(path: string): CmsPage {
   if (segment === "agent-control") {
     return "agent-control";
   }
+  if (segment === "receipt-wholesaler-audits") {
+    return "receipt-wholesaler-audits";
+  }
   if (
     segment === "inquiries" ||
     segment === "master" ||
@@ -11441,6 +11464,10 @@ function canChangeReceiptWholesalerCms(account?: AuthAccount | null) {
   return accountType === "ADMIN" || accountType === "PRIMARY";
 }
 
+function canViewReceiptWholesalerAuditCms(account?: AuthAccount | null) {
+  return account?.role?.toUpperCase() === "PHARMACY_OWNER";
+}
+
 function canSyncStockSnapshotCms(account?: AuthAccount | null) {
   return canAccessRootCms(account) || account?.role?.toUpperCase() === "ADMIN";
 }
@@ -11466,6 +11493,7 @@ function isRestrictedCmsPage(page: CmsPage) {
     page === "inventory-decreases" ||
     page === "inventory-snapshot-diff" ||
     page === "agent-control" ||
+    page === "receipt-wholesaler-audits" ||
     page === "wholesaler" ||
     page === "purchase"
   );
@@ -13295,6 +13323,16 @@ function CmsApp({
     return arrayPayload(response).map(normalizeWholesaler);
   }, []);
 
+  const loadReceiptWholesalerAudits = useCallback(
+    async (history: CmsReceiptHistory) => {
+      const response = await apiFetch<unknown>(
+        `/receipts/${encodeURIComponent(history.id)}/wholesaler-changes`,
+      );
+      return arrayPayload(response).map(normalizeCmsReceiptWholesalerAudit);
+    },
+    [],
+  );
+
   async function changeReceiptWholesaler(
     history: CmsReceiptHistory,
     wholesaler: Wholesaler,
@@ -14441,6 +14479,9 @@ function CmsApp({
                 appliedFilters={appliedReceiptFilters}
                 canChangeWholesaler={canChangeReceiptWholesalerCms(authAccount)}
                 canLookupByPharmacyId={canAccessRootCms(authAccount)}
+                canViewWholesalerAudits={canViewReceiptWholesalerAuditCms(
+                  authAccount,
+                )}
                 endDate={receiptEndDate}
                 histories={receiptHistories}
                 pharmacyId={receiptPharmacyId}
@@ -14450,11 +14491,15 @@ function CmsApp({
                 onApplyFilters={applyReceiptFilters}
                 onChangeWholesaler={changeReceiptWholesaler}
                 onEndDate={setReceiptEndDate}
+                onLoadWholesalerAudits={loadReceiptWholesalerAudits}
                 onPharmacyId={setReceiptPharmacyId}
                 onQuery={setReceiptQuery}
                 onSearchWholesalers={searchReceiptWholesalers}
                 onStartDate={setReceiptStartDate}
               />
+            )}
+            {visiblePage === "receipt-wholesaler-audits" && (
+              <CmsReceiptWholesalerAuditPage />
             )}
             {visiblePage === "wholesaler" && (
               <CmsWholesalerPage
@@ -15476,6 +15521,45 @@ function normalizeCmsReceiptHistory(
           item.created_by_account_id,
       ) ?? "-",
     status,
+  };
+}
+
+function normalizeCmsReceiptWholesalerAudit(
+  raw: unknown,
+  index: number,
+): CmsReceiptWholesalerAudit {
+  const item = unwrapObjectPayload(raw);
+  return {
+    id: String(item.id ?? index),
+    receiptId: String(item.receiptId ?? item.receipt_id ?? ""),
+    pharmacyId: String(item.pharmacyId ?? item.pharmacy_id ?? ""),
+    drugName: String(item.drugName ?? item.drug_name ?? "미확인 약품"),
+    pc: String(item.pc ?? ""),
+    sn: normalizeLookupSn(item.sn, ""),
+    receivedAt: formatApiDateTime(item.receivedAt ?? item.received_at),
+    previousWholesalerId: String(
+      item.previousWholesalerId ?? item.previous_wholesaler_id ?? "",
+    ),
+    previousWholesalerName: String(
+      item.previousWholesalerName ?? item.previous_wholesaler_name ?? "-",
+    ),
+    newWholesalerId: String(
+      item.newWholesalerId ?? item.new_wholesaler_id ?? "",
+    ),
+    newWholesalerName: String(
+      item.newWholesalerName ?? item.new_wholesaler_name ?? "-",
+    ),
+    reason: String(item.reason ?? "-"),
+    changedByAccountId: String(
+      item.changedByAccountId ?? item.changed_by_account_id ?? "",
+    ),
+    changedByLoginId: String(
+      item.changedByLoginId ?? item.changed_by_login_id ?? "",
+    ),
+    changedByAccountName: String(
+      item.changedByAccountName ?? item.changed_by_account_name ?? "",
+    ),
+    changedAt: formatApiDateTime(item.changedAt ?? item.changed_at),
   };
 }
 
@@ -17053,6 +17137,16 @@ function CmsSidebar({
       warningTriangleIcon,
     ],
     ["receipts", "입고 이력", "/cms/inventory/receipts", fileTextIcon],
+    ...(canAccessMasterData
+      ? ([
+          [
+            "receipt-wholesaler-audits",
+            "도매처 변경 로그",
+            "/cms/receipt-wholesaler-audits",
+            fileTextIcon,
+          ],
+        ] as Array<[CmsPage, string, string, string]>)
+      : []),
     ["return-reviews", "반품 확인", "/cms/inventory/returns", briefcaseIcon],
     ["prescriptions", "처방전", "/cms/prescriptions", fileTextIcon],
     ...(canAccessPurchase
@@ -17131,6 +17225,7 @@ function CmsHeader({
     "inventory-snapshot-diff": "스냅샷 비교",
     "inventory-shortages": "초과 처방",
     receipts: "입고 이력",
+    "receipt-wholesaler-audits": "도매처 변경 로그",
     "agent-control": "에이전트 제어",
     "return-reviews": "반품 확인",
     wholesaler: "도매처 관리",
@@ -17150,6 +17245,8 @@ function CmsHeader({
       "에이전트 스냅샷과 현재 재고 수량 차이를 확인합니다.",
     "inventory-shortages": "초과 처방과 부족 수량을 확인합니다.",
     receipts: "QR/SN 단위 입고 이력과 반품 가능 수량을 확인합니다.",
+    "receipt-wholesaler-audits":
+      "입고·약국·변경 계정 ID로 도매처 변경 감사 로그를 조회합니다.",
     "agent-control":
       "약국 PC 연결 상태를 확인하고 데이터 동기화 명령을 실행합니다.",
     "return-reviews": "앱에서 확정되지 않은 반품을 확인하고 처리합니다.",
@@ -24726,10 +24823,173 @@ function CmsAgentControlPage({
   );
 }
 
+function CmsReceiptWholesalerAuditPage() {
+  const [receiptId, setReceiptId] = useState("");
+  const [pharmacyId, setPharmacyId] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [records, setRecords] = useState<CmsReceiptWholesalerAudit[]>([]);
+  const [status, setStatus] = useState<"idle" | "loading" | "done" | "error">(
+    "idle",
+  );
+  const [message, setMessage] = useState(
+    "입고 ID, 약국 ID, 변경 계정 ID 중 하나 이상 입력해 주세요.",
+  );
+  const pagination = usePagination(
+    records,
+    12,
+    records.map((record) => record.id).join("|"),
+  );
+
+  const updateId = (setter: (value: string) => void, value: string) => {
+    setter(value.replace(/[^\d]/g, ""));
+    if (status === "error") setStatus("idle");
+  };
+
+  const searchAudits = async (event?: FormEvent) => {
+    event?.preventDefault();
+    if (!receiptId && !pharmacyId && !accountId) {
+      setRecords([]);
+      setStatus("error");
+      setMessage("조회할 ID를 하나 이상 입력해 주세요.");
+      return;
+    }
+
+    const params = new URLSearchParams({ size: "200" });
+    if (receiptId) params.set("receiptId", receiptId);
+    if (pharmacyId) params.set("pharmacyId", pharmacyId);
+    if (accountId) params.set("accountId", accountId);
+    setStatus("loading");
+    setMessage("도매처 변경 로그를 조회하고 있습니다.");
+    try {
+      const response = await apiFetch<unknown>(
+        `/admin/receipt-wholesaler-changes?${params}`,
+      );
+      const results = arrayPayload(response).map(
+        normalizeCmsReceiptWholesalerAudit,
+      );
+      setRecords(results);
+      setStatus("done");
+      setMessage(
+        results.length > 0
+          ? `${results.length}건의 변경 로그를 찾았습니다.`
+          : "조건에 맞는 도매처 변경 로그가 없습니다.",
+      );
+    } catch (error) {
+      setRecords([]);
+      setStatus("error");
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "도매처 변경 로그를 조회하지 못했습니다.",
+      );
+    }
+  };
+
+  return (
+    <section className="cms-content cms-list-page cms-wholesaler-audit-page">
+      <div className="cms-table-card cms-wholesaler-audit-card">
+        <header className="cms-wholesaler-audit-heading">
+          <div>
+            <span>ROOT AUDIT LOG</span>
+            <strong>입고 도매처 변경 기록</strong>
+            <p>
+              여러 ID를 입력하면 모든 조건이 일치하는 기록만 조회합니다.
+            </p>
+          </div>
+          <ShieldCheck size={24} strokeWidth={2.1} aria-hidden="true" />
+        </header>
+        <form className="cms-wholesaler-audit-search" onSubmit={searchAudits}>
+          <label>
+            <span>입고 ID</span>
+            <input
+              inputMode="numeric"
+              placeholder="예: 1254"
+              value={receiptId}
+              onChange={(event) => updateId(setReceiptId, event.target.value)}
+            />
+          </label>
+          <label>
+            <span>약국 ID</span>
+            <input
+              inputMode="numeric"
+              placeholder="예: 3"
+              value={pharmacyId}
+              onChange={(event) => updateId(setPharmacyId, event.target.value)}
+            />
+          </label>
+          <label>
+            <span>변경 계정 ID</span>
+            <input
+              inputMode="numeric"
+              placeholder="예: 19"
+              value={accountId}
+              onChange={(event) => updateId(setAccountId, event.target.value)}
+            />
+          </label>
+          <button
+            className="cms-primary"
+            disabled={status === "loading"}
+            type="submit"
+          >
+            {status === "loading" ? "조회 중" : "로그 조회"}
+          </button>
+        </form>
+        <div
+          className={`cms-wholesaler-audit-state is-${status}`}
+          role={status === "error" ? "alert" : "status"}
+        >
+          {message}
+        </div>
+        <div className="cms-wholesaler-audit-list">
+          {pagination.items.map((record) => (
+            <article key={record.id}>
+              <div className="cms-wholesaler-audit-meta">
+                <span>로그 #{record.id}</span>
+                <time>{record.changedAt}</time>
+              </div>
+              <div className="cms-wholesaler-audit-context">
+                <strong>{record.drugName}</strong>
+                <span>
+                  입고 #{record.receiptId} · 약국 #{record.pharmacyId} · PC {record.pc || "-"}
+                </span>
+              </div>
+              <div className="cms-wholesaler-audit-change">
+                <span>{record.previousWholesalerName}</span>
+                <ArrowRight size={16} strokeWidth={2.3} aria-hidden="true" />
+                <strong>{record.newWholesalerName}</strong>
+              </div>
+              <p>{record.reason}</p>
+              <footer>
+                <span>변경자</span>
+                <strong>
+                  {record.changedByAccountName ||
+                    record.changedByLoginId ||
+                    `계정 #${record.changedByAccountId}`}
+                </strong>
+                <em>
+                  {record.changedByLoginId
+                    ? `${record.changedByLoginId} · `
+                    : ""}
+                  계정 #{record.changedByAccountId}
+                </em>
+              </footer>
+            </article>
+          ))}
+          {status === "done" && records.length === 0 && (
+            <p className="cms-empty">조회된 변경 로그가 없습니다.</p>
+          )}
+        </div>
+        {records.length > 0 && <CmsPagination {...pagination} />}
+      </div>
+    </section>
+  );
+}
+
 function CmsReceiptHistoryPage({
   appliedFilters,
   canChangeWholesaler,
   canLookupByPharmacyId,
+  canViewWholesalerAudits,
   endDate,
   histories,
   pharmacyId,
@@ -24739,6 +24999,7 @@ function CmsReceiptHistoryPage({
   onApplyFilters,
   onChangeWholesaler,
   onEndDate,
+  onLoadWholesalerAudits,
   onPharmacyId,
   onQuery,
   onSearchWholesalers,
@@ -24747,6 +25008,7 @@ function CmsReceiptHistoryPage({
   appliedFilters: CmsReceiptHistoryFilters;
   canChangeWholesaler: boolean;
   canLookupByPharmacyId: boolean;
+  canViewWholesalerAudits: boolean;
   endDate: string;
   histories: CmsReceiptHistory[];
   pharmacyId: string;
@@ -24760,6 +25022,9 @@ function CmsReceiptHistoryPage({
     reason: string,
   ) => Promise<void>;
   onEndDate: (value: string) => void;
+  onLoadWholesalerAudits: (
+    history: CmsReceiptHistory,
+  ) => Promise<CmsReceiptWholesalerAudit[]>;
   onPharmacyId: (value: string) => void;
   onQuery: (value: string) => void;
   onSearchWholesalers: (keyword: string) => Promise<Wholesaler[]>;
@@ -24779,6 +25044,11 @@ function CmsReceiptHistoryPage({
   >("idle");
   const [receiptWholesalerSaving, setReceiptWholesalerSaving] = useState(false);
   const [receiptWholesalerError, setReceiptWholesalerError] = useState("");
+  const [receiptWholesalerAudits, setReceiptWholesalerAudits] = useState<
+    CmsReceiptWholesalerAudit[]
+  >([]);
+  const [receiptWholesalerAuditStatus, setReceiptWholesalerAuditStatus] =
+    useState<"idle" | "loading" | "done" | "error">("idle");
 
   useEffect(() => {
     if (!editingHistory) return;
@@ -24806,6 +25076,34 @@ function CmsReceiptHistoryPage({
     };
   }, [editingHistory?.id, onSearchWholesalers]);
 
+  useEffect(() => {
+    if (!editingHistory || !canViewWholesalerAudits) {
+      setReceiptWholesalerAudits([]);
+      setReceiptWholesalerAuditStatus("idle");
+      return;
+    }
+    let active = true;
+    setReceiptWholesalerAuditStatus("loading");
+    void onLoadWholesalerAudits(editingHistory)
+      .then((results) => {
+        if (!active) return;
+        setReceiptWholesalerAudits(results);
+        setReceiptWholesalerAuditStatus("done");
+      })
+      .catch(() => {
+        if (!active) return;
+        setReceiptWholesalerAudits([]);
+        setReceiptWholesalerAuditStatus("error");
+      });
+    return () => {
+      active = false;
+    };
+  }, [
+    canViewWholesalerAudits,
+    editingHistory?.id,
+    onLoadWholesalerAudits,
+  ]);
+
   const filteredReceiptWholesalers = useMemo(() => {
     const normalizedQuery = normalizeSearchText(receiptWholesalerQuery);
     if (!normalizedQuery) return receiptWholesalers;
@@ -24825,6 +25123,10 @@ function CmsReceiptHistoryPage({
     setReceiptWholesalerStatus("idle");
     setReceiptWholesalerSaving(false);
     setReceiptWholesalerError("");
+    setReceiptWholesalerAudits([]);
+    setReceiptWholesalerAuditStatus(
+      canViewWholesalerAudits ? "loading" : "idle",
+    );
   };
 
   const closeWholesalerChange = () => {
@@ -25138,6 +25440,54 @@ function CmsReceiptHistoryPage({
                 </span>
               </div>
             </div>
+
+            {canViewWholesalerAudits && (
+              <section className="cms-receipt-wholesaler-audits">
+                <header>
+                  <div>
+                    <Clock3 size={16} strokeWidth={2.3} aria-hidden="true" />
+                    <strong>변경 이력</strong>
+                  </div>
+                  <span>{receiptWholesalerAudits.length}건</span>
+                </header>
+                <div className="cms-receipt-wholesaler-audit-list">
+                  {receiptWholesalerAuditStatus === "loading" && (
+                    <p>변경 이력을 불러오는 중입니다.</p>
+                  )}
+                  {receiptWholesalerAuditStatus === "error" && (
+                    <p className="is-error">
+                      변경 이력을 불러오지 못했습니다.
+                    </p>
+                  )}
+                  {receiptWholesalerAuditStatus === "done" &&
+                    receiptWholesalerAudits.length === 0 && (
+                      <p>아직 도매처 변경 이력이 없습니다.</p>
+                    )}
+                  {receiptWholesalerAudits.map((audit) => (
+                    <article key={audit.id}>
+                      <div>
+                        <time>{audit.changedAt}</time>
+                        <span>
+                          {audit.changedByAccountName ||
+                            audit.changedByLoginId ||
+                            `계정 #${audit.changedByAccountId}`}
+                        </span>
+                      </div>
+                      <strong>
+                        {audit.previousWholesalerName}
+                        <ArrowRight
+                          size={13}
+                          strokeWidth={2.4}
+                          aria-hidden="true"
+                        />
+                        {audit.newWholesalerName}
+                      </strong>
+                      <p>{audit.reason}</p>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )}
 
             <label className="cms-input cms-receipt-wholesaler-search">
               <span>새 도매처 검색</span>
