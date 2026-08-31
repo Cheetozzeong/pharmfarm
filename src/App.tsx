@@ -11417,6 +11417,13 @@ function canViewAmountCms(account?: AuthAccount | null) {
   );
 }
 
+function canChangeReceiptWholesalerCms(account?: AuthAccount | null) {
+  const role = account?.role?.toUpperCase();
+  const accountType = account?.accountType?.toUpperCase();
+  if (role) return role === "ADMIN" || role === "PHARMACY_OWNER";
+  return accountType === "ADMIN" || accountType === "PRIMARY";
+}
+
 function canSyncStockSnapshotCms(account?: AuthAccount | null) {
   return canAccessRootCms(account) || account?.role?.toUpperCase() === "ADMIN";
 }
@@ -13196,6 +13203,63 @@ function CmsApp({
     [cmsFallback],
   );
 
+  const searchReceiptWholesalers = useCallback(async (keyword: string) => {
+    const params = new URLSearchParams();
+    if (keyword.trim()) params.set("keyword", keyword.trim());
+    const response = await apiFetch<unknown>(
+      `/wholesalers${params.toString() ? `?${params}` : ""}`,
+    );
+    return arrayPayload(response).map(normalizeWholesaler);
+  }, []);
+
+  async function changeReceiptWholesaler(
+    history: CmsReceiptHistory,
+    wholesaler: Wholesaler,
+    reason: string,
+  ) {
+    try {
+      const response = await apiFetch<unknown>(
+        `/receipts/${encodeURIComponent(history.id)}/wholesaler`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            ...(canAccessRootCms(authAccount) && history.pharmacyId
+              ? { pharmacyId: Number(history.pharmacyId) }
+              : {}),
+            wholesalerId: Number(wholesaler.id),
+            reason: reason.trim(),
+          }),
+        },
+      );
+      const updated = normalizeCmsReceiptHistory(response, 0);
+      setReceiptHistories((current) =>
+        current.map((item) =>
+          item.id === history.id
+            ? { ...item, ...updated, id: item.id }
+            : item,
+        ),
+      );
+      setApiState("connected");
+      setApiMessage(
+        `${history.drugName} 입고 건의 도매처를 ${wholesaler.name}(으)로 변경했습니다.`,
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message === "UNAUTHORIZED" || error.message === "FORBIDDEN")
+      ) {
+        cmsFallback(error);
+      } else {
+        setApiMessage(
+          error instanceof Error
+            ? error.message
+            : "입고 도매처를 변경하지 못했습니다.",
+        );
+      }
+      throw error;
+    }
+  }
+
   const searchCmsStocks = useCallback(
     async (
       keyword: string,
@@ -14277,6 +14341,7 @@ function CmsApp({
           {visiblePage === "receipts" && (
             <CmsReceiptHistoryPage
               appliedFilters={appliedReceiptFilters}
+              canChangeWholesaler={canChangeReceiptWholesalerCms(authAccount)}
               canLookupByPharmacyId={canAccessRootCms(authAccount)}
               endDate={receiptEndDate}
               histories={receiptHistories}
@@ -14285,9 +14350,11 @@ function CmsApp({
               searchStatus={receiptSearchStatus}
               startDate={receiptStartDate}
               onApplyFilters={applyReceiptFilters}
+              onChangeWholesaler={changeReceiptWholesaler}
               onEndDate={setReceiptEndDate}
               onPharmacyId={setReceiptPharmacyId}
               onQuery={setReceiptQuery}
+              onSearchWholesalers={searchReceiptWholesalers}
               onStartDate={setReceiptStartDate}
             />
           )}
@@ -24508,6 +24575,7 @@ function CmsAgentControlPage({
 
 function CmsReceiptHistoryPage({
   appliedFilters,
+  canChangeWholesaler,
   canLookupByPharmacyId,
   endDate,
   histories,
@@ -24516,12 +24584,15 @@ function CmsReceiptHistoryPage({
   searchStatus,
   startDate,
   onApplyFilters,
+  onChangeWholesaler,
   onEndDate,
   onPharmacyId,
   onQuery,
+  onSearchWholesalers,
   onStartDate,
 }: {
   appliedFilters: CmsReceiptHistoryFilters;
+  canChangeWholesaler: boolean;
   canLookupByPharmacyId: boolean;
   endDate: string;
   histories: CmsReceiptHistory[];
@@ -24530,11 +24601,123 @@ function CmsReceiptHistoryPage({
   searchStatus: CmsPrescriptionSearchStatus;
   startDate: string;
   onApplyFilters: () => void;
+  onChangeWholesaler: (
+    history: CmsReceiptHistory,
+    wholesaler: Wholesaler,
+    reason: string,
+  ) => Promise<void>;
   onEndDate: (value: string) => void;
   onPharmacyId: (value: string) => void;
   onQuery: (value: string) => void;
+  onSearchWholesalers: (keyword: string) => Promise<Wholesaler[]>;
   onStartDate: (value: string) => void;
 }) {
+  const [editingHistory, setEditingHistory] =
+    useState<CmsReceiptHistory | null>(null);
+  const [receiptWholesalers, setReceiptWholesalers] = useState<Wholesaler[]>(
+    [],
+  );
+  const [receiptWholesalerQuery, setReceiptWholesalerQuery] = useState("");
+  const [selectedReceiptWholesalerId, setSelectedReceiptWholesalerId] =
+    useState("");
+  const [receiptWholesalerReason, setReceiptWholesalerReason] = useState("");
+  const [receiptWholesalerStatus, setReceiptWholesalerStatus] = useState<
+    "idle" | "loading" | "done" | "error"
+  >("idle");
+  const [receiptWholesalerSaving, setReceiptWholesalerSaving] =
+    useState(false);
+  const [receiptWholesalerError, setReceiptWholesalerError] = useState("");
+
+  useEffect(() => {
+    if (!editingHistory) return;
+    let active = true;
+    setReceiptWholesalerStatus("loading");
+    setReceiptWholesalerError("");
+    void onSearchWholesalers("")
+      .then((results) => {
+        if (!active) return;
+        setReceiptWholesalers(results);
+        setReceiptWholesalerStatus("done");
+      })
+      .catch((error) => {
+        if (!active) return;
+        setReceiptWholesalers([]);
+        setReceiptWholesalerStatus("error");
+        setReceiptWholesalerError(
+          error instanceof Error
+            ? error.message
+            : "도매처 목록을 불러오지 못했습니다.",
+        );
+      });
+    return () => {
+      active = false;
+    };
+  }, [editingHistory?.id, onSearchWholesalers]);
+
+  const filteredReceiptWholesalers = useMemo(() => {
+    const normalizedQuery = normalizeSearchText(receiptWholesalerQuery);
+    if (!normalizedQuery) return receiptWholesalers;
+    return receiptWholesalers.filter((wholesaler) =>
+      normalizeSearchText(`${wholesaler.name} ${wholesaler.meta}`).includes(
+        normalizedQuery,
+      ),
+    );
+  }, [receiptWholesalerQuery, receiptWholesalers]);
+
+  const openWholesalerChange = (history: CmsReceiptHistory) => {
+    setEditingHistory(history);
+    setReceiptWholesalers([]);
+    setReceiptWholesalerQuery("");
+    setSelectedReceiptWholesalerId("");
+    setReceiptWholesalerReason("");
+    setReceiptWholesalerStatus("idle");
+    setReceiptWholesalerSaving(false);
+    setReceiptWholesalerError("");
+  };
+
+  const closeWholesalerChange = () => {
+    if (receiptWholesalerSaving) return;
+    setEditingHistory(null);
+  };
+
+  const submitWholesalerChange = async () => {
+    if (!editingHistory || receiptWholesalerSaving) return;
+    const selectedWholesaler = receiptWholesalers.find(
+      (wholesaler) => wholesaler.id === selectedReceiptWholesalerId,
+    );
+    if (!selectedWholesaler) {
+      setReceiptWholesalerError("변경할 도매처를 선택해 주세요.");
+      return;
+    }
+    if (selectedWholesaler.id === editingHistory.wholesalerId) {
+      setReceiptWholesalerError("현재 도매처와 다른 도매처를 선택해 주세요.");
+      return;
+    }
+    if (!receiptWholesalerReason.trim()) {
+      setReceiptWholesalerError("변경 사유를 입력해 주세요.");
+      return;
+    }
+
+    setReceiptWholesalerSaving(true);
+    setReceiptWholesalerError("");
+    try {
+      await onChangeWholesaler(
+        editingHistory,
+        selectedWholesaler,
+        receiptWholesalerReason,
+      );
+      setEditingHistory(null);
+    } catch (error) {
+      setReceiptWholesalerError(
+        error instanceof Error
+          ? error.message
+          : "입고 도매처를 변경하지 못했습니다.",
+      );
+    } finally {
+      setReceiptWholesalerSaving(false);
+    }
+  };
+
   const visibleHistories = useMemo(
     () =>
       sortCmsReceiptHistories(
@@ -24696,7 +24879,20 @@ function CmsReceiptHistoryPage({
                       "-"}
                   </em>
                 </strong>
-                <span>{history.wholesalerName}</span>
+                <div className="cms-receipt-wholesaler-cell">
+                  <span title={history.wholesalerName}>
+                    {history.wholesalerName}
+                  </span>
+                  {canChangeWholesaler && (
+                    <button
+                      aria-label={`${history.drugName} 입고 도매처 변경`}
+                      type="button"
+                      onClick={() => openWholesalerChange(history)}
+                    >
+                      변경
+                    </button>
+                  )}
+                </div>
                 <span className="cms-receipt-quantity-cell">
                   <b>{currency(history.productTotalQuantity)}개</b>
                   <em>PC 기준 재고 반영</em>
@@ -24729,6 +24925,146 @@ function CmsReceiptHistoryPage({
         </div>
         <CmsPagination {...pagination} />
       </div>
+      {editingHistory && (
+        <CmsModal
+          title="입고 도매처 변경"
+          subtitle={`${editingHistory.drugName} · ${editingHistory.receivedAt}`}
+          onClose={closeWholesalerChange}
+          footer={
+            <div className="cms-receipt-wholesaler-footer">
+              <button
+                className="cms-modal-secondary"
+                disabled={receiptWholesalerSaving}
+                type="button"
+                onClick={closeWholesalerChange}
+              >
+                취소
+              </button>
+              <button
+                className="cms-primary"
+                disabled={
+                  receiptWholesalerSaving ||
+                  !selectedReceiptWholesalerId ||
+                  selectedReceiptWholesalerId ===
+                    editingHistory.wholesalerId ||
+                  !receiptWholesalerReason.trim()
+                }
+                type="button"
+                onClick={() => void submitWholesalerChange()}
+              >
+                {receiptWholesalerSaving ? "변경 중" : "도매처 변경"}
+              </button>
+            </div>
+          }
+        >
+          <div className="cms-receipt-wholesaler-dialog">
+            <div className="cms-receipt-wholesaler-summary">
+              <div>
+                <span>현재 도매처</span>
+                <strong>{editingHistory.wholesalerName}</strong>
+              </div>
+              <div>
+                <span>반품 가능 수량</span>
+                <strong>{currency(editingHistory.returnableQuantity)}개</strong>
+              </div>
+              <div>
+                <span>추적값</span>
+                <strong title={editingHistory.sn || editingHistory.pc}>
+                  {editingHistory.sn
+                    ? `SN ${editingHistory.sn}`
+                    : `PC ${editingHistory.pc || "-"}`}
+                </strong>
+              </div>
+            </div>
+
+            <div className="cms-receipt-wholesaler-impact">
+              <AlertTriangle size={18} strokeWidth={2.2} />
+              <div>
+                <strong>변경 후 남은 반품은 새 도매처로 처리됩니다.</strong>
+                <span>
+                  이미 완료된 반품 이력의 도매처는 바뀌지 않으며, 변경 전후
+                  값·사유·수행 계정이 감사 이력에 기록됩니다.
+                </span>
+              </div>
+            </div>
+
+            <label className="cms-input cms-receipt-wholesaler-search">
+              <span>새 도매처 검색</span>
+              <input
+                autoFocus
+                placeholder="도매처명을 입력해 목록을 좁혀보세요"
+                value={receiptWholesalerQuery}
+                onChange={(event) =>
+                  setReceiptWholesalerQuery(event.target.value)
+                }
+              />
+            </label>
+
+            <div
+              aria-label="변경할 도매처"
+              className="cms-receipt-wholesaler-options"
+              role="radiogroup"
+            >
+              {receiptWholesalerStatus === "loading" && (
+                <p>사용 가능한 도매처를 불러오는 중입니다.</p>
+              )}
+              {receiptWholesalerStatus === "done" &&
+                filteredReceiptWholesalers.map((wholesaler) => {
+                  const isCurrent =
+                    wholesaler.id === editingHistory.wholesalerId;
+                  const isSelected =
+                    wholesaler.id === selectedReceiptWholesalerId;
+                  return (
+                    <button
+                      aria-checked={isSelected}
+                      className={`${isSelected ? "is-selected" : ""} ${
+                        isCurrent ? "is-current" : ""
+                      }`}
+                      disabled={isCurrent}
+                      key={wholesaler.id}
+                      role="radio"
+                      type="button"
+                      onClick={() => {
+                        setSelectedReceiptWholesalerId(wholesaler.id);
+                        setReceiptWholesalerError("");
+                      }}
+                    >
+                      <span className="cms-receipt-wholesaler-radio">
+                        {isSelected && <Check size={13} strokeWidth={3} />}
+                      </span>
+                      <strong>{wholesaler.name}</strong>
+                      <em>{isCurrent ? "현재 도매처" : wholesaler.meta}</em>
+                    </button>
+                  );
+                })}
+              {receiptWholesalerStatus === "done" &&
+                filteredReceiptWholesalers.length === 0 && (
+                  <p>검색 조건에 맞는 도매처가 없습니다.</p>
+                )}
+            </div>
+
+            <label className="cms-input cms-receipt-wholesaler-reason">
+              <span>변경 사유</span>
+              <textarea
+                maxLength={500}
+                placeholder="예: 입고 등록 시 도매처를 잘못 선택함"
+                value={receiptWholesalerReason}
+                onChange={(event) => {
+                  setReceiptWholesalerReason(event.target.value);
+                  setReceiptWholesalerError("");
+                }}
+              />
+              <em>{receiptWholesalerReason.length}/500</em>
+            </label>
+
+            {receiptWholesalerError && (
+              <div className="cms-receipt-wholesaler-error" role="alert">
+                {receiptWholesalerError}
+              </div>
+            )}
+          </div>
+        </CmsModal>
+      )}
     </section>
   );
 }
