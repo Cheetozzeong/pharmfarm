@@ -5618,7 +5618,10 @@ body:has(.cms-shell) {
 
 .cms-list-page {
   display: flex;
+  width: 100%;
+  max-width: 100%;
   height: 100%;
+  min-width: 0;
   flex-direction: column;
   gap: 16px;
   min-height: 0;
@@ -6424,6 +6427,8 @@ body:has(.cms-shell) {
 
 .cms-table-card {
   display: flex;
+  width: 100%;
+  max-width: 100%;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
@@ -6448,10 +6453,15 @@ body:has(.cms-shell) {
 }
 
 .cms-table-scroll {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   min-height: 0;
   flex: 1;
-  overflow: auto;
+  overflow-x: auto;
+  overflow-y: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
 .cms-master-page .cms-table-card,
@@ -11818,6 +11828,13 @@ body:has(.cms-shell) {
     overflow: visible;
   }
 
+  .cms-list-page .cms-table-card {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    overflow: hidden;
+  }
+
   .cms-master-page .cms-table-card,
   .cms-account-page .cms-table-card,
   .cms-inventory-page .cms-table-card,
@@ -11831,6 +11848,16 @@ body:has(.cms-shell) {
   .cms-panel-scroll {
     flex: 0 0 auto;
     overflow: visible;
+  }
+
+  .cms-list-page .cms-table-scroll {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    min-height: 0;
+    flex: 1 1 auto;
+    overflow-x: auto;
+    overflow-y: auto;
   }
 
   .cms-master-page .cms-table-scroll,
