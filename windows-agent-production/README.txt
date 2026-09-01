@@ -163,8 +163,13 @@ If data does not arrive:
 Tray icon:
 
 - Shows the PharmFarm mascot in the Windows notification area. Runtime state remains available in the icon tooltip and context menu.
+- The tray and prescription collector are separate processes. The tray checks the actual scheduled task/process every 10 seconds instead of treating the tray icon itself as proof that collection is running.
+- After a 20-second login/startup grace period, the tray automatically starts a stopped collector. It retries every 60 seconds while the collector remains stopped.
+- A stopped collector changes the tray icon/tooltip to an error state. If automatic recovery fails, the user is told to right-click "에이전트 시작", check the log folder, and contact the administrator.
+- When automatic recovery succeeds, the tray keeps a recovery warning until "오늘 처방 다시 확인" completes. The normal agent loop also performs its full scan of today's prescriptions after restart.
+- Choosing "에이전트 중지" requires confirmation and pauses automatic recovery for the current tray session so an intentional stop is not immediately undone.
 - Right-click to refresh status, open logs, open queue, start/stop the agent, or close the tray icon.
-- Right-click "금일 처방 다시 가져오기" to resend today's prescription rows with overwriteExisting=true.
+- Right-click "오늘 처방 다시 확인" to resend today's prescription rows with overwriteExisting=true when the collector was stopped or the admin page is missing prescriptions.
 - Right-click "향정 후보 다시 동기화" to rescan only controlled-drug candidate sources.
 - Right-click "참조 데이터 전체 다시 동기화" to rescan drug master, stock, barcode, wholesalers, prices, units, and controlled-drug candidates.
 - Closing the tray icon does not remove the background scheduled task.
