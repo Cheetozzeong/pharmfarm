@@ -371,6 +371,20 @@ try {
     }
   }
 
+  & {
+    . $lifecyclePath
+    function Stop-ScheduledTask { param($TaskName, $ErrorAction) throw 'Task does not exist' }
+    function Join-Path { param($Path, $ChildPath) return 'Invoke-MissingTaskSchtasks' }
+    function Test-Path { param($LiteralPath) return $true }
+    function Invoke-MissingTaskSchtasks { Write-Error 'ERROR: The system cannot find the file specified.' }
+    $script:missingTaskInventoryCalls = 0
+    function Get-PharmFarmProcesses { param($InstallRoot, $Roles) $script:missingTaskInventoryCalls++; return @() }
+    function Test-PharmFarmRuntimeLocked { param($InstallRoot, $Role) return $false }
+    Stop-PharmFarmProcesses -InstallRoot $testRoot -Roles @('watchdog', 'agent', 'tray')
+    Assert-That ($script:missingTaskInventoryCalls -ge 2) 'Missing legacy task stderr does not skip authoritative process-stop verification'
+    Assert-That ($ErrorActionPreference -eq 'Stop') 'Best-effort schtasks stop restores strict error handling'
+  }
+
   $sid = 'S-1-5-21-111111111-222222222-333333333-1001'
   foreach ($definition in @(Get-PharmFarmTaskDefinitions)) {
     $xmlText = New-PharmFarmTaskXml -Role $definition.Role -InstallRoot $testRoot -UserSid $sid -PowerShellPath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -StartAt ([datetime]'2026-09-15T13:15:00')

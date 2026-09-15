@@ -239,7 +239,17 @@ function Stop-PharmFarmProcesses {
     try { Stop-ScheduledTask -TaskName $taskNames[$role] -ErrorAction Stop | Out-Null }
     catch {
       $schtasks = Join-Path $env:SystemRoot "System32\schtasks.exe"
-      if (Test-Path -LiteralPath $schtasks) { & $schtasks /End /TN $taskNames[$role] 2>&1 | Out-Null }
+      if (Test-Path -LiteralPath $schtasks) {
+        # An older installation has no watchdog task. Windows PowerShell 5.1
+        # turns schtasks stderr for that absent task into a terminating error
+        # under Stop. Task termination is best-effort; the exact process and
+        # runtime-lock checks below remain the authoritative stop verification.
+        $previousPreference = $ErrorActionPreference
+        try {
+          $ErrorActionPreference = "Continue"
+          & $schtasks /End /TN $taskNames[$role] 2>&1 | Out-Null
+        } finally { $ErrorActionPreference = $previousPreference }
+      }
     }
   }
   foreach ($process in @(Get-PharmFarmProcesses -InstallRoot $InstallRoot -Roles $Roles)) {
