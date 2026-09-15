@@ -2,7 +2,9 @@
   [switch]$Console,
   [switch]$Once,
   [switch]$ResyncTodayPrescriptions,
-  [string]$ConfigPath = ""
+  [string]$ConfigPath = "",
+  [string]$MaintenanceToken = "",
+  [switch]$Resume
 )
 
 $ErrorActionPreference = "Continue"
@@ -33,7 +35,9 @@ $LastSqlOkAt = $null
 $LastApiOkAt = $null
 $RemoteCommandPollingUnavailable = $false
 $HeartbeatUnavailable = $false
-$AgentVersion = "1.3.2-ps"
+$AgentVersion = "1.4.0-ps"
+. (Join-Path $PSScriptRoot "PharmFarm-AgentLifecycle.ps1")
+$RuntimeLock = $null
 
 function Ensure-Directory {
   param([string]$Path)
@@ -3098,6 +3102,16 @@ function Watch-Once {
 }
 
 try {
+  if (![string]::IsNullOrWhiteSpace($MaintenanceToken) -and !$ResyncTodayPrescriptions) {
+    throw "Maintenance tokens may only be used for an explicit one-time resync."
+  }
+  if ($Resume) { Set-PharmFarmPaused -InstallRoot $InstallRoot -Role "agent" -Paused $false }
+  $RuntimeLock = Enter-PharmFarmRuntime -InstallRoot $InstallRoot -Role "agent" -MaintenanceToken $MaintenanceToken
+  if ($null -eq $RuntimeLock) {
+    Write-AgentLog "start skipped: another instance, user pause, uninstall or maintenance. Use the tray Start action, or repair an interrupted update." "WARN"
+    if ($Once -or $ResyncTodayPrescriptions -or $Console) { exit 2 }
+    exit 0
+  }
   Ensure-Directory $InstallRoot
   Ensure-Directory $QueueDir
   Ensure-Directory $SentDir
@@ -3151,4 +3165,6 @@ try {
 } catch {
   Write-AgentLog "fatal $($_.Exception.Message)" "ERROR"
   exit 1
+} finally {
+  Exit-PharmFarmLock $RuntimeLock
 }

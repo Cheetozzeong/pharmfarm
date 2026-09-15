@@ -11274,6 +11274,7 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
           <span>PharmFarm</span>
         </div>
         <div className="agent-build-badge" aria-label="배포 버전 정보">
+          <span>에이전트 1.4.0-ps</span>
           <span>최근 업데이트 {buildTimeLabel}</span>
           <span>build {commitLabel}</span>
         </div>
@@ -11333,14 +11334,35 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
           <RefreshCw size={24} />
           <strong>자동 실행</strong>
           <span>
-            Windows 예약 작업과 트레이 아이콘을 등록해 로그인 시 자동
-            실행합니다.
+            Windows 로그인 후 자동 실행하고, 별도 감시 작업이 매분 종료된
+            에이전트와 트레이를 확인합니다. 사용자가 직접 중지한 상태는 유지합니다.
           </span>
         </div>
       </section>
 
       <section className="agent-steps-panel">
-        <h2>설치 순서</h2>
+        <h2>기존 설치 업데이트</h2>
+        <ol>
+          <li>최신 설치 파일을 다운로드하고 기존 설치 폴더 밖에 압축을 해제합니다.</li>
+          <li>
+            처음 설치했던 Windows 사용자 계정에서 <b>repair-pharmfarm-agent.bat</b>를
+            실행합니다. 기존 약국 ID, 기기 ID, 설정과 전송 대기 데이터는 유지됩니다.
+          </li>
+          <li>
+            복구 결과를 확인한 뒤 관리자 화면에서 최근 연결 시각을 확인합니다.
+            다운로드만으로 실행 중인 에이전트가 업데이트되지는 않습니다.
+          </li>
+        </ol>
+        <p>
+          직접 중지했다면 트레이의 <b>에이전트 시작</b>을 누르세요.
+          트레이를 직접 종료했다면 <b>run-agent-tray.bat</b>로 다시 표시할 수 있습니다.
+          업데이트에 실패하면 오류와 백업 경로를 관리자에게 전달해 주세요.
+          오늘 처방 전체 재전송은 기존 데이터를 덮어쓸 수 있으므로 업데이트 용도로 사용하지 마세요.
+        </p>
+      </section>
+
+      <section className="agent-steps-panel">
+        <h2>신규 설치 순서</h2>
         <ol>
           <li>설치 파일을 다운로드하고 압축을 해제합니다.</li>
           <li>

@@ -9,7 +9,7 @@ Files:
 
 1. install-pharmfarm-agent.bat
    Opens the setup wizard.
-   The wizard copies PharmFarm-Agent.ps1 to ProgramData and creates a Scheduled Task.
+   The wizard copies the runtime package to ProgramData and verifies all three Scheduled Tasks.
 
 2. PharmFarm-Agent.ps1
    Production-oriented local agent.
@@ -31,8 +31,18 @@ Files:
    It sends overwriteExisting=true so the server can replace already imported prescription lines.
 
 7. uninstall-pharmfarm-agent.bat
-   Removes the Scheduled Task and Startup fallback shortcuts.
+   Disables recovery first, stops the three exact PharmFarm processes, and removes their tasks/shortcuts.
    Runtime queue/log files remain in ProgramData for recovery/audit.
+
+8. repair-pharmfarm-agent.bat
+   Updates an existing installation without rewriting agent.config.json or collection state.
+   Run from a newly extracted package, using the original installation's Windows account.
+
+9. PharmFarm-AgentWatchdog.ps1 / PharmFarm-AgentLifecycle.ps1 / PharmFarm-AgentTasks.ps1
+   Independent periodic recovery, shared process/control locks, and common scheduler definitions.
+
+10. run-agent-tray.bat
+    Explicitly restores a tray icon that the user intentionally closed.
 
 Runtime path:
 
@@ -52,6 +62,9 @@ Runtime state files:
 
   agent.state.json          Local status shown by the tray icon
   agent.command-state.json  Recently handled remote commands, used to avoid duplicate execution
+  watchdog.state.json       Last watchdog check and per-process result (not SQL/API health)
+  lifecycle                 Singleton locks, durable user pauses, maintenance/uninstall markers
+  backups                   Timestamped runtime/task backups made before setup or repair
 
 Default SQL Server:
 
@@ -139,17 +152,38 @@ Recommended operation:
 Updating an installed agent:
 
 - Downloading/extracting a new zip does not update the running tray agent by itself.
-- Run install-pharmfarm-agent.bat again. The installer stops the existing agent/tray processes before starting the updated files.
-- If PharmFarm-Agent.ps1 is copied into C:\ProgramData\PharmFarmAgent manually, restart the PharmFarmAgent scheduled task afterward.
+- Extract the complete package OUTSIDE C:\ProgramData\PharmFarmAgent and run repair-pharmfarm-agent.bat.
+- Repair preserves agent.config.json byte-for-byte, including pharmacy/device identity, custom options and credentials.
+- Queue, sent files, prescription/reference hashes and logs are not cleared. Repair does not request TODAY_OVERWRITE or a manual resync.
+- Setup/repair enters maintenance before stopping processes or replacing files, backs up runtime/task definitions, and verifies the registered tasks before resuming.
+- If a task belongs to another Windows account, repair refuses to migrate it: use the original installation account. SQL uses that user's Windows integrated authentication.
+- A same-name task targeting another installation or script is also refused before changes. A legacy manual launcher with no explicit installation path blocks overlap and requires its verified console to be closed; it is not blindly force-killed.
+- Do not copy just PharmFarm-Agent.ps1: version 1.4.0-ps also needs the lifecycle helper and matching tray/watchdog files.
+- The setup wizard is for a new installation or an intentional settings change; use repair for an update without configuration changes.
 - The startup log should show the bundled agent version. If the version is old, the tray is still using the old ProgramData copy.
-- resync-today-prescriptions.bat runs the bundled PharmFarm-Agent.ps1 first, so it can test a freshly extracted package before reinstalling.
+- resync-today-prescriptions.bat is an explicit, destructive overwrite test, not a repair tool. It refuses to overlap another agent and does not bypass a user pause or maintenance.
 
-Task Scheduler registration fallback:
+Automatic recovery (1.4.0-ps):
 
-- The installer first checks that the Windows Task Scheduler service is running.
-- If PowerShell scheduled-task registration fails, the installer retries with schtasks.exe.
-- If Task Scheduler still fails, the installer creates Startup folder shortcuts and starts the agent/tray immediately, so the PC does not need to reboot just to begin running.
-- In that fallback mode, the agent starts when the current Windows user logs in.
+- PharmFarmAgent and PharmFarmAgentTray run at the original Windows user's login, with no runtime limit.
+- PharmFarmAgentWatchdog also runs at login and repeats every minute indefinitely. Missed scheduled checks may run when Windows becomes available again.
+- The watchdog can restore both processes even if neither tray nor collector is running. It is a short check with a two-minute execution limit so a hung check cannot permanently block later checks.
+- Both registration routes (PowerShell and schtasks.exe) import the same XML: InteractiveToken, LeastPrivilege, IgnoreNew, battery operation allowed, missed-run recovery and failure retry.
+- Registration is read back and checked. A Startup-only fallback is no longer reported as successful recovery protection.
+- File-backed singleton locks protect collector, tray and watchdog, including manual/one-shot collector launches. Locks release when a process exits or crashes; do not delete .lock files while processes run.
+- This is login-based recovery, not a Windows service: turning on a PC without signing in as the installed user does NOT start collection. Sleep, a disabled scheduler, antivirus blocking, or a broken installation can still prevent recovery.
+- This watchdog repairs absent processes; it does not force-restart a live process for stale SQL/API state. A running icon is not proof of successful prescription collection.
+
+User stop and maintenance:
+
+- Tray > Agent Stop creates a durable pause BEFORE stopping collection. The pause survives tray restarts and PC reboots. Use Agent Start to resume deliberately.
+- Closing the tray explicitly pauses only the tray, not the collector. Double-click run-agent-tray.bat to show it again. A crash does not set this pause and is automatically recovered.
+- run-agent-console.bat is an explicit agent resume/troubleshooting action. It still refuses duplicates, maintenance and an uninstalled/disabled runtime.
+- Installation, repair, removal and tray resync hold a maintenance lease so watchdog recovery cannot race file/state changes.
+- An interrupted or failed maintenance operation leaves recovery blocked. Do not manually delete lifecycle files; rerun repair from the complete package and inspect its backup/error report.
+- If an update fails after backup, old runtime files are restored where safe, but restored tasks stay DISABLED and legacy Startup shortcuts stay removed until repair succeeds. Their original XML/shortcuts remain in the backup. If process shutdown or rollback cannot be confirmed, the error explicitly reports that uncertainty.
+- Uninstall marks the runtime disabled before stopping the watchdog. Runtime files and data are retained; use an intentional reinstall to re-enable an uninstalled agent.
+- A recovery notice means collection during the stopped interval needs checking in CMS. Never use full overwrite resync just to dismiss the notice without reviewing its effect.
 
 If data does not arrive:
 
@@ -158,6 +192,9 @@ If data does not arrive:
 3. Check C:\ProgramData\PharmFarmAgent\queue.
 4. If queue files remain, the SQL side worked but API transmission failed.
 5. If queue is empty and no logs appear, the agent may not be running.
+6. If the tray says user-stopped, choose Agent Start. If it says maintenance, ask the administrator to inspect/repair the interrupted update.
+7. If both icons/processes are absent after login, inspect PharmFarmAgentWatchdog in Task Scheduler and logs\watchdog-YYYYMMDD.log. Do not assume another product's tray icon is PharmFarm.
+8. Confirm current agent.state.json / watchdog.state.json timestamps and the latest CMS heartbeat. Process recovery alone does not confirm SQL/API connectivity or backfill missing prescriptions.
 
 
 Tray icon:

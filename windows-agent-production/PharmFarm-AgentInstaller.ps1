@@ -19,6 +19,8 @@ $ResyncTodayTarget = Join-Path $InstallRoot "resync-today-prescriptions.bat"
 $ControlledDrugReferenceSource = Join-Path $SourceRoot "controlled-drug-reference.csv"
 $ControlledDrugReferenceTarget = Join-Path $InstallRoot "controlled-drug-reference.csv"
 $ConfigTarget = Join-Path $InstallRoot "agent.config.json"
+. (Join-Path $SourceRoot "PharmFarm-AgentLifecycle.ps1")
+. (Join-Path $SourceRoot "PharmFarm-AgentTasks.ps1")
 
 function Ensure-Directory {
   param([string]$Path)
@@ -108,17 +110,6 @@ function Write-Config {
   )
 
   Ensure-Directory $InstallRoot
-  Copy-Item -LiteralPath $AgentSource -Destination $AgentTarget -Force
-  Copy-Item -LiteralPath $TraySource -Destination $TrayTarget -Force
-  if (Test-Path -LiteralPath $IconSource) {
-    Copy-Item -LiteralPath $IconSource -Destination $IconTarget -Force
-  }
-  if (Test-Path -LiteralPath $ResyncTodaySource) {
-    Copy-Item -LiteralPath $ResyncTodaySource -Destination $ResyncTodayTarget -Force
-  }
-  if (Test-Path -LiteralPath $ControlledDrugReferenceSource) {
-    Copy-Item -LiteralPath $ControlledDrugReferenceSource -Destination $ControlledDrugReferenceTarget -Force
-  }
 
   $deviceIdSeed = "{0}|{1}|{2}" -f $env:COMPUTERNAME, $env:USERNAME, $DeviceName
   $sha = [System.Security.Cryptography.SHA256]::Create()
@@ -166,261 +157,6 @@ function Write-Config {
   $config.deviceId = $config.deviceId.Substring(0, [Math]::Min(48, $config.deviceId.Length))
   $json = $config | ConvertTo-Json -Depth 8
   Set-Content -LiteralPath $ConfigTarget -Value $json -Encoding UTF8
-}
-
-function New-InstallResult {
-  param(
-    [bool]$Ok,
-    [string]$Mode,
-    [string]$Message
-  )
-
-  return [pscustomobject]@{
-    ok = $Ok
-    mode = $Mode
-    message = $Message
-  }
-}
-
-function Invoke-ExternalCommand {
-  param(
-    [string]$FilePath,
-    [string[]]$Arguments
-  )
-
-  try {
-    $output = & $FilePath @Arguments 2>&1 | Out-String
-    return [pscustomobject]@{
-      exitCode = $LASTEXITCODE
-      output = $output.Trim()
-    }
-  } catch {
-    return [pscustomobject]@{
-      exitCode = 1
-      output = $_.Exception.Message
-    }
-  }
-}
-
-function Ensure-TaskSchedulerService {
-  try {
-    $service = Get-Service -Name "Schedule" -ErrorAction Stop
-
-    if ($service.Status -ne "Running") {
-      try {
-        Set-Service -Name "Schedule" -StartupType Automatic -ErrorAction SilentlyContinue
-      } catch {
-        # Startup type changes require admin rights on some PCs.
-      }
-
-      Start-Service -Name "Schedule" -ErrorAction Stop
-      $service.WaitForStatus([System.ServiceProcess.ServiceControllerStatus]::Running, [TimeSpan]::FromSeconds(10))
-    }
-
-    return New-InstallResult $true "service" ""
-  } catch {
-    return New-InstallResult $false "service" $_.Exception.Message
-  }
-}
-
-function Start-AgentProcesses {
-  param(
-    [string]$PowerShellExe,
-    [string]$AgentArgument,
-    [string]$TrayArgument
-  )
-
-  try {
-    Start-Process -FilePath $PowerShellExe -ArgumentList $AgentArgument -WindowStyle Hidden | Out-Null
-    Start-Process -FilePath $PowerShellExe -ArgumentList $TrayArgument -WindowStyle Hidden | Out-Null
-    return New-InstallResult $true "process" ""
-  } catch {
-    return New-InstallResult $false "process" $_.Exception.Message
-  }
-}
-
-function Stop-AgentRuntime {
-  $errors = New-Object System.Collections.Generic.List[string]
-  $schtasks = Join-Path $env:SystemRoot "System32\schtasks.exe"
-  if (!(Test-Path -LiteralPath $schtasks) -and (Test-Path -LiteralPath (Join-Path $env:SystemRoot "Sysnative\schtasks.exe"))) {
-    $schtasks = Join-Path $env:SystemRoot "Sysnative\schtasks.exe"
-  }
-
-  foreach ($taskName in @($TaskName, $TrayTaskName)) {
-    try {
-      Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    } catch {
-      if (Test-Path -LiteralPath $schtasks) {
-        $endResult = Invoke-ExternalCommand $schtasks @("/End", "/TN", $taskName)
-        if ($endResult.exitCode -ne 0 -and $endResult.output -notmatch "cannot find|찾을 수") {
-          [void]$errors.Add("$taskName 종료 실패: $($endResult.output)")
-        }
-      }
-    }
-  }
-
-  Start-Sleep -Milliseconds 500
-  try {
-    $targetPaths = @($AgentTarget, $TrayTarget) | ForEach-Object { $_.ToLowerInvariant() }
-    $agentProcesses = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object {
-      $commandLine = if ($_.CommandLine) { $_.CommandLine.ToLowerInvariant() } else { "" }
-      ($_.Name -match "^(powershell|pwsh)(\.exe)?$") -and
-        ($targetPaths | Where-Object { $commandLine.Contains($_) }).Count -gt 0
-    })
-
-    foreach ($process in $agentProcesses) {
-      Stop-Process -Id $process.ProcessId -Force -ErrorAction Stop
-    }
-  } catch {
-    [void]$errors.Add("기존 에이전트 프로세스 종료 확인 실패: $($_.Exception.Message)")
-  }
-
-  return New-InstallResult ($errors.Count -eq 0) "stop" ($errors.ToArray() -join "`r`n")
-}
-
-function Remove-StartupShortcutFallback {
-  try {
-    $startupDir = [Environment]::GetFolderPath("Startup")
-    if ([string]::IsNullOrWhiteSpace($startupDir)) {
-      return
-    }
-
-    foreach ($name in @("PharmFarmAgent.lnk", "PharmFarmAgentTray.lnk")) {
-      $path = Join-Path $startupDir $name
-      if (Test-Path -LiteralPath $path) {
-        Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
-      }
-    }
-  } catch {
-  }
-}
-
-function Register-AgentTaskWithSchtasks {
-  param(
-    [string]$PowerShellExe,
-    [string]$AgentArgument,
-    [string]$TrayArgument
-  )
-
-  $schtasks = Join-Path $env:SystemRoot "System32\schtasks.exe"
-  if (!(Test-Path -LiteralPath $schtasks) -and (Test-Path -LiteralPath (Join-Path $env:SystemRoot "Sysnative\schtasks.exe"))) {
-    $schtasks = Join-Path $env:SystemRoot "Sysnative\schtasks.exe"
-  }
-
-  if (!(Test-Path -LiteralPath $schtasks)) {
-    return New-InstallResult $false "schtasks" "schtasks.exe를 찾을 수 없습니다."
-  }
-
-  $agentCommand = "`"$PowerShellExe`" $AgentArgument"
-  $trayCommand = "`"$PowerShellExe`" $TrayArgument"
-  $agentCreate = Invoke-ExternalCommand $schtasks @("/Create", "/TN", $TaskName, "/SC", "ONLOGON", "/TR", $agentCommand, "/F")
-  if ($agentCreate.exitCode -ne 0) {
-    return New-InstallResult $false "schtasks" $agentCreate.output
-  }
-
-  $trayCreate = Invoke-ExternalCommand $schtasks @("/Create", "/TN", $TrayTaskName, "/SC", "ONLOGON", "/TR", $trayCommand, "/F")
-  if ($trayCreate.exitCode -ne 0) {
-    return New-InstallResult $false "schtasks" $trayCreate.output
-  }
-
-  [void](Invoke-ExternalCommand $schtasks @("/Run", "/TN", $TaskName))
-  [void](Invoke-ExternalCommand $schtasks @("/Run", "/TN", $TrayTaskName))
-
-  Remove-StartupShortcutFallback
-  return New-InstallResult $true "schtasks" ""
-}
-
-function Install-StartupShortcutFallback {
-  param(
-    [string]$PowerShellExe,
-    [string]$AgentArgument,
-    [string]$TrayArgument
-  )
-
-  try {
-    $startupDir = [Environment]::GetFolderPath("Startup")
-    if ([string]::IsNullOrWhiteSpace($startupDir)) {
-      throw "시작프로그램 폴더를 찾을 수 없습니다."
-    }
-
-    Ensure-Directory $startupDir
-    $shell = New-Object -ComObject WScript.Shell
-
-    $agentShortcut = $shell.CreateShortcut((Join-Path $startupDir "PharmFarmAgent.lnk"))
-    $agentShortcut.TargetPath = $PowerShellExe
-    $agentShortcut.Arguments = $AgentArgument
-    $agentShortcut.WorkingDirectory = $InstallRoot
-    $agentShortcut.WindowStyle = 7
-    if (Test-Path -LiteralPath $IconTarget) {
-      $agentShortcut.IconLocation = $IconTarget
-    }
-    $agentShortcut.Save()
-
-    $trayShortcut = $shell.CreateShortcut((Join-Path $startupDir "PharmFarmAgentTray.lnk"))
-    $trayShortcut.TargetPath = $PowerShellExe
-    $trayShortcut.Arguments = $TrayArgument
-    $trayShortcut.WorkingDirectory = $InstallRoot
-    $trayShortcut.WindowStyle = 7
-    if (Test-Path -LiteralPath $IconTarget) {
-      $trayShortcut.IconLocation = $IconTarget
-    }
-    $trayShortcut.Save()
-
-    $startResult = Start-AgentProcesses -PowerShellExe $PowerShellExe -AgentArgument $AgentArgument -TrayArgument $TrayArgument
-    if (!$startResult.ok) {
-      return New-InstallResult $true "startup" "작업 스케줄러 대신 시작프로그램 등록은 완료했지만 현재 실행은 실패했습니다. $($startResult.message)"
-    }
-
-    return New-InstallResult $true "startup" ""
-  } catch {
-    return New-InstallResult $false "startup" $_.Exception.Message
-  }
-}
-
-function Register-AgentTask {
-  $psExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
-  $argument = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$AgentTarget`""
-  $trayArgument = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$TrayTarget`""
-  $serviceResult = Ensure-TaskSchedulerService
-  $errors = New-Object System.Collections.Generic.List[string]
-
-  if (!$serviceResult.ok) {
-    [void]$errors.Add("Task Scheduler 서비스 확인 실패: $($serviceResult.message)")
-  }
-
-  try {
-    $action = New-ScheduledTaskAction -Execute $psExe -Argument $argument
-    $trayAction = New-ScheduledTaskAction -Execute $psExe -Argument $trayArgument
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
-    $traySettings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero)
-    Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Description "PharmFarm Windows prescription collection agent" -Force | Out-Null
-    Register-ScheduledTask -TaskName $TrayTaskName -Action $trayAction -Trigger $trigger -Settings $traySettings -Description "PharmFarm tray status icon" -Force | Out-Null
-    Start-ScheduledTask -TaskName $TaskName
-    Start-ScheduledTask -TaskName $TrayTaskName
-    Remove-StartupShortcutFallback
-    return New-InstallResult $true "scheduled-task" ""
-  } catch {
-    [void]$errors.Add("PowerShell 예약 작업 등록 실패: $($_.Exception.Message)")
-  }
-
-  $schtasksResult = Register-AgentTaskWithSchtasks -PowerShellExe $psExe -AgentArgument $argument -TrayArgument $trayArgument
-  if ($schtasksResult.ok) {
-    return $schtasksResult
-  }
-  [void]$errors.Add("schtasks.exe 예약 작업 등록 실패: $($schtasksResult.message)")
-
-  $startupResult = Install-StartupShortcutFallback -PowerShellExe $psExe -AgentArgument $argument -TrayArgument $trayArgument
-  if ($startupResult.ok) {
-    $message = ($errors.ToArray() -join "`r`n") + "`r`n`r`n작업 스케줄러 대신 시작프로그램으로 등록했습니다. 재부팅 없이 현재 세션에서도 바로 실행했습니다."
-    if (![string]::IsNullOrWhiteSpace($startupResult.message)) {
-      $message += "`r`n$($startupResult.message)"
-    }
-    return New-InstallResult $true "startup" $message
-  }
-
-  [void]$errors.Add("시작프로그램 fallback 등록 실패: $($startupResult.message)")
-  return New-InstallResult $false "failed" ($errors.ToArray() -join "`r`n")
 }
 
 $form = New-Object System.Windows.Forms.Form
@@ -642,34 +378,22 @@ $installButton.Add_Click({
       IntervalSeconds = $intervalSeconds
     }
 
-    $stopResult = Stop-AgentRuntime
-    if (!$stopResult.ok) {
-      [System.Windows.Forms.MessageBox]::Show("기존 에이전트를 완전히 종료하지 못했습니다.`r`n$($stopResult.message)`r`n`r`n작업 관리자에서 PharmFarm Agent를 종료한 뒤 다시 설치해 주세요.", "PharmFarm Agent", "OK", "Warning") | Out-Null
+    $installButton.Enabled = $false
+    $result = Invoke-PharmFarmRuntimeUpdate -SourceRoot $SourceRoot -InstallRoot $InstallRoot -Configure { Write-Config @configParams } -ResetControls
+    $completeMessage = "설치와 세 예약 작업의 보호 설정 확인을 완료했습니다.`r`n현재 Windows 사용자 로그인 후 자동 실행되며, 별도 감시 작업이 매분 종료된 에이전트와 트레이를 확인합니다.`r`n`r`n백업 위치: $($result.BackupRoot)"
+    try {
+      Start-PharmFarmProtection
+      $completeMessage += "`r`n자동 실행을 요청했습니다. CMS의 최근 연결 시각과 수집 상태를 확인하세요."
+    } catch {
+      [System.Windows.Forms.MessageBox]::Show("보호 설정은 저장했지만 현재 실행 요청에 실패했습니다.`r`n$($_.Exception.Message)`r`nrepair-pharmfarm-agent.bat으로 점검하세요.", "PharmFarm Agent", "OK", "Warning") | Out-Null
       return
     }
-
-    Write-Config @configParams
-    $registerResult = Register-AgentTask
-
-    if ($registerResult.ok) {
-      $completeMessage = "설치가 완료되었습니다.`r`n로그인 시 자동 실행되며 우측 하단 트레이 아이콘도 함께 시작했습니다.`r`n`r`n설치 위치: $InstallRoot"
-      if ($registerResult.mode -eq "startup") {
-        $completeMessage = "설치가 완료되었습니다.`r`n작업 스케줄러 등록이 실패해 시작프로그램 방식으로 대체 등록했습니다.`r`n재부팅 없이 현재 세션에서도 바로 실행했습니다.`r`n`r`n설치 위치: $InstallRoot"
-      } elseif ($registerResult.mode -eq "schtasks") {
-        $completeMessage = "설치가 완료되었습니다.`r`nPowerShell 예약 작업 등록이 실패해 schtasks.exe로 대체 등록했습니다.`r`n`r`n설치 위치: $InstallRoot"
-      }
-
-      if (![string]::IsNullOrWhiteSpace($registerResult.message)) {
-        $completeMessage += "`r`n`r`n세부 정보:`r`n$($registerResult.message)"
-      }
-
-      [System.Windows.Forms.MessageBox]::Show($completeMessage, "PharmFarm Agent", "OK", "Information") | Out-Null
-      $form.Close()
-    } else {
-      [System.Windows.Forms.MessageBox]::Show("예약 작업 등록에 실패했습니다.`r`n$($registerResult.message)`r`n`r`n관리자 권한으로 다시 실행하거나 run-agent-console.bat으로 수동 실행하세요.", "PharmFarm Agent", "OK", "Warning") | Out-Null
-    }
+    [System.Windows.Forms.MessageBox]::Show($completeMessage, "PharmFarm Agent", "OK", "Information") | Out-Null
+    $form.Close()
   } catch {
     [System.Windows.Forms.MessageBox]::Show("설치 중 오류가 발생했습니다.`r`n$($_.Exception.Message)", "PharmFarm Agent", "OK", "Error") | Out-Null
+  } finally {
+    $installButton.Enabled = $true
   }
 })
 
