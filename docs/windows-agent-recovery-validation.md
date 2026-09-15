@@ -4,6 +4,19 @@
 
 Local patch for independent watchdog recovery, login/periodic restart, consistent task settings, singleton execution and durable stop/maintenance controls. No CMS/backend changes, automatic full-overwrite resync, SQL identity migration or pre-login Windows service.
 
+## Customer installation result — 2026-09-15 13:42 KST
+
+- Production code commits: `8017c1a` and repair compatibility fix `bddf494`, pushed to `main` through the existing Vercel Git integration. Customer downloaded from `/agent`; no direct file transfer or backend deployment was used.
+- First repair stopped safely before copying runtime files: ending the not-yet-existing watchdog task emitted native stderr, which Windows PowerShell treats as an error under `Stop`. The fix scopes `Continue` to the best-effort native task-end call and retains mandatory exact-process/lock verification afterward. Added regression tests; lifecycle 175 + tray 80 + update 107 = 362 assertions passed locally.
+- Final package: 104,692 bytes, SHA256 `cfb878fab6d2f8c1eb8d80588acf297b6c3910f46379ff8baa29a75fbf69c4b8`. Production download hash matched. Installed lifecycle helper hash matched local source: `23eadb36b27aa299687adac2ce283d8957685fdd2750e1de7342d31291652306`.
+- Repair completed at approximately 13:38:50; all three scheduled tasks were registered and read back. `agent.repair-report.json` reported settings/config/manual-pauses preserved and a backup under `C:\ProgramData\PharmFarmAgent\backups\20260915-133849-*`.
+- Windows inventory confirmed exactly one installed collector and one installed tray process. Both scheduled tasks were Running. Watchdog was Ready with LastTaskResult 0; successive 13:39 and 13:40 checks reported both targets running and the next minute scheduled.
+- CMS showed `1.4.0-ps` online, last heartbeat 13:40, SQL/API normal at 13:41, and queue 0. The pre-existing status command completed. No new backfill/overwrite command was issued.
+- Diagnostic and completed repair consoles were closed; normal collection/tray remained active. A prescription-stock alert was left unacknowledged for pharmacy staff. Remote control ended before 13:50.
+- No backend files were changed; `Aidit/scripts/pharmfarm` deployment was not required or run. No reboot/logout, crash-injection, or manual-pause live test was performed. Those scenarios remain unverified on this PC; the original shutdown cause is still not established.
+
+The preparation record below describes the original pre-window artifact, not the final compatibility-fix package.
+
 ## Prepared artifact and local results
 
 Prepared on 2026-09-15 before the customer window. Customer PC has not been controlled or modified during this preparation.
