@@ -27,7 +27,7 @@ if ($ChildMode) {
     $env:SystemRoot = Join-Path $ChildRoot 'mock-windows'
     New-Item -ItemType Directory -Path $ChildRoot -Force | Out-Null
     if ($scenario -ne 'missing-config') { Set-Content -LiteralPath (Join-Path $ChildRoot 'agent.config.json') -Value '{}' }
-    foreach ($name in @('PharmFarm-Agent.ps1', 'PharmFarm-AgentTray.ps1')) { Set-Content -LiteralPath (Join-Path $ChildRoot $name) -Value '# mock' }
+    foreach ($name in @('PharmFarm-Agent.ps1', 'PharmFarm-AgentTray.ps1', 'PharmFarm-AgentHost.exe')) { Set-Content -LiteralPath (Join-Path $ChildRoot $name) -Value '# mock' }
     function Start-Sleep { param($Seconds, $Milliseconds) }
     function Get-CimInstance {
       param($ClassName, $Filter, $ErrorAction)
@@ -46,12 +46,16 @@ if ($ChildMode) {
       }
       $global:pharmFarmWatchdogMock.Locks.Add((Enter-PharmFarmRuntime -InstallRoot $global:pharmFarmWatchdogMock.Root -Role $role))
     }
-    function Start-Process {
-      param($FilePath, $ArgumentList, $WindowStyle, $ErrorAction)
-      $global:pharmFarmWatchdogMock.ProcessStarts.Add($ArgumentList)
+    function Start-PharmFarmNativeProcess {
+      param($Info)
+      if ($Info.UseShellExecute -or !$Info.CreateNoWindow) { throw 'Fallback must never create a console.' }
+      $global:pharmFarmWatchdogMock.ProcessStarts.Add($Info.Arguments)
       if ($global:pharmFarmWatchdogMock.Scenario -eq 'start-failure') { throw 'simulated direct launch failure' }
-      $role = if ($ArgumentList -match 'PharmFarm-AgentTray.ps1') { 'tray' } else { 'agent' }
+      $role = if ($Info.Arguments -match '"tray"') { 'tray' } else { 'agent' }
       $global:pharmFarmWatchdogMock.Locks.Add((Enter-PharmFarmRuntime -InstallRoot $global:pharmFarmWatchdogMock.Root -Role $role))
+      $native = [pscustomobject]@{}
+      $native | Add-Member -MemberType ScriptMethod -Name Dispose -Value { }
+      return $native
     }
     if ($scenario -eq 'running') {
       foreach ($role in @('agent', 'tray')) { $global:pharmFarmWatchdogMock.Locks.Add((Enter-PharmFarmRuntime -InstallRoot $ChildRoot -Role $role)) }
@@ -61,7 +65,12 @@ if ($ChildMode) {
     if ($scenario -eq 'disabled') { Set-PharmFarmDisabled -InstallRoot $ChildRoot -Disabled $true }
     if ($scenario -eq 'duplicate-watchdog') { $global:pharmFarmWatchdogMock.Locks.Add((Enter-PharmFarmRuntime -InstallRoot $ChildRoot -Role watchdog)) }
     try {
-      & (Join-Path $productionRoot 'PharmFarm-AgentWatchdog.ps1') -InstallRoot $ChildRoot
+      # Lifecycle was loaded above before installing the native-process test seam.
+      # Skip only its second dot-source; run the complete watchdog body unchanged.
+      $watchdogCode = [IO.File]::ReadAllText((Join-Path $productionRoot 'PharmFarm-AgentWatchdog.ps1')) -replace '(?m)^\. \(Join-Path \$PSScriptRoot "PharmFarm-AgentLifecycle.ps1"\)\r?$', ''
+      $watchdogHarness = Join-Path $ChildRoot 'watchdog-harness.ps1'
+      [IO.File]::WriteAllText($watchdogHarness, $watchdogCode)
+      & $watchdogHarness -InstallRoot $ChildRoot
       $watchdogExitCode = if ($null -eq $LASTEXITCODE) { 0 } else { $LASTEXITCODE }
       @{ exitCode = $watchdogExitCode; taskStarts = $global:pharmFarmWatchdogMock.TaskStarts.ToArray(); processStarts = $global:pharmFarmWatchdogMock.ProcessStarts.ToArray() } |
         ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $ChildRoot 'mock-summary.json')
@@ -242,7 +251,7 @@ try {
     $env:OS = 'Windows_NT'
     $global:pharmFarmLegacyMock = @{ Age = -1; Fail = $false }
     function Get-PharmFarmProcesses {
-      param($InstallRoot, $Roles)
+      param($InstallRoot, $Roles, [switch]$IncludeLaunchers)
       if ($global:pharmFarmLegacyMock.Fail) { throw 'simulated process inventory denied' }
       return [pscustomobject]@{ ProcessId = $PID + 100 }
     }
@@ -376,9 +385,9 @@ try {
     function Stop-ScheduledTask { param($TaskName, $ErrorAction) throw 'Task does not exist' }
     function Join-Path { param($Path, $ChildPath) return 'Invoke-MissingTaskSchtasks' }
     function Test-Path { param($LiteralPath) return $true }
-    function Invoke-MissingTaskSchtasks { Write-Error 'ERROR: The system cannot find the file specified.' }
+    function Invoke-PharmFarmHiddenNative { param($FilePath, $Arguments) return [pscustomobject]@{ ExitCode = 1; Output = 'ERROR: The system cannot find the file specified.' } }
     $script:missingTaskInventoryCalls = 0
-    function Get-PharmFarmProcesses { param($InstallRoot, $Roles) $script:missingTaskInventoryCalls++; return @() }
+    function Get-PharmFarmProcesses { param($InstallRoot, $Roles, [switch]$IncludeLaunchers) $script:missingTaskInventoryCalls++; return @() }
     function Test-PharmFarmRuntimeLocked { param($InstallRoot, $Role) return $false }
     Stop-PharmFarmProcesses -InstallRoot $testRoot -Roles @('watchdog', 'agent', 'tray')
     Assert-That ($script:missingTaskInventoryCalls -ge 2) 'Missing legacy task stderr does not skip authoritative process-stop verification'
@@ -387,7 +396,7 @@ try {
 
   $sid = 'S-1-5-21-111111111-222222222-333333333-1001'
   foreach ($definition in @(Get-PharmFarmTaskDefinitions)) {
-    $xmlText = New-PharmFarmTaskXml -Role $definition.Role -InstallRoot $testRoot -UserSid $sid -PowerShellPath 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -StartAt ([datetime]'2026-09-15T13:15:00')
+    $xmlText = New-PharmFarmTaskXml -Role $definition.Role -InstallRoot $testRoot -UserSid $sid -StartAt ([datetime]'2026-09-15T13:15:00')
     [xml]$xml = $xmlText
     Assert-PharmFarmTaskXml -TaskName $definition.Name -ActualXml $xmlText -ExpectedXml $xmlText
     Assert-That ([string]$xml.Task.Principals.Principal.UserId -eq $sid) "$($definition.Name) retains the exact installation user"

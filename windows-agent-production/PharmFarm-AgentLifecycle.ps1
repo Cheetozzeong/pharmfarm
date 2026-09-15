@@ -1,4 +1,60 @@
 # Windows PowerShell 5.1 compatible. Dot-source only; no processes are started here.
+function ConvertTo-PharmFarmNativeArgument {
+  param([AllowEmptyString()][string]$Value)
+  return '"' + (($Value -replace '(\\*)"', '$1$1\"') -replace '(\\+)$', '$1$1') + '"'
+}
+
+function New-PharmFarmHiddenProcessInfo {
+  param([string]$FilePath, [string[]]$Arguments, [string]$WorkingDirectory)
+  $info = New-Object System.Diagnostics.ProcessStartInfo
+  $info.FileName = $FilePath
+  $info.Arguments = (@($Arguments | ForEach-Object { ConvertTo-PharmFarmNativeArgument $_ }) -join ' ')
+  $info.WorkingDirectory = $WorkingDirectory
+  $info.UseShellExecute = $false
+  $info.CreateNoWindow = $true
+  $info.WindowStyle = [Diagnostics.ProcessWindowStyle]::Hidden
+  return $info
+}
+
+function Start-PharmFarmNativeProcess {
+  param([Diagnostics.ProcessStartInfo]$Info)
+  return [Diagnostics.Process]::Start($Info)
+}
+
+function Invoke-PharmFarmHiddenNative {
+  param([string]$FilePath, [string[]]$Arguments, [int]$TimeoutSeconds = 30)
+  $info = New-PharmFarmHiddenProcessInfo -FilePath $FilePath -Arguments $Arguments -WorkingDirectory (Split-Path -Parent $FilePath)
+  $info.RedirectStandardOutput = $true
+  $info.RedirectStandardError = $true
+  $process = Start-PharmFarmNativeProcess $info
+  try {
+    $stdout = $process.StandardOutput.ReadToEndAsync()
+    $stderr = $process.StandardError.ReadToEndAsync()
+    if (!$process.WaitForExit($TimeoutSeconds * 1000)) {
+      $process.Kill()
+      throw "Native support command timed out: $([IO.Path]::GetFileName($FilePath))"
+    }
+    return [pscustomobject]@{ ExitCode = $process.ExitCode; Output = ($stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()).Trim() }
+  } finally { $process.Dispose() }
+}
+
+function Start-PharmFarmHiddenRuntime {
+  param([string]$InstallRoot, [ValidateSet('agent', 'tray', 'watchdog')][string]$Role,
+    [switch]$Wait, [switch]$ResyncTodayPrescriptions, [string]$MaintenanceToken = '')
+  $hostPath = Join-Path $InstallRoot 'PharmFarm-AgentHost.exe'
+  if (!(Test-Path -LiteralPath $hostPath -PathType Leaf)) { throw 'Windowless launcher is missing. Run repair-pharmfarm-agent.bat.' }
+  $arguments = @('-Role', $Role)
+  if ($ResyncTodayPrescriptions) {
+    if ($Role -ne 'agent' -or $MaintenanceToken -notmatch '^[a-fA-F0-9]{32}$') { throw 'Invalid maintenance launch.' }
+    $arguments += @('-ResyncTodayPrescriptions', '-MaintenanceToken', $MaintenanceToken)
+  } elseif ($MaintenanceToken) { throw 'Maintenance token requires an explicit resync.' }
+  $info = New-PharmFarmHiddenProcessInfo -FilePath $hostPath -Arguments $arguments -WorkingDirectory $InstallRoot
+  $process = Start-PharmFarmNativeProcess $info
+  try {
+    if ($Wait) { $process.WaitForExit(); return [pscustomobject]@{ ExitCode = $process.ExitCode } }
+  } finally { $process.Dispose() }
+}
+
 function Get-PharmFarmLifecyclePath {
   param([string]$InstallRoot, [string]$Name)
   $directory = Join-Path $InstallRoot "lifecycle"
@@ -192,16 +248,30 @@ function Get-PharmFarmCommandArgument {
 }
 
 function Get-PharmFarmProcesses {
-  param([string]$InstallRoot, [ValidateSet("agent", "tray", "watchdog")][string[]]$Roles = @("agent", "tray", "watchdog"))
+  param([string]$InstallRoot, [ValidateSet("agent", "tray", "watchdog")][string[]]$Roles = @("agent", "tray", "watchdog"), [switch]$IncludeLaunchers)
+  $filter = "Name = 'powershell.exe' OR Name = 'pwsh.exe'"
+  if ($IncludeLaunchers) { $filter += " OR Name = 'PharmFarm-AgentHost.exe'" }
   try {
-    $processes = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe'" -ErrorAction Stop)
+    $processes = @(Get-CimInstance -ClassName Win32_Process -Filter $filter -ErrorAction Stop)
   } catch {
-    $processes = @(Get-WmiObject -Class Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe'" -ErrorAction Stop)
+    $processes = @(Get-WmiObject -Class Win32_Process -Filter $filter -ErrorAction Stop)
   }
   $names = @{ agent = "PharmFarm-Agent.ps1"; tray = "PharmFarm-AgentTray.ps1"; watchdog = "PharmFarm-AgentWatchdog.ps1" }
   foreach ($process in $processes) {
     if ($process.ProcessId -eq $PID) { continue }
     $commandLine = [string]$process.CommandLine
+    if ($process.Name -ieq 'PharmFarm-AgentHost.exe') {
+      # Hosts are stopped during repair/uninstall, but never count as a live collector:
+      # a host may be waiting for its child to acquire the runtime singleton.
+      $hostRole = Get-PharmFarmCommandArgument $commandLine '-Role'
+      if (!$hostRole -and $commandLine -match '^\s*("[^"]+"|\S+)\s*$') { $hostRole = 'tray' } # Double-click resume.
+      if ($IncludeLaunchers -and $hostRole -in $Roles -and
+        [string]::Equals([string]$process.ExecutablePath, (Join-Path $InstallRoot 'PharmFarm-AgentHost.exe'), [StringComparison]::OrdinalIgnoreCase)) {
+        $process | Add-Member -NotePropertyName PharmFarmAmbiguousLegacy -NotePropertyValue $false -Force
+        $process
+      }
+      continue
+    }
     $file = Get-PharmFarmCommandArgument $commandLine "-File"
     if ([string]::IsNullOrWhiteSpace($file)) { continue }
     foreach ($role in $Roles) {
@@ -240,19 +310,13 @@ function Stop-PharmFarmProcesses {
     catch {
       $schtasks = Join-Path $env:SystemRoot "System32\schtasks.exe"
       if (Test-Path -LiteralPath $schtasks) {
-        # An older installation has no watchdog task. Windows PowerShell 5.1
-        # turns schtasks stderr for that absent task into a terminating error
-        # under Stop. Task termination is best-effort; the exact process and
-        # runtime-lock checks below remain the authoritative stop verification.
-        $previousPreference = $ErrorActionPreference
-        try {
-          $ErrorActionPreference = "Continue"
-          & $schtasks /End /TN $taskNames[$role] 2>&1 | Out-Null
-        } finally { $ErrorActionPreference = $previousPreference }
+        # Absent legacy tasks are normal. Capture native stderr/exit status without
+        # a console; process/lock verification below remains authoritative.
+        Invoke-PharmFarmHiddenNative -FilePath $schtasks -Arguments @('/End', '/TN', $taskNames[$role]) | Out-Null
       }
     }
   }
-  foreach ($process in @(Get-PharmFarmProcesses -InstallRoot $InstallRoot -Roles $Roles)) {
+  foreach ($process in @(Get-PharmFarmProcesses -InstallRoot $InstallRoot -Roles $Roles -IncludeLaunchers)) {
     if ($process.PharmFarmAmbiguousLegacy) {
       throw "Legacy manual PharmFarm process $($process.ProcessId) has no explicit installation path. Close that launcher after verifying its file path, then retry; it was not force-killed."
     }
@@ -261,7 +325,7 @@ function Stop-PharmFarmProcesses {
     try {
       # Bind the Process object to a native handle before re-checking identity, preventing PID reuse kills.
       [void]$liveProcess.Handle
-      $fresh = @(Get-PharmFarmProcesses -InstallRoot $InstallRoot -Roles $Roles | Where-Object { $_.ProcessId -eq $process.ProcessId })
+      $fresh = @(Get-PharmFarmProcesses -InstallRoot $InstallRoot -Roles $Roles -IncludeLaunchers | Where-Object { $_.ProcessId -eq $process.ProcessId })
       if ($fresh.Count -eq 0 -or $liveProcess.HasExited) { continue }
       if ($fresh[0].PharmFarmAmbiguousLegacy -or $null -eq $process.CreationDate -or
         [string]$fresh[0].CreationDate -cne [string]$process.CreationDate -or
@@ -275,7 +339,7 @@ function Stop-PharmFarmProcesses {
   }
   $deadline = [DateTime]::UtcNow.AddSeconds(10)
   do {
-    $remaining = @(Get-PharmFarmProcesses -InstallRoot $InstallRoot -Roles $Roles)
+    $remaining = @(Get-PharmFarmProcesses -InstallRoot $InstallRoot -Roles $Roles -IncludeLaunchers)
     $locked = @($Roles | Where-Object { Test-PharmFarmRuntimeLocked -InstallRoot $InstallRoot -Role $_ })
     if ($remaining.Count -eq 0 -and $locked.Count -eq 0) { return }
     if ([DateTime]::UtcNow -ge $deadline) { throw "PharmFarm processes did not stop; no runtime/data files may be changed." }

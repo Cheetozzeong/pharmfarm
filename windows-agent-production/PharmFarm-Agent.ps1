@@ -35,7 +35,7 @@ $LastSqlOkAt = $null
 $LastApiOkAt = $null
 $RemoteCommandPollingUnavailable = $false
 $HeartbeatUnavailable = $false
-$AgentVersion = "1.4.0-ps"
+$AgentVersion = "1.4.1-ps"
 . (Join-Path $PSScriptRoot "PharmFarm-AgentLifecycle.ps1")
 $RuntimeLock = $null
 

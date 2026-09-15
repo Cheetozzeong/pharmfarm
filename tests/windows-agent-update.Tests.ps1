@@ -16,6 +16,7 @@ function Assert-Update {
 # Only OS/task primitives are mocked. Package copying, backups, control markers,
 # transaction sequencing, XML verification, and rollback run the real functions.
 function Get-PharmFarmCurrentUserSid { return "S-1-5-21-111-222-333-1001" }
+function Assert-PharmFarmWindowlessHost { param($SourceRoot) }
 function Get-PharmFarmPowerShellPath { return Join-Path $script:FixtureRoot "powershell.exe" }
 function Get-PharmFarmTaskSnapshot {
   $script:SnapshotCount++
@@ -86,6 +87,11 @@ function New-UpdateFixture {
   foreach ($role in @("agent", "tray")) {
     $definition = @(Get-PharmFarmTaskDefinitions | Where-Object Role -eq $role)[0]
     $xml = New-PharmFarmTaskXml -Role $role -InstallRoot $script:InstallRoot -UserSid (Get-PharmFarmCurrentUserSid)
+    # Model 1.4.0 direct-PowerShell tasks to exercise the actual migration.
+    [xml]$legacyXml = $xml
+    $legacyXml.Task.Actions.Exec.Command = Get-PharmFarmPowerShellPath
+    $legacyXml.Task.Actions.Exec.Arguments = '-NoProfile -File "' + (Join-Path $script:InstallRoot $definition.Script) + '"'
+    $xml = $legacyXml.OuterXml
     $script:MockTasks[$definition.Name] = [pscustomobject]@{ Xml = $xml }
   }
   $script:OriginalConfig = [IO.File]::ReadAllText((Join-Path $script:InstallRoot "agent.config.json"))
@@ -136,6 +142,16 @@ try {
   Assert-Update (Test-Path -LiteralPath (Join-Path $result.BackupRoot "startup/PharmFarmAgent.lnk")) "Legacy shortcuts are backed up."
   Assert-PreservedData
   Assert-ControlBytesPreserved
+
+  Assert-PharmFarmTaskIdentity -Snapshot @(Get-PharmFarmTaskSnapshot) -UserSid (Get-PharmFarmCurrentUserSid) -InstallRoot $script:InstallRoot
+  Assert-Update ($true) 'Updated launcher tasks are accepted for a subsequent repair.'
+  [xml]$invalidHost = $script:MockTasks.PharmFarmAgent.Xml
+  $invalidHost.Task.Actions.Exec.Arguments = '-Role tray'
+  $script:MockTasks.PharmFarmAgent.Xml = $invalidHost.OuterXml
+  $invalidRejected = $false
+  try { Assert-PharmFarmTaskIdentity -Snapshot @(Get-PharmFarmTaskSnapshot) -UserSid (Get-PharmFarmCurrentUserSid) -InstallRoot $script:InstallRoot }
+  catch { $invalidRejected = $true }
+  Assert-Update $invalidRejected 'Wrong launcher role is rejected before repair.'
 
   New-UpdateFixture "failed-registration"
   # The first two writes disable the old tasks before copying; fail on the second

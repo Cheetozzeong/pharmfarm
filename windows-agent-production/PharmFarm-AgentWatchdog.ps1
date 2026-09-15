@@ -23,7 +23,6 @@ try {
   $runtime = Enter-PharmFarmRuntime -InstallRoot $InstallRoot -Role "watchdog"
   if ($null -eq $runtime) { exit 0 }
   if (!(Test-Path -LiteralPath (Join-Path $InstallRoot "agent.config.json"))) { throw "Agent configuration is missing; run the installer." }
-  $psExe = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
   $targets = @(
     @{ role = "agent"; task = "PharmFarmAgent"; file = "PharmFarm-Agent.ps1"; arguments = "-ConfigPath `"$(Join-Path $InstallRoot 'agent.config.json')`"" },
     @{ role = "tray"; task = "PharmFarmAgentTray"; file = "PharmFarm-AgentTray.ps1"; arguments = "-InstallRoot `"$InstallRoot`"" }
@@ -46,8 +45,7 @@ try {
       if (!(Test-WatchdogTargetRunning $role) -and (Test-PharmFarmStartAllowed -InstallRoot $InstallRoot -Role $role)) {
         $scriptPath = Join-Path $InstallRoot $target.file
         if (!(Test-Path -LiteralPath $scriptPath)) { throw "Missing runtime file: $($target.file)" }
-        $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`" $($target.arguments)"
-        Start-Process -FilePath $psExe -ArgumentList $arguments -WindowStyle Hidden -ErrorAction Stop | Out-Null
+        Start-PharmFarmHiddenRuntime -InstallRoot $InstallRoot -Role $role
         Start-Sleep -Seconds 2
       }
       if (!(Test-PharmFarmStartAllowed -InstallRoot $InstallRoot -Role $role)) {

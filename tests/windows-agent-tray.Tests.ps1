@@ -83,11 +83,12 @@ function Start-ScheduledTask {
   $script:mock.TaskStarts++
 }
 function Get-PowerShellExe { return $script:AgentScript }
-function Start-Process {
-  param($FilePath, $ArgumentList, $WindowStyle, [switch]$Wait, [switch]$PassThru, $ErrorAction)
+function Start-PharmFarmHiddenRuntime {
+  param($InstallRoot, $Role, [switch]$Wait, [switch]$ResyncTodayPrescriptions, $MaintenanceToken)
   $script:mock.Events.Add('resync-process')
   $script:mock.ProcessStarts++
-  $script:mock.LastArguments = $ArgumentList
+  $script:mock.LastArguments = "-Role $Role -MaintenanceToken `"$MaintenanceToken`""
+  if ($ResyncTodayPrescriptions) { $script:mock.LastArguments += ' -ResyncTodayPrescriptions' }
   return [pscustomobject]@{ ExitCode = $script:mock.ProcessExitCode }
 }
 function Ensure-Directory { param($Path) [void][IO.Directory]::CreateDirectory($Path) }

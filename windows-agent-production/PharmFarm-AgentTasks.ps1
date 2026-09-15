@@ -10,7 +10,7 @@ function Get-PharmFarmTaskDefinitions {
 
 function Get-PharmFarmPackageFileNames {
   return @(
-    "PharmFarm-Agent.ps1", "PharmFarm-AgentTray.ps1", "PharmFarm-AgentLifecycle.ps1",
+    "PharmFarm-Agent.ps1", "PharmFarm-AgentTray.ps1", "PharmFarm-AgentLifecycle.ps1", "PharmFarm-AgentHost.exe",
     "PharmFarm-AgentWatchdog.ps1", "PharmFarm-AgentTasks.ps1", "PharmFarm-AgentRepair.ps1",
     "PharmFarm-AgentUninstall.ps1", "repair-pharmfarm-agent.bat", "uninstall-pharmfarm-agent.bat",
     "run-agent-console.bat", "run-agent-tray.bat",
@@ -46,14 +46,7 @@ function Invoke-PharmFarmSchtasks {
   param([string[]]$Arguments)
   $executable = Get-PharmFarmSchtasksPath
   if (!(Test-Path -LiteralPath $executable)) { throw "schtasks.exe was not found." }
-  # Native stderr may be an ErrorRecord on Windows PowerShell; retain the exit code.
-  $previousPreference = $ErrorActionPreference
-  try {
-    $ErrorActionPreference = "Continue"
-    $output = & $executable @Arguments 2>&1 | Out-String
-    $code = $LASTEXITCODE
-  } finally { $ErrorActionPreference = $previousPreference }
-  return [pscustomobject]@{ ExitCode = $code; Output = $output.Trim() }
+  return Invoke-PharmFarmHiddenNative -FilePath $executable -Arguments $Arguments
 }
 
 function Get-PharmFarmTaskFolder {
@@ -103,6 +96,12 @@ function Assert-PharmFarmTaskIdentity {
         throw "$($task.Name) has an unsupported action; no task or runtime changes were made."
       }
       $command = [Environment]::ExpandEnvironmentVariables([string]$actions[0].Command)
+      if ([string]::Equals($command, (Join-Path $InstallRoot 'PharmFarm-AgentHost.exe'), [StringComparison]::OrdinalIgnoreCase)) {
+        if ([string]$actions[0].Arguments -cne ('-Role ' + $definition[0].Role)) {
+          throw "$($task.Name) has unexpected launcher arguments. No task or runtime changes were made."
+        }
+        continue
+      }
       if ([IO.Path]::GetFileName($command) -notmatch '^(powershell|pwsh)(\.exe)?$') {
         throw "$($task.Name) does not execute PowerShell; no task or runtime changes were made."
       }
@@ -129,19 +128,12 @@ function New-PharmFarmTaskXml {
     [ValidateSet("agent", "tray", "watchdog")][string]$Role,
     [string]$InstallRoot,
     [string]$UserSid,
-    [string]$PowerShellPath = (Get-PharmFarmPowerShellPath),
     [DateTime]$StartAt = (Get-Date).AddMinutes(1)
   )
   $definition = @(Get-PharmFarmTaskDefinitions | Where-Object { $_.Role -eq $Role })[0]
-  $scriptPath = Join-Path $InstallRoot $definition.Script
-  $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
-  if ($Role -eq "agent") {
-    $arguments += " -ConfigPath `"$(Join-Path $InstallRoot 'agent.config.json')`""
-  } else {
-    $arguments += " -InstallRoot `"$InstallRoot`""
-  }
+  $arguments = '-Role ' + $Role
   $safeSid = [System.Security.SecurityElement]::Escape($UserSid)
-  $safeCommand = [System.Security.SecurityElement]::Escape($PowerShellPath)
+  $safeCommand = [System.Security.SecurityElement]::Escape((Join-Path $InstallRoot 'PharmFarm-AgentHost.exe'))
   $safeArguments = [System.Security.SecurityElement]::Escape($arguments)
   $safeDirectory = [System.Security.SecurityElement]::Escape($InstallRoot)
   $executionLimit = if ($Role -eq "watchdog") { "PT2M" } else { "PT0S" }
@@ -328,6 +320,15 @@ function Assert-PharmFarmPackage {
   foreach ($name in @(Get-PharmFarmPackageFileNames)) {
     if (!(Test-Path -LiteralPath (Join-Path $SourceRoot $name) -PathType Leaf)) { throw "The update package is incomplete: $name" }
   }
+  Assert-PharmFarmWindowlessHost -SourceRoot $SourceRoot
+}
+
+function Assert-PharmFarmWindowlessHost {
+  param([string]$SourceRoot)
+  # Before disabling old tasks or touching data, exercise the actual Windows GUI
+  # executable, hidden child creation, Job assignment, wait and exit-code path.
+  $result = Invoke-PharmFarmHiddenNative -FilePath (Join-Path $SourceRoot 'PharmFarm-AgentHost.exe') -Arguments @('-SelfTest')
+  if ($result.ExitCode -ne 0) { throw 'Windowless launcher self-test failed. Old installation was not changed; inspect package logs.' }
 }
 
 function New-PharmFarmInstallBackup {

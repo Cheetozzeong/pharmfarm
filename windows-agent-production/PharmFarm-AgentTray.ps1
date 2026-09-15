@@ -175,13 +175,7 @@ function Start-AgentTask {
         throw "에이전트 파일을 찾을 수 없습니다."
       }
 
-      $psExe = Get-PowerShellExe
-      if (!(Test-Path -LiteralPath $psExe)) {
-        throw "Windows PowerShell을 찾을 수 없습니다."
-      }
-
-      $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$AgentScript`" -ConfigPath `"$ConfigFile`""
-      Start-Process -FilePath $psExe -ArgumentList $arguments -WindowStyle Hidden -ErrorAction Stop | Out-Null
+      Start-PharmFarmHiddenRuntime -InstallRoot $InstallRoot -Role agent
     } else {
       Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop | Out-Null
     }
@@ -324,8 +318,7 @@ function Request-TodayPrescriptionOverwrite {
     if ($null -eq $lease) { throw "다른 점검 작업이 진행 중입니다." }
     Stop-PharmFarmProcesses -InstallRoot $InstallRoot -Roles @("agent")
 
-    $arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$AgentScript`" -ResyncTodayPrescriptions -ConfigPath `"$ConfigFile`" -MaintenanceToken `"$($lease.Token)`""
-    $process = Start-Process -FilePath $psExe -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru -ErrorAction Stop
+    $process = Start-PharmFarmHiddenRuntime -InstallRoot $InstallRoot -Role agent -ResyncTodayPrescriptions -MaintenanceToken $lease.Token -Wait
 
     if ($process.ExitCode -eq 0) {
       $completed = $true

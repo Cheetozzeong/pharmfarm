@@ -151,6 +151,13 @@ Recommended operation:
 
 Updating an installed agent:
 
+- Version 1.4.1-ps: automatic tasks now start PharmFarm-AgentHost.exe (Windows GUI executable) instead of powershell.exe. It starts PowerShell with CREATE_NO_WINDOW; hiding a window after launch is no longer the only protection.
+- The complete package includes the prebuilt .NET Framework 4.6.2 AnyCPU launcher. No SDK, compiler, VBScript, browser extension or new Windows account is required. Windows 10+ and .NET Framework 4.6.2+ are required for this launcher.
+- Repair first self-tests the new launcher before changing the old installation. If it is blocked by Windows/security software, inspect the package logs and contact support; do not bypass security warnings or disable protection.
+- Both task registration and fallback launches use the same windowless host. Native scheduler support commands capture their output without creating a console. A stopped/expired host also stops its own PowerShell child; recovered collectors survive the watchdog's normal exit.
+- After repair, check CMS 1.4.1-ps, online/SQL/API state, and observe at least 3 one-minute checks for flashes. Logs\\launcher-YYYYMMDD.log contains launcher failures; watchdog.state.json distinguishes running/restarted/suppressed/error.
+- Intentional install/repair/uninstall/debug .bat tools still show their console and result. They are never scheduled. For a console-free manual tray resume, double-click C:\ProgramData\PharmFarmAgent\PharmFarm-AgentHost.exe. The legacy run-agent-tray.bat remains available but its own cmd window may briefly appear when manually opened.
+
 - Downloading/extracting a new zip does not update the running tray agent by itself.
 - Extract the complete package OUTSIDE C:\ProgramData\PharmFarmAgent and run repair-pharmfarm-agent.bat.
 - Repair preserves agent.config.json byte-for-byte, including pharmacy/device identity, custom options and credentials.
@@ -158,7 +165,7 @@ Updating an installed agent:
 - Setup/repair enters maintenance before stopping processes or replacing files, backs up runtime/task definitions, and verifies the registered tasks before resuming.
 - If a task belongs to another Windows account, repair refuses to migrate it: use the original installation account. SQL uses that user's Windows integrated authentication.
 - A same-name task targeting another installation or script is also refused before changes. A legacy manual launcher with no explicit installation path blocks overlap and requires its verified console to be closed; it is not blindly force-killed.
-- Do not copy just PharmFarm-Agent.ps1: version 1.4.0-ps also needs the lifecycle helper and matching tray/watchdog files.
+- Do not copy just PharmFarm-Agent.ps1: version 1.4.1-ps also needs the host executable, lifecycle helper and matching tray/watchdog files. Repair must update the scheduled tasks too.
 - The setup wizard is for a new installation or an intentional settings change; use repair for an update without configuration changes.
 - The startup log should show the bundled agent version. If the version is old, the tray is still using the old ProgramData copy.
 - resync-today-prescriptions.bat is an explicit, destructive overwrite test, not a repair tool. It refuses to overlap another agent and does not bypass a user pause or maintenance.
@@ -204,7 +211,7 @@ Tray icon:
 - After a 20-second login/startup grace period, the tray automatically starts a stopped collector. It retries every 60 seconds while the collector remains stopped.
 - A stopped collector changes the tray icon/tooltip to an error state. If automatic recovery fails, the user is told to right-click "에이전트 시작", check the log folder, and contact the administrator.
 - When automatic recovery succeeds, the tray keeps a recovery warning until "오늘 처방 다시 확인" completes. The normal agent loop also performs its full scan of today's prescriptions after restart.
-- Choosing "에이전트 중지" requires confirmation and pauses automatic recovery for the current tray session so an intentional stop is not immediately undone.
+- Choosing "에이전트 중지" requires confirmation and durably pauses automatic recovery across tray restarts and logins until explicitly resumed.
 - Right-click to refresh status, open logs, open queue, start/stop the agent, or close the tray icon.
 - Right-click "오늘 처방 다시 확인" to resend today's prescription rows with overwriteExisting=true when the collector was stopped or the admin page is missing prescriptions.
 - Right-click "향정 후보 다시 동기화" to rescan only controlled-drug candidate sources.
