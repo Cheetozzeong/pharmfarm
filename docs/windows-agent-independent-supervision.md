@@ -19,9 +19,12 @@ existed. Do not claim the old launcher was conclusively exonerated.
   of Task Scheduler. Windows may delay Startup launches; this is a login trigger,
   **not** pre-login boot collection.
 - Existing agent/tray tasks remain. Native watchdog ticks do not spawn PowerShell.
-  A missing supervisor is started with `CREATE_BREAKAWAY_FROM_JOB`; if the parent
-  Job forbids breakaway, launch fails explicitly rather than silently retaining
-  Scheduler lifetime dependency. Startup/manual launch remains the other path.
+  A missing supervisor is started with `CREATE_BREAKAWAY_FROM_JOB`. If Scheduler
+  forbids direct breakaway, local WMI creates a suspended, windowless child outside
+  that Job. Its Windows SID, session and elevation must match the caller before
+  the only thread is resumed. A failed check terminates that suspended child.
+  No WMI/service security settings are changed; Startup/manual launch remains
+  available independently of the broker. Healthy checks do not invoke WMI.
 - Installer bootstrap uses the existing least-privilege task identity. No service,
   new account, credential storage, elevation bypass, or security exclusion is added.
 - Manual installed-host double-click resumes the tray and attempts independent

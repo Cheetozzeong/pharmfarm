@@ -480,7 +480,8 @@ function Start-PharmFarmProtection {
     $result = Invoke-PharmFarmSchtasks -Arguments @('/Run', '/TN', 'PharmFarmAgentWatchdog')
     if ($result.ExitCode -ne 0) { throw "Recovery bootstrap failed: $($result.Output)" }
   }
-  for ($attempt = 0; $attempt -lt 20; $attempt++) {
+  # Allow a cold local WMI broker to complete its bounded startup/identity checks.
+  for ($attempt = 0; $attempt -lt 100; $attempt++) {
     if (Test-PharmFarmRuntimeLocked -InstallRoot $InstallRoot -Role supervisor) { return }
     Start-Sleep -Milliseconds 250
   }

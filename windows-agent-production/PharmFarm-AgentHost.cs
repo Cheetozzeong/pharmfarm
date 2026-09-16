@@ -90,12 +90,34 @@ internal static class PharmFarmAgentHost
         startup.dwFlags = 1;
         PROCESS_INFORMATION process;
         // Do not silently fall back to a child tied to Scheduler's Job. If breakaway
-        // is prohibited, return an actionable failure; the independent Startup entry remains.
+        // is prohibited, the caller uses a validated local broker instead.
         if (!CreateProcess(executable, new StringBuilder(Quote(executable) + " -Role supervisor"), IntPtr.Zero, IntPtr.Zero,
             false, CREATE_NO_WINDOW | 0x01000000, IntPtr.Zero, root, ref startup, out process)) throw new Win32Exception();
         CloseHandle(process.hThread);
         CloseHandle(process.hProcess);
         Log(root, "detached supervisor launch pid=" + process.dwProcessId);
+    }
+
+    internal static bool IsElevated(IntPtr process)
+    {
+        IntPtr token;
+        if (!OpenProcessToken(process, 8, out token)) throw new Win32Exception();
+        try
+        {
+            int elevated; uint length;
+            if (!GetTokenInformation(token, 20, out elevated, 4, out length)) throw new Win32Exception();
+            return elevated != 0;
+        }
+        finally { CloseHandle(token); }
+    }
+
+    internal static void ResumeCreatedProcess(System.Diagnostics.Process process)
+    {
+        if (process.Threads.Count != 1) throw new InvalidOperationException("Unexpected suspended supervisor threads.");
+        IntPtr thread = OpenThread(2, false, (uint)process.Threads[0].Id);
+        if (thread == IntPtr.Zero) throw new Win32Exception();
+        try { if (ResumeThread(thread) == uint.MaxValue) throw new Win32Exception(); }
+        finally { CloseHandle(thread); }
     }
 
     internal static string BuildArguments(string[] args, string root)
@@ -196,6 +218,9 @@ internal static class PharmFarmAgentHost
         uint flags, IntPtr environment, string directory, ref STARTUPINFO startup, out PROCESS_INFORMATION process);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
     [DllImport("kernel32.dll", SetLastError = true)] static extern uint ResumeThread(IntPtr thread);
+    [DllImport("kernel32.dll", SetLastError = true)] static extern IntPtr OpenThread(uint access, bool inherit, uint threadId);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll", SetLastError = true)] static extern bool GetTokenInformation(IntPtr token, int infoClass, out int information, uint length, out uint returnedLength);
     [DllImport("kernel32.dll", SetLastError = true)] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
     [DllImport("kernel32.dll", SetLastError = true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
     [DllImport("kernel32.dll")] static extern bool TerminateProcess(IntPtr process, uint code);

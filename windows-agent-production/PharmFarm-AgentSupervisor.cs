@@ -6,6 +6,7 @@ using System.Globalization;
 using System.IO;
 using System.Management;
 using System.Threading;
+using System.Security.Principal;
 
 internal static class PharmFarmSupervisor
 {
@@ -96,8 +97,64 @@ internal static class PharmFarmSupervisor
                 PharmFarmAgentHost.Log(root, "watchdog supervisor restart deferred by retry budget");
                 return 0;
             }
-            PharmFarmAgentHost.LaunchDetachedSupervisor(root);
+            try { PharmFarmAgentHost.LaunchDetachedSupervisor(root); }
+            catch (System.ComponentModel.Win32Exception error)
+            {
+                if (error.NativeErrorCode != 5) throw;
+                // Scheduler disallows direct Job breakaway on some Windows versions.
+                // Local WMI is a separate process-creation broker; do not change any
+                // service/security setting. Validate the suspended child before running it.
+                LaunchViaLocalWmi(root);
+            }
             return 0;
+        }
+    }
+
+    static void LaunchViaLocalWmi(string root)
+    {
+        ManagementScope scope = new ManagementScope(@"\\.\root\cimv2");
+        scope.Options.Impersonation = ImpersonationLevel.Impersonate;
+        scope.Options.Timeout = TimeSpan.FromSeconds(10);
+        scope.Connect();
+        using (ManagementClass startupClass = new ManagementClass(scope, new ManagementPath("Win32_ProcessStartup"), null))
+        using (ManagementObject startup = startupClass.CreateInstance())
+        using (ManagementClass processClass = new ManagementClass(scope, new ManagementPath("Win32_Process"), null))
+        using (ManagementBaseObject input = processClass.GetMethodParameters("Create"))
+        {
+            startup["ShowWindow"] = (ushort)0;
+            startup["WinstationDesktop"] = @"WinSta0\Default";
+            startup["CreateFlags"] = (uint)(0x01000000 | 0x08000000 | 0x00000004); // breakaway, no window, suspended
+            string executable = Path.Combine(root, "PharmFarm-AgentHost.exe");
+            input["CommandLine"] = PharmFarmAgentHost.Quote(executable) + " -Role supervisor";
+            input["CurrentDirectory"] = root;
+            input["ProcessStartupInformation"] = startup;
+            using (ManagementBaseObject output = processClass.InvokeMethod("Create", input, new InvokeMethodOptions { Timeout = TimeSpan.FromSeconds(10) }))
+            {
+                uint result = Convert.ToUInt32(output["ReturnValue"]);
+                if (result != 0) throw new InvalidOperationException("Local supervisor creation failed code=" + result);
+                int pid = Convert.ToInt32(output["ProcessId"]);
+                using (Process child = Process.GetProcessById(pid))
+                {
+                    bool resumed = false;
+                    try
+                    {
+                        IntPtr handle = child.Handle;
+                        using (ManagementObject row = new ManagementObject("Win32_Process.Handle='" + pid + "'"))
+                        using (ManagementBaseObject owner = row.InvokeMethod("GetOwnerSid", null, null))
+                        using (WindowsIdentity current = WindowsIdentity.GetCurrent())
+                        {
+                            if (Convert.ToUInt32(owner["ReturnValue"]) != 0 || Convert.ToString(owner["Sid"]) != current.User.Value ||
+                                child.SessionId != Process.GetCurrentProcess().SessionId ||
+                                PharmFarmAgentHost.IsElevated(child.Handle) != PharmFarmAgentHost.IsElevated(Process.GetCurrentProcess().Handle))
+                                throw new InvalidOperationException("Supervisor identity/session/elevation mismatch; child was not resumed.");
+                        }
+                        PharmFarmAgentHost.ResumeCreatedProcess(child);
+                        resumed = true;
+                        PharmFarmAgentHost.Log(root, "local broker supervisor started pid=" + pid + " same-user/session/elevation verified");
+                    }
+                    finally { if (!resumed && !child.HasExited) { child.Kill(); child.WaitForExit(5000); } }
+                }
+            }
         }
     }
 
