@@ -93,7 +93,7 @@ function New-UpdateFixture {
     $xml = New-PharmFarmTaskXml -Role $role -InstallRoot $script:InstallRoot -UserSid (Get-PharmFarmCurrentUserSid)
     # Model 1.4.0 direct-PowerShell tasks to exercise the actual migration.
     [xml]$legacyXml = $xml
-    $legacyXml.Task.Actions.Exec.Command = Get-PharmFarmPowerShellPath
+    $legacyXml.Task.Actions.Exec.Command = [string](Get-PharmFarmPowerShellPath)
     $legacyXml.Task.Actions.Exec.Arguments = '-NoProfile -File "' + (Join-Path $script:InstallRoot $definition.Script) + '"'
     $xml = $legacyXml.OuterXml
     $script:MockTasks[$definition.Name] = [pscustomobject]@{ Xml = $xml }
