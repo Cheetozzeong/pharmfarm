@@ -380,9 +380,9 @@ $installButton.Add_Click({
 
     $installButton.Enabled = $false
     $result = Invoke-PharmFarmRuntimeUpdate -SourceRoot $SourceRoot -InstallRoot $InstallRoot -Configure { Write-Config @configParams } -ResetControls
-    $completeMessage = "설치와 세 예약 작업의 보호 설정 확인을 완료했습니다.`r`n현재 Windows 사용자 로그인 후 자동 실행되며, 별도 감시 작업이 매분 종료된 에이전트와 트레이를 확인합니다.`r`n`r`n백업 위치: $($result.BackupRoot)"
+    $completeMessage = "설치와 자동 실행 보호 설정 확인을 완료했습니다.`r`n현재 Windows 사용자 로그인 후 창 없는 독립 감시가 10초마다 확인하며, 예약 작업은 보조 경로로 유지됩니다.`r`n`r`n백업 위치: $($result.BackupRoot)"
     try {
-      Start-PharmFarmProtection
+      Start-PharmFarmProtection -InstallRoot $InstallRoot
       $completeMessage += "`r`n자동 실행을 요청했습니다. CMS의 최근 연결 시각과 수집 상태를 확인하세요."
     } catch {
       [System.Windows.Forms.MessageBox]::Show("보호 설정은 저장했지만 현재 실행 요청에 실패했습니다.`r`n$($_.Exception.Message)`r`nrepair-pharmfarm-agent.bat으로 점검하세요.", "PharmFarm Agent", "OK", "Warning") | Out-Null

@@ -42,9 +42,13 @@ function Unregister-ScheduledTask {
   $script:MockTasks.Remove($TaskName)
 }
 function Get-PharmFarmStartupShortcutPaths {
-  foreach ($name in @("PharmFarmAgent.lnk", "PharmFarmAgentTray.lnk", "PharmFarmAgentWatchdog.lnk")) {
+  foreach ($name in @("PharmFarmAgent.lnk", "PharmFarmAgentTray.lnk", "PharmFarmAgentWatchdog.lnk", "PharmFarmAgentSupervisor.lnk")) {
     Join-Path $script:StartupRoot $name
   }
+}
+function Register-PharmFarmSupervisorStartup {
+  param([string]$InstallRoot)
+  [IO.File]::WriteAllText((Join-Path $script:StartupRoot 'PharmFarmAgentSupervisor.lnk'), $InstallRoot + '|-Role supervisor')
 }
 function Stop-PharmFarmProcesses {
   param([string]$InstallRoot, [string[]]$Roles)
@@ -140,6 +144,7 @@ try {
   Assert-Update ([IO.File]::ReadAllText((Join-Path $script:InstallRoot "PharmFarm-Agent.ps1")) -eq "updated:PharmFarm-Agent.ps1") "Updated runtime is copied."
   Assert-Update (Test-Path -LiteralPath (Join-Path $result.BackupRoot "files/agent.config.json")) "Existing configuration is backed up."
   Assert-Update (Test-Path -LiteralPath (Join-Path $result.BackupRoot "startup/PharmFarmAgent.lnk")) "Legacy shortcuts are backed up."
+  Assert-Update (Test-Path -LiteralPath (Join-Path $script:StartupRoot 'PharmFarmAgentSupervisor.lnk')) 'Independent same-user Startup entry is installed.'
   Assert-PreservedData
   Assert-ControlBytesPreserved
 

@@ -18,25 +18,46 @@ internal static class PharmFarmAgentHost
         string root = AppDomain.CurrentDomain.BaseDirectory.TrimEnd(Path.DirectorySeparatorChar);
         try
         {
+            if (args.Length == 2 && args[0] == "-Role" && args[1] == "supervisor")
+                return PharmFarmSupervisor.Run(root);
+            // Native backup: never start a periodic PowerShell just to inspect a lock.
+            if (args.Length == 2 && args[0] == "-Role" && args[1] == "watchdog")
+                return PharmFarmSupervisor.Watchdog(root);
             if (args.Length == 0) args = new string[] { "-Role", "tray", "-Resume" };
             string arguments = BuildArguments(args, root);
             string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
             // AnyCPU runs as 64-bit on 64-bit Windows, preserving the installed SQL provider.
             string powershell = Path.Combine(windows, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-            return Run(powershell, arguments, root);
+            string role = args.Length > 1 ? args[1] : "self-test";
+            if (role != "watchdog") Log(root, "host started role=" + role + " pid=" + System.Diagnostics.Process.GetCurrentProcess().Id);
+            int result = Run(powershell, arguments, root);
+            if (role != "watchdog" || result != 0) Log(root, "host exited role=" + role + " exitCode=" + result);
+            return result;
         }
         catch (Exception error)
         {
-            try
-            {
-                string logs = Path.Combine(root, "logs");
-                Directory.CreateDirectory(logs);
-                File.AppendAllText(Path.Combine(logs, "launcher-" + DateTime.Now.ToString("yyyyMMdd") + ".log"),
-                    DateTimeOffset.Now.ToString("o") + " launch failed: " + error.Message + Environment.NewLine);
-            }
-            catch { /* Still return failure to Task Scheduler; never show a popup. */ }
+            Log(root, "launch failed: " + error.Message);
             return 1;
         }
+    }
+
+    internal static void Log(string root, string message)
+    {
+        try
+        {
+            string logs = Path.Combine(root, "logs");
+            Directory.CreateDirectory(logs);
+            string path = Path.Combine(logs, "launcher-" + DateTime.Now.ToString("yyyyMMdd") + ".log");
+            // Bound even repeated failures; keep the previous chunk for diagnosis.
+            if (File.Exists(path) && new FileInfo(path).Length > 2 * 1024 * 1024)
+            {
+                string previous = path + ".previous";
+                if (File.Exists(previous)) File.Delete(previous);
+                File.Move(path, previous);
+            }
+            File.AppendAllText(path, DateTimeOffset.Now.ToString("o") + " " + message + Environment.NewLine);
+        }
+        catch { /* Logging must never display a window or prevent recovery. */ }
     }
 
     internal static string Quote(string value)
@@ -52,6 +73,22 @@ internal static class PharmFarmAgentHost
         }
         output.Append('\\', slashes * 2); output.Append('"');
         return output.ToString();
+    }
+
+    internal static void LaunchDetachedSupervisor(string root)
+    {
+        string executable = Path.Combine(root, "PharmFarm-AgentHost.exe");
+        STARTUPINFO startup = new STARTUPINFO();
+        startup.cb = (uint)Marshal.SizeOf(startup);
+        startup.dwFlags = 1;
+        PROCESS_INFORMATION process;
+        // Do not silently fall back to a child tied to Scheduler's Job. If breakaway
+        // is prohibited, return an actionable failure; the independent Startup entry remains.
+        if (!CreateProcess(executable, new StringBuilder(Quote(executable) + " -Role supervisor"), IntPtr.Zero, IntPtr.Zero,
+            false, CREATE_NO_WINDOW | 0x01000000, IntPtr.Zero, root, ref startup, out process)) throw new Win32Exception();
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+        Log(root, "detached supervisor launch pid=" + process.dwProcessId);
     }
 
     internal static string BuildArguments(string[] args, string root)

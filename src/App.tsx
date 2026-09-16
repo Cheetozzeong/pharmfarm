@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { agentConnection, agentTimestamp } from "./agentHealth";
 import type { CSSProperties, FormEvent, ReactNode, RefObject } from "react";
 import type {
   BrowserDatamatrixCodeReader,
@@ -9790,6 +9791,7 @@ type CmsAgentDevice = {
   heartbeatStatus: string;
   heartbeatMessage: string;
   lastSeenAt: string;
+  lastSeenEpoch: number | null;
   lastSqlOkAt: string;
   lastApiOkAt: string;
   pendingQueueCount: number;
@@ -12945,13 +12947,18 @@ function CmsApp({
     const hasActiveCommand = agentCommands.some((command) =>
       isActiveAgentCommandStatus(command.status),
     );
-    if (!hasActiveCommand) return;
-
     const timer = window.setInterval(() => {
-      void refreshCms();
-    }, 5000);
+      if (document.visibilityState === "visible") void refreshCms();
+    }, hasActiveCommand ? 5000 : 30_000);
+    const onVisible = () => {
+      if (document.visibilityState === "visible") void refreshCms();
+    };
+    document.addEventListener("visibilitychange", onVisible);
 
-    return () => window.clearInterval(timer);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [agentCommands, refreshCms, visiblePage]);
 
   function applyReceiptFilters() {
@@ -15693,11 +15700,8 @@ function receiptHistoryStatusText(status: CmsReceiptHistory["status"]) {
 function normalizeCmsAgentDevice(raw: unknown, index: number): CmsAgentDevice {
   const item = unwrapObjectPayload(raw);
   const lastSeenValue = item.lastSeenAt ?? item.last_seen_at;
-  const parsedLastSeenAt = Date.parse(String(lastSeenValue ?? ""));
-  const online =
-    Number.isFinite(parsedLastSeenAt) &&
-    Date.now() - parsedLastSeenAt >= 0 &&
-    Date.now() - parsedLastSeenAt <= 180_000;
+  const parsedLastSeenAt = agentTimestamp(lastSeenValue);
+  const online = agentConnection(parsedLastSeenAt) === "online";
 
   return {
     id: String(item.id ?? index),
@@ -15716,6 +15720,7 @@ function normalizeCmsAgentDevice(raw: unknown, index: number): CmsAgentDevice {
       item.heartbeatMessage ?? item.heartbeat_message ?? "",
     ),
     lastSeenAt: formatTransactionAt(lastSeenValue),
+    lastSeenEpoch: parsedLastSeenAt,
     lastSqlOkAt: formatTransactionAt(item.lastSqlOkAt ?? item.last_sql_ok_at),
     lastApiOkAt: formatTransactionAt(item.lastApiOkAt ?? item.last_api_ok_at),
     pendingQueueCount: finiteNumber(
@@ -24612,7 +24617,7 @@ function CmsPurchasePage({
 
 function CmsAgentControlPage({
   commands,
-  devices,
+  devices: reportedDevices,
   selectedDeviceKey,
   submitting,
   onCommand,
@@ -24625,6 +24630,16 @@ function CmsAgentControlPage({
   onCommand: (commandType: CmsAgentCommandType) => void;
   onSelectDevice: (deviceKey: string) => void;
 }) {
+  const [checkedAt, setCheckedAt] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setCheckedAt(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
+  // Do not keep a stale green badge if the CMS refresh itself fails.
+  const devices = reportedDevices.map((device) => ({
+    ...device,
+    online: agentConnection(device.lastSeenEpoch, checkedAt) === "online",
+  }));
   const selectedDevice = devices.find(
     (device) => agentDeviceKey(device) === selectedDeviceKey,
   );
@@ -24753,6 +24768,32 @@ function CmsAgentControlPage({
               </span>
             )}
           </header>
+
+          {selectedDevice && (
+            <div
+              className={`cms-agent-health-notice ${selectedDevice.online ? "is-online" : "is-warning"}`}
+              role="status"
+              aria-live="polite"
+            >
+              <strong>
+                {selectedDevice.online
+                  ? "최근 연결 확인됨 · 수집 상태도 함께 확인하세요"
+                  : "연결 끊김 경고 · 처방 수집 상태 확인 필요"}
+              </strong>
+              <p>
+                {selectedDevice.online
+                  ? "온라인 표시는 서버 연결 기준입니다. 아래 SQL/API 시각과 전송 대기 건수를 함께 확인하세요."
+                  : "최근 3분 내 연결을 확인하지 못했습니다. PC 종료·절전·인터넷 단절·에이전트 중지를 구분해 확인하세요. 영업 중이라면 수집 누락 가능성이 있습니다."}
+              </p>
+              {!selectedDevice.online && (
+                <p>
+                  PC가 켜져 있다면 트레이의 ‘에이전트 시작’을 확인하고, 복구되지 않으면 관리자에게 문의하세요.
+                  아래 원격 명령은 연결 복구 후 실행되며, 꺼진 에이전트를 켜는 기능이 아닙니다.
+                </p>
+              )}
+              <small>화면을 열어 둔 동안 약 30초마다 갱신합니다. 외부 알림은 발송하지 않습니다.</small>
+            </div>
+          )}
 
           {selectedDevice && (
             <div className="cms-agent-device-summary">

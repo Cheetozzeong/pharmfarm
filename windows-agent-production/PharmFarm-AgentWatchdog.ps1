@@ -20,6 +20,9 @@ function Test-WatchdogTargetRunning {
 }
 
 try {
+  # Compatibility for direct script invocations. Native scheduled watchdog owns
+  # supervisor recovery in 1.4.2; never compete with its retry budget.
+  if (Test-PharmFarmRuntimeLocked -InstallRoot $InstallRoot -Role supervisor) { exit 0 }
   $runtime = Enter-PharmFarmRuntime -InstallRoot $InstallRoot -Role "watchdog"
   if ($null -eq $runtime) { exit 0 }
   if (!(Test-Path -LiteralPath (Join-Path $InstallRoot "agent.config.json"))) { throw "Agent configuration is missing; run the installer." }

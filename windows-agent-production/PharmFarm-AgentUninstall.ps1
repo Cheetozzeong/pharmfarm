@@ -16,7 +16,7 @@ try {
   Set-PharmFarmDisabled -InstallRoot $InstallRoot -Disabled $true
   try { Suspend-PharmFarmAutostart }
   catch { $failures.Add($_.Exception.Message) }
-  try { Stop-PharmFarmProcesses -InstallRoot $InstallRoot -Roles @("watchdog", "agent", "tray") }
+  try { Stop-PharmFarmProcesses -InstallRoot $InstallRoot -Roles @("watchdog", "supervisor", "agent", "tray") }
   catch { $failures.Add($_.Exception.Message) }
   foreach ($taskName in @("PharmFarmAgentWatchdog", "PharmFarmAgent", "PharmFarmAgentTray")) {
     try { Remove-PharmFarmRegisteredTask -TaskName $taskName }
@@ -24,7 +24,7 @@ try {
   }
   try { Remove-PharmFarmStartupShortcuts }
   catch { $failures.Add($_.Exception.Message) }
-  try { Stop-PharmFarmProcesses -InstallRoot $InstallRoot -Roles @("watchdog", "agent", "tray") }
+  try { Stop-PharmFarmProcesses -InstallRoot $InstallRoot -Roles @("watchdog", "supervisor", "agent", "tray") }
   catch { $failures.Add($_.Exception.Message) }
   if ($failures.Count -gt 0) { throw ($failures -join "`r`n") }
   $success = $true

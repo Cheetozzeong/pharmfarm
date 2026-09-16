@@ -301,8 +301,32 @@ function Remove-PharmFarmRegisteredTask {
 function Get-PharmFarmStartupShortcutPaths {
   $startup = [Environment]::GetFolderPath("Startup")
   if ([string]::IsNullOrWhiteSpace($startup)) { throw "The current user's Startup folder could not be found." }
-  foreach ($name in @("PharmFarmAgent.lnk", "PharmFarmAgentTray.lnk", "PharmFarmAgentWatchdog.lnk")) {
+  foreach ($name in @("PharmFarmAgent.lnk", "PharmFarmAgentTray.lnk", "PharmFarmAgentWatchdog.lnk", "PharmFarmAgentSupervisor.lnk")) {
     Join-Path $startup $name
+  }
+}
+
+function Register-PharmFarmSupervisorStartup {
+  param([string]$InstallRoot)
+  $path = @(Get-PharmFarmStartupShortcutPaths | Where-Object { [IO.Path]::GetFileName($_) -eq 'PharmFarmAgentSupervisor.lnk' })[0]
+  if ([string]::IsNullOrWhiteSpace($path)) { throw 'Supervisor Startup location is unavailable.' }
+  $shell = New-Object -ComObject WScript.Shell
+  try {
+    $shortcut = $shell.CreateShortcut($path)
+    $shortcut.TargetPath = Join-Path $InstallRoot 'PharmFarm-AgentHost.exe'
+    $shortcut.Arguments = '-Role supervisor'
+    $shortcut.WorkingDirectory = $InstallRoot
+    $shortcut.WindowStyle = 7
+    $shortcut.Description = 'PharmFarm independent same-user recovery supervisor'
+    $shortcut.Save()
+    $actual = $shell.CreateShortcut($path)
+    if ($actual.TargetPath -ne $shortcut.TargetPath -or $actual.Arguments -cne '-Role supervisor' -or $actual.WorkingDirectory -ne $InstallRoot) {
+      throw 'Supervisor Startup shortcut verification failed.'
+    }
+  } finally {
+    if ($null -ne $actual) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($actual) }
+    if ($null -ne $shortcut) { [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shortcut) }
+    [void][Runtime.InteropServices.Marshal]::FinalReleaseComObject($shell)
   }
 }
 
@@ -447,13 +471,20 @@ function Restore-PharmFarmInstallBackup {
 }
 
 function Start-PharmFarmProtection {
-  # The watchdog observes persistent manual pauses and starts only eligible roles.
-  try {
-    Start-ScheduledTask -TaskName "PharmFarmAgentWatchdog" -TaskPath "\" -ErrorAction Stop
-  } catch {
-    $result = Invoke-PharmFarmSchtasks -Arguments @("/Run", "/TN", "PharmFarmAgentWatchdog")
-    if ($result.ExitCode -ne 0) { throw "Recovery task start failed: $($result.Output)" }
+  param([string]$InstallRoot = (Join-Path $env:ProgramData 'PharmFarmAgent'))
+  # Bootstrap at the original least-privilege task identity, not the elevated
+  # installer token. Native watchdog explicitly breaks away from Scheduler's Job.
+  if (!(Test-PharmFarmStartAllowed -InstallRoot $InstallRoot -Role supervisor)) { return }
+  try { Start-ScheduledTask -TaskName 'PharmFarmAgentWatchdog' -TaskPath '\' -ErrorAction Stop }
+  catch {
+    $result = Invoke-PharmFarmSchtasks -Arguments @('/Run', '/TN', 'PharmFarmAgentWatchdog')
+    if ($result.ExitCode -ne 0) { throw "Recovery bootstrap failed: $($result.Output)" }
   }
+  for ($attempt = 0; $attempt -lt 20; $attempt++) {
+    if (Test-PharmFarmRuntimeLocked -InstallRoot $InstallRoot -Role supervisor) { return }
+    Start-Sleep -Milliseconds 250
+  }
+  throw 'Independent supervisor did not start; inspect launcher logs. Server connection is not verified.'
 }
 
 function Invoke-PharmFarmRuntimeUpdate {
@@ -473,11 +504,12 @@ function Invoke-PharmFarmRuntimeUpdate {
     # Old versions ignore maintenance markers. Disable their entry points before
     # stopping them so a simultaneous logon cannot launch a partially copied file.
     Suspend-PharmFarmAutostart
-    Stop-PharmFarmProcesses -InstallRoot $InstallRoot -Roles @("watchdog", "agent", "tray")
+    Stop-PharmFarmProcesses -InstallRoot $InstallRoot -Roles @("watchdog", "supervisor", "agent", "tray")
     Copy-PharmFarmRuntimePackage -SourceRoot $SourceRoot -InstallRoot $InstallRoot
     if ($null -ne $Configure) { & $Configure }
     $registered = @(Register-PharmFarmProtectedTasks -InstallRoot $InstallRoot -UserSid $userSid)
     Remove-PharmFarmStartupShortcuts
+    Register-PharmFarmSupervisorStartup -InstallRoot $InstallRoot
     if ($ResetControls) {
       Set-PharmFarmPaused -InstallRoot $InstallRoot -Role "agent" -Paused $false
       Set-PharmFarmPaused -InstallRoot $InstallRoot -Role "tray" -Paused $false
@@ -491,7 +523,7 @@ function Invoke-PharmFarmRuntimeUpdate {
     if ($null -ne $backup) {
       $stopped = $false
       try {
-        Stop-PharmFarmProcesses -InstallRoot $InstallRoot -Roles @("watchdog", "agent", "tray")
+        Stop-PharmFarmProcesses -InstallRoot $InstallRoot -Roles @("watchdog", "supervisor", "agent", "tray")
         $stopped = $true
       } catch { $failure += " Stop verification failed; runtime files were not restored and processes may still be running. $($_.Exception.Message)" }
       if ($stopped) {

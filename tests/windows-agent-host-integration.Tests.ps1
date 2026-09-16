@@ -47,7 +47,7 @@ Start-Sleep -Seconds 60
   Assert-Host ($child.WaitForExit(5000)) 'Killing Scheduler host terminates its primary PowerShell child'
   Remove-Item -LiteralPath $childFile
 
-  # A direct fallback launched inside watchdog must outlive watchdog's normal exit.
+  # A direct fallback launched inside a short-lived tray must outlive its exit.
   $watchdogFixture = @'
 param($InstallRoot)
 $info = New-Object Diagnostics.ProcessStartInfo
@@ -60,8 +60,8 @@ $process = [Diagnostics.Process]::Start($info)
 $process.Dispose()
 exit 0
 '@
-  [IO.File]::WriteAllText((Join-Path $testRoot 'PharmFarm-AgentWatchdog.ps1'), $watchdogFixture)
-  $watchdogResult = Invoke-PharmFarmHiddenNative -FilePath $hostPath -Arguments @('-Role','watchdog')
+  [IO.File]::WriteAllText((Join-Path $testRoot 'PharmFarm-AgentTray.ps1'), $watchdogFixture)
+  $watchdogResult = Invoke-PharmFarmHiddenNative -FilePath $hostPath -Arguments @('-Role','tray')
   $recovered = Get-Process -Id ([int][IO.File]::ReadAllText((Join-Path $testRoot 'recovered-host.pid')))
   [void]$recovered.Handle
   $owned.Add($recovered)
@@ -69,7 +69,7 @@ exit 0
   $recoveredChild = Get-Process -Id ([int][IO.File]::ReadAllText($childFile))
   [void]$recoveredChild.Handle
   $owned.Add($recoveredChild)
-  Assert-Host ($watchdogResult.ExitCode -eq 0 -and !$recovered.HasExited -and !$recoveredChild.HasExited) 'Recovered collector survives watchdog exit through independent Job lifetime'
+  Assert-Host ($watchdogResult.ExitCode -eq 0 -and !$recovered.HasExited -and !$recoveredChild.HasExited) 'Recovered collector survives tray fallback launcher exit through independent Job lifetime'
   $recovered.Kill()
   Assert-Host ($recoveredChild.WaitForExit(5000)) 'Recovered host still owns cleanup of its child'
   Write-Host "Passed $checks Windows host integration assertions. Also visually observe several real watchdog cycles after approved installation."

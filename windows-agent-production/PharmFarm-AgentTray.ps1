@@ -727,6 +727,8 @@ function Invoke-AgentAutoRecovery {
   }
   try {
     if (!(Test-PharmFarmStartAllowed -InstallRoot $InstallRoot -Role "agent")) { return $RuntimeState }
+    # One recovery owner: do not bypass its persistent retry budget.
+    if (Test-PharmFarmRuntimeLocked -InstallRoot $InstallRoot -Role supervisor) { return $RuntimeState }
   } catch { return "Unknown" }
 
   $now = Get-Date

@@ -36,11 +36,11 @@ try {
   }
   $reportPath = Join-Path $InstallRoot "agent.repair-report.json"
   Write-PharmFarmControlFile -Path $reportPath -Value $report
-  Start-PharmFarmProtection
+  Start-PharmFarmProtection -InstallRoot $InstallRoot
   $report.runtimeStartRequested = $true
   Write-PharmFarmControlFile -Path $reportPath -Value $report
   Write-Host "Repair complete: all three scheduled tasks were read back and verified."
-  Write-Host "The watchdog now checks every minute after the installation user signs in."
+  Write-Host "Independent windowless supervision checks every 10 seconds; the scheduled watchdog remains a backup."
   Write-Host "Configuration, device ID, queues, sync hashes, and manual pauses were preserved."
   Write-Host "No overwrite/resync command was requested. Normal collection resumes unless paused or disabled."
   Write-Host "Backup: $($result.BackupRoot)"

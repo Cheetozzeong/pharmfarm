@@ -39,7 +39,7 @@ function Invoke-PharmFarmHiddenNative {
 }
 
 function Start-PharmFarmHiddenRuntime {
-  param([string]$InstallRoot, [ValidateSet('agent', 'tray', 'watchdog')][string]$Role,
+  param([string]$InstallRoot, [ValidateSet('agent', 'tray', 'watchdog', 'supervisor')][string]$Role,
     [switch]$Wait, [switch]$ResyncTodayPrescriptions, [string]$MaintenanceToken = '')
   $hostPath = Join-Path $InstallRoot 'PharmFarm-AgentHost.exe'
   if (!(Test-Path -LiteralPath $hostPath -PathType Leaf)) { throw 'Windowless launcher is missing. Run repair-pharmfarm-agent.bat.' }
@@ -138,7 +138,7 @@ function Set-PharmFarmDisabled {
 }
 
 function Test-PharmFarmRuntimeLocked {
-  param([string]$InstallRoot, [ValidateSet("agent", "tray", "watchdog")][string]$Role)
+  param([string]$InstallRoot, [ValidateSet("agent", "tray", "watchdog", "supervisor")][string]$Role)
   $handle = Enter-PharmFarmLock -InstallRoot $InstallRoot -Name $Role
   if ($null -eq $handle) { return $true }
   Exit-PharmFarmLock $handle
@@ -146,7 +146,7 @@ function Test-PharmFarmRuntimeLocked {
 }
 
 function Test-PharmFarmStartAllowed {
-  param([string]$InstallRoot, [ValidateSet("agent", "tray", "watchdog")][string]$Role, [string]$MaintenanceToken = "")
+  param([string]$InstallRoot, [ValidateSet("agent", "tray", "watchdog", "supervisor")][string]$Role, [string]$MaintenanceToken = "")
   if (Test-Path -LiteralPath (Get-PharmFarmLifecyclePath $InstallRoot "disabled.json") -ErrorAction Stop) { return $false }
   $maintenancePath = Get-PharmFarmLifecyclePath $InstallRoot "maintenance.json"
   if (Test-Path -LiteralPath $maintenancePath -ErrorAction Stop) {
@@ -162,7 +162,7 @@ function Test-PharmFarmStartAllowed {
     return $true
   }
   if (![string]::IsNullOrWhiteSpace($MaintenanceToken)) { return $false }
-  if ($Role -ne "watchdog" -and (Test-PharmFarmPaused -InstallRoot $InstallRoot -Role $Role)) { return $false }
+  if ($Role -in @("agent", "tray") -and (Test-PharmFarmPaused -InstallRoot $InstallRoot -Role $Role)) { return $false }
   return $true
 }
 
@@ -248,7 +248,7 @@ function Get-PharmFarmCommandArgument {
 }
 
 function Get-PharmFarmProcesses {
-  param([string]$InstallRoot, [ValidateSet("agent", "tray", "watchdog")][string[]]$Roles = @("agent", "tray", "watchdog"), [switch]$IncludeLaunchers)
+  param([string]$InstallRoot, [ValidateSet("agent", "tray", "watchdog", "supervisor")][string[]]$Roles = @("agent", "tray", "watchdog", "supervisor"), [switch]$IncludeLaunchers)
   $filter = "Name = 'powershell.exe' OR Name = 'pwsh.exe'"
   if ($IncludeLaunchers) { $filter += " OR Name = 'PharmFarm-AgentHost.exe'" }
   try {
@@ -275,6 +275,7 @@ function Get-PharmFarmProcesses {
     $file = Get-PharmFarmCommandArgument $commandLine "-File"
     if ([string]::IsNullOrWhiteSpace($file)) { continue }
     foreach ($role in $Roles) {
+      if ($role -eq 'supervisor') { continue } # Native executable only; no PowerShell script.
       $target = Join-Path $InstallRoot $names[$role]
       $matchesTarget = [string]::Equals($file, $target, [StringComparison]::OrdinalIgnoreCase)
       $ambiguousLegacy = $false
@@ -303,9 +304,10 @@ function Get-PharmFarmProcesses {
 }
 
 function Stop-PharmFarmProcesses {
-  param([string]$InstallRoot, [ValidateSet("agent", "tray", "watchdog")][string[]]$Roles = @("watchdog", "agent", "tray"))
+  param([string]$InstallRoot, [ValidateSet("agent", "tray", "watchdog", "supervisor")][string[]]$Roles = @("watchdog", "supervisor", "agent", "tray"), [switch]$SkipScheduledTasks)
   $taskNames = @{ agent = "PharmFarmAgent"; tray = "PharmFarmAgentTray"; watchdog = "PharmFarmAgentWatchdog" }
   foreach ($role in $Roles) {
+    if ($SkipScheduledTasks -or $role -eq 'supervisor') { continue } # Independent Startup entry, or isolated test cleanup.
     try { Stop-ScheduledTask -TaskName $taskNames[$role] -ErrorAction Stop | Out-Null }
     catch {
       $schtasks = Join-Path $env:SystemRoot "System32\schtasks.exe"
@@ -345,4 +347,27 @@ function Stop-PharmFarmProcesses {
     if ([DateTime]::UtcNow -ge $deadline) { throw "PharmFarm processes did not stop; no runtime/data files may be changed." }
     Start-Sleep -Milliseconds 200
   } while ($true)
+}
+
+function Write-PharmFarmProgress {
+  param([string]$InstallRoot, [string]$Phase)
+  # Record actual collector thread progress, not a timer or API success. No patient data.
+  $now = [DateTime]::UtcNow
+  if ($null -ne $script:PharmFarmProgressAt -and ($now - $script:PharmFarmProgressAt).TotalSeconds -lt 5) { return }
+  try {
+    if ($null -eq $script:PharmFarmProcessStartTicks) {
+      $script:PharmFarmProcessStartTicks = (Get-Process -Id $PID -ErrorAction Stop).StartTime.ToUniversalTime().Ticks
+    }
+    $path = Get-PharmFarmLifecyclePath $InstallRoot 'agent.progress'
+    $temp = $path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
+    try {
+      $safePhase = $Phase -replace '[^a-zA-Z0-9-]', ''
+      [IO.File]::WriteAllText($temp, "1`n$PID`n$script:PharmFarmProcessStartTicks`n$($now.Ticks)`n$safePhase")
+      if ([IO.File]::Exists($path)) { [IO.File]::Replace($temp, $path, [NullString]::Value) }
+      else { [IO.File]::Move($temp, $path) }
+      $script:PharmFarmProgressAt = $now
+    } finally { if ([IO.File]::Exists($temp)) { [IO.File]::Delete($temp) } }
+  } catch {
+    # Missing observability must not interrupt collection. Supervisor fails closed on invalid progress.
+  }
 }

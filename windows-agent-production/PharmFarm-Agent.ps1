@@ -34,8 +34,8 @@ $LastHeartbeatAt = $null
 $LastSqlOkAt = $null
 $LastApiOkAt = $null
 $RemoteCommandPollingUnavailable = $false
-$HeartbeatUnavailable = $false
-$AgentVersion = "1.4.1-ps"
+$HeartbeatUnavailableUntil = $null
+$AgentVersion = "1.4.2-ps"
 . (Join-Path $PSScriptRoot "PharmFarm-AgentLifecycle.ps1")
 $RuntimeLock = $null
 
@@ -52,6 +52,7 @@ function Write-AgentLog {
     [string]$Level = "INFO"
   )
 
+  if ($null -ne $RuntimeLock) { Write-PharmFarmProgress -InstallRoot $InstallRoot -Phase 'working' }
   Ensure-Directory $LogDir
   $line = "[{0}] [{1}] {2}" -f (Get-Date -Format "yyyy-MM-dd HH:mm:ss"), $Level, $Message
 
@@ -334,6 +335,7 @@ function Invoke-SqlQuery {
     [int]$TimeoutSeconds = 10
   )
 
+  Write-PharmFarmProgress -InstallRoot $InstallRoot -Phase 'sql'
   $connection = New-Object System.Data.SqlClient.SqlConnection (New-ConnectionString $SqlServer $DbName)
 
   try {
@@ -348,6 +350,7 @@ function Invoke-SqlQuery {
     return ,$table
   } finally {
     $connection.Close()
+    Write-PharmFarmProgress -InstallRoot $InstallRoot -Phase 'sql-complete'
   }
 }
 
@@ -1363,6 +1366,7 @@ ORDER BY rowCount DESC, t.name
     try {
       $rows = Convert-DataTableRows (Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName $db -Query $query -TimeoutSeconds 12)
       foreach ($row in $rows) {
+        Write-PharmFarmProgress -InstallRoot $InstallRoot -Phase 'rows'
         $reports.Add($row)
       }
     } catch {
@@ -2215,6 +2219,7 @@ function Flush-Queue {
   }
 
   foreach ($file in $files) {
+    Write-PharmFarmProgress -InstallRoot $InstallRoot -Phase 'queue'
     $envelope = Read-JsonFile $file.FullName
 
     if ($null -eq $envelope) {
@@ -2681,7 +2686,7 @@ function Submit-AgentHeartbeat {
     [switch]$Force
   )
 
-  if ($script:HeartbeatUnavailable -and !$Force) {
+  if ($null -ne $script:HeartbeatUnavailableUntil -and [DateTime]::UtcNow -lt $script:HeartbeatUnavailableUntil -and !$Force) {
     return [ordered]@{
       submitted = $false
       skipped = "endpoint-unavailable"
@@ -2711,6 +2716,7 @@ function Submit-AgentHeartbeat {
     $now = Get-AgentTimestamp
     $script:LastApiOkAt = $now
     $script:LastHeartbeatAt = $now
+    $script:HeartbeatUnavailableUntil = $null
     return [ordered]@{
       submitted = $true
       queueCount = $payload.pendingQueueCount
@@ -2719,8 +2725,8 @@ function Submit-AgentHeartbeat {
   } catch {
     $statusCode = Get-AgentHttpStatusCodeFromError $_
     if ($statusCode -eq 404) {
-      $script:HeartbeatUnavailable = $true
-      Write-AgentLog "heartbeat disabled because endpoint returned 404" "WARN"
+      $script:HeartbeatUnavailableUntil = [DateTime]::UtcNow.AddMinutes(5)
+      Write-AgentLog "heartbeat endpoint returned 404; retrying after 5 minutes" "WARN"
     } else {
       Write-AgentLog "heartbeat failed status=$statusCode error=$($_.Exception.Message)" "WARN"
     }
@@ -2939,6 +2945,7 @@ function Queue-TodayPrescriptionOverwrite {
     Write-AgentLog "today prescription overwrite scan rows=$($rows.Count) requestId=$requestId"
 
     foreach ($row in $rows) {
+      Write-PharmFarmProgress -InstallRoot $InstallRoot -Phase 'rows'
       $code = if ($row.ps_Code) { $row.ps_Code.ToString() } else { "" }
 
       if ([string]::IsNullOrWhiteSpace($code)) {
@@ -3028,6 +3035,7 @@ function Watch-Once {
     $skipped = 0
 
     foreach ($row in $rows) {
+      Write-PharmFarmProgress -InstallRoot $InstallRoot -Phase 'rows'
       $code = if ($row.ps_Code) { $row.ps_Code.ToString() } else { "" }
 
       if ([string]::IsNullOrWhiteSpace($code)) {
@@ -3119,6 +3127,7 @@ try {
   Ensure-Directory $LogDir
   Ensure-Directory $SyncStateDir
   $config = Get-Config
+  Write-PharmFarmProgress -InstallRoot $InstallRoot -Phase 'startup'
   $intervalSeconds = if ($config.intervalSeconds) { [int]$config.intervalSeconds } else { 10 }
   $referenceSyncIntervalMinutes = if ($config.referenceSyncIntervalMinutes) { [int]$config.referenceSyncIntervalMinutes } else { 1440 }
 
@@ -3145,6 +3154,7 @@ try {
   Invoke-AgentHeartbeatIfDue $config
 
   do {
+    Write-PharmFarmProgress -InstallRoot $InstallRoot -Phase 'watch'
     Watch-Once $config
     Invoke-AgentCommandPollIfDue $config
     Invoke-AgentHeartbeatIfDue $config

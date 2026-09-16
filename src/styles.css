@@ -10191,6 +10191,24 @@ body:has(.cms-shell) {
   gap: 16px;
 }
 
+.cms-agent-health-notice {
+  padding: 14px 16px;
+  margin: 12px 0;
+  border: 1px solid #b6d5c4;
+  border-radius: 12px;
+  background: #f1f8f4;
+  color: #264e38;
+  line-height: 1.6;
+}
+
+.cms-agent-health-notice.is-warning {
+  border-color: #edc49b;
+  background: #fff7ed;
+  color: #7a3f0b;
+}
+
+.cms-agent-health-notice p { margin: 6px 0; }
+
 .cms-agent-control-layout {
   display: grid;
   min-height: 0;
