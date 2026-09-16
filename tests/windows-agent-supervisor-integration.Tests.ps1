@@ -75,9 +75,11 @@ try {
   $delta = ($super.TotalProcessorTime - $cpuBefore).TotalMilliseconds
   Write-Host ("MEASURE idle supervisor CPU={0:N1}ms/22s, workingSet={1:N1}MiB" -f $delta, ($super.WorkingSet64 / 1MB))
   $watchdog = Invoke-PharmFarmHiddenNative -FilePath $hostPath -Arguments @('-Role','watchdog')
-  Assert-Test ($watchdog.ExitCode -eq 0 -and (Find-Supervisor).Count -eq 1) 'Backup tick does not spawn another supervisor when healthy'
+  $found = @(Find-Supervisor)
+  Write-Host "DIAGNOSTIC watchdogExit=$($watchdog.ExitCode) supervisorCount=$($found.Count)"
+  Assert-Test ($watchdog.ExitCode -eq 0 -and $found.Count -eq 1) 'Backup tick does not spawn another supervisor when healthy'
   $duplicate = Invoke-PharmFarmHiddenNative -FilePath $hostPath -Arguments @('-Role','supervisor')
-  Assert-Test ($duplicate.ExitCode -eq 0 -and (Find-Supervisor).Count -eq 1) 'Simultaneous login/manual start obeys singleton'
+  Assert-Test ($duplicate.ExitCode -eq 0 -and @(Find-Supervisor).Count -eq 1) 'Simultaneous login/manual start obeys singleton'
 
   Age-FixtureBudget agent
   [void]$collector.Handle
@@ -110,10 +112,10 @@ try {
   Register-PharmFarmTaskXml -TaskName $taskName -Xml $xml | Out-Null
   $registeredTestTask = $true
   Start-ScheduledTask -TaskName $taskName
-  Wait-Test { (Find-Supervisor).Count -eq 1 } 'Scheduler backup launches a detached supervisor'
+  Wait-Test { @(Find-Supervisor).Count -eq 1 } 'Scheduler backup launches a detached supervisor'
   Stop-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
   Start-Sleep -Seconds 12
-  Assert-Test ((Find-Supervisor).Count -eq 1 -and (Get-FixtureProcess agent).Id -eq $collectorId) 'Detached supervisor and healthy collector survive ending the backup task'
+  Assert-Test (@(Find-Supervisor).Count -eq 1 -and (Get-FixtureProcess agent).Id -eq $collectorId) 'Detached supervisor and healthy collector survive ending the backup task'
 
   # Exercise real safe-stop/WMI identity path with a simulated future observation
   # (never change OS time). Its 60s confirmation still runs against a real Stopwatch.
