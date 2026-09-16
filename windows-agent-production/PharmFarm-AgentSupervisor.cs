@@ -91,7 +91,11 @@ internal static class PharmFarmSupervisor
         using (FileStream gate = TryLock(root, "gate"))
         {
             if (gate == null || !Allowed(root, "supervisor") || Locked(root, "supervisor")) return 0;
-            if (!ReserveAttempt(root, "supervisor", DateTime.UtcNow)) return 0;
+            if (!ReserveAttempt(root, "supervisor", DateTime.UtcNow))
+            {
+                PharmFarmAgentHost.Log(root, "watchdog supervisor restart deferred by retry budget");
+                return 0;
+            }
             PharmFarmAgentHost.LaunchDetachedSupervisor(root);
             return 0;
         }
@@ -172,8 +176,16 @@ internal static class PharmFarmSupervisor
             if (singleton == null) return 0;
             PharmFarmAgentHost.Log(root, "supervisor started pid=" + Process.GetCurrentProcess().Id);
             Dictionary<string, string> previous = new Dictionary<string, string>();
+            Stopwatch interval = Stopwatch.StartNew();
             while (!File.Exists(Control(root, "disabled.json")))
             {
+                if (interval.Elapsed.TotalSeconds > 45)
+                {
+                    // Sleep/resume or a delayed check breaks the confirmation sequence.
+                    suspectProgress = null;
+                    suspectAge.Reset();
+                }
+                interval.Restart();
                 foreach (string role in new string[] { "agent", "tray" })
                 {
                     string state;

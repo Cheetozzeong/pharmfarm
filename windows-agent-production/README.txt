@@ -151,11 +151,13 @@ Recommended operation:
 
 Updating an installed agent:
 
-- Version 1.4.1-ps: automatic tasks now start PharmFarm-AgentHost.exe (Windows GUI executable) instead of powershell.exe. It starts PowerShell with CREATE_NO_WINDOW; hiding a window after launch is no longer the only protection.
+- Version 1.4.2-ps: adds a small independent, windowless supervisor. A same-user Startup shortcut starts it at login; it checks local runtime locks every 10 seconds without SQL/API calls or periodic PowerShell launches. The native scheduled watchdog is a backup for the supervisor, not the primary recovery loop.
 - The complete package includes the prebuilt .NET Framework 4.6.2 AnyCPU launcher. No SDK, compiler, VBScript, browser extension or new Windows account is required. Windows 10+ and .NET Framework 4.6.2+ are required for this launcher.
 - Repair first self-tests the new launcher before changing the old installation. If it is blocked by Windows/security software, inspect the package logs and contact support; do not bypass security warnings or disable protection.
 - Both task registration and fallback launches use the same windowless host. Native scheduler support commands capture their output without creating a console. A stopped/expired host also stops its own PowerShell child; recovered collectors survive the watchdog's normal exit.
-- After repair, check CMS 1.4.1-ps, online/SQL/API state, and observe at least 3 one-minute checks for flashes. Logs\\launcher-YYYYMMDD.log contains launcher failures; watchdog.state.json distinguishes running/restarted/suppressed/error.
+- After repair, check CMS 1.4.2-ps, online/SQL/API state, and observe at least 3 one-minute checks for flashes. Logs\\launcher-YYYYMMDD.log records starts, exits and recovery state transitions. lifecycle\\supervisor.progress is the current supervisor check time; old watchdog.state.json is not authoritative in 1.4.2.
+- Recovery never restarts a healthy locked collector merely because the API is offline. Collector progress must stop for 15 minutes plus a fresh 60-second confirmation before an exact-identity stale collector can be restarted. Sleep/resume gaps reset confirmation. Recovery is limited to 3 attempts per role per 15 minutes, with at least 60 seconds between attempts; pause/maintenance/disabled intent always wins.
+- A stopped Windows Schedule service is NOT automatically restarted or reconfigured. An already-running independent supervisor continues without it, but setup/repair still requires a functioning Scheduler to safely inspect, back up and verify existing task identity. Fix OS service crashes separately; do not repeatedly reinstall or bypass preflight failures.
 - Intentional install/repair/uninstall/debug .bat tools still show their console and result. They are never scheduled. For a console-free manual tray resume, double-click C:\ProgramData\PharmFarmAgent\PharmFarm-AgentHost.exe. The legacy run-agent-tray.bat remains available but its own cmd window may briefly appear when manually opened.
 
 - Downloading/extracting a new zip does not update the running tray agent by itself.
@@ -165,7 +167,7 @@ Updating an installed agent:
 - Setup/repair enters maintenance before stopping processes or replacing files, backs up runtime/task definitions, and verifies the registered tasks before resuming.
 - If a task belongs to another Windows account, repair refuses to migrate it: use the original installation account. SQL uses that user's Windows integrated authentication.
 - A same-name task targeting another installation or script is also refused before changes. A legacy manual launcher with no explicit installation path blocks overlap and requires its verified console to be closed; it is not blindly force-killed.
-- Do not copy just PharmFarm-Agent.ps1: version 1.4.1-ps also needs the host executable, lifecycle helper and matching tray/watchdog files. Repair must update the scheduled tasks too.
+- Do not copy just PharmFarm-Agent.ps1: version 1.4.2-ps also needs the host executable, lifecycle helper and matching tray/watchdog files. Repair must update the scheduled tasks and independent Startup shortcut together.
 - The setup wizard is for a new installation or an intentional settings change; use repair for an update without configuration changes.
 - The startup log should show the bundled agent version. If the version is old, the tray is still using the old ProgramData copy.
 - resync-today-prescriptions.bat is an explicit, destructive overwrite test, not a repair tool. It refuses to overlap another agent and does not bypass a user pause or maintenance.

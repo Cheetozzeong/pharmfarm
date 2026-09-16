@@ -37,6 +37,9 @@ function Age-FixtureBudget([string]$Role) {
 function Find-Supervisor {
   @(Get-PharmFarmProcesses -InstallRoot $root -Roles supervisor -IncludeLaunchers)
 }
+function Get-PharmFarmStartupShortcutPaths {
+  Join-Path $root 'startup/PharmFarmAgentSupervisor.lnk'
+}
 try {
   Copy-Item (Join-Path $package 'PharmFarm-AgentHost.exe') $root
   Copy-Item (Join-Path $package 'PharmFarm-AgentLifecycle.ps1') $root
@@ -61,6 +64,9 @@ try {
     [IO.File]::WriteAllText((Join-Path $root $file), $fixture)
   }
   $hostPath = Join-Path $root 'PharmFarm-AgentHost.exe'
+  [void][IO.Directory]::CreateDirectory((Join-Path $root 'startup'))
+  Register-PharmFarmSupervisorStartup -InstallRoot $root
+  Assert-Test (Test-Path (Join-Path $root 'startup/PharmFarmAgentSupervisor.lnk')) 'Real COM Startup shortcut saves and verifies in isolated fixture directory'
   $super = Start-PharmFarmNativeProcess (New-PharmFarmHiddenProcessInfo -FilePath $hostPath -Arguments @('-Role','supervisor') -WorkingDirectory $root)
   Wait-Test { $null -ne (Get-FixtureProcess agent) -and $null -ne (Get-FixtureProcess tray) } 'supervisor starts both fixtures without Scheduler'
   $collector = Get-FixtureProcess agent

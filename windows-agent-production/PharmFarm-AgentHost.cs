@@ -25,6 +25,13 @@ internal static class PharmFarmAgentHost
                 return PharmFarmSupervisor.Watchdog(root);
             if (args.Length == 0) args = new string[] { "-Role", "tray", "-Resume" };
             string arguments = BuildArguments(args, root);
+            if (args.Length == 3 && args[1] == "tray" && args[2] == "-Resume")
+            {
+                // Explicit manual tray launch also restores independent supervision,
+                // even while the Schedule service is down. Never block the tray on failure.
+                try { PharmFarmSupervisor.Watchdog(root); }
+                catch (Exception error) { Log(root, "manual supervisor start failed: " + error.Message); }
+            }
             string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
             // AnyCPU runs as 64-bit on 64-bit Windows, preserving the installed SQL provider.
             string powershell = Path.Combine(windows, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
@@ -139,6 +146,7 @@ internal static class PharmFarmAgentHost
                 false, CREATE_NO_WINDOW | CREATE_SUSPENDED, IntPtr.Zero, directory, ref startup, out process)) throw new Win32Exception();
             if (!AssignProcessToJobObject(job, process.hProcess)) throw new Win32Exception();
             if (ResumeThread(process.hThread) == uint.MaxValue) throw new Win32Exception();
+            Log(directory, "child started pid=" + process.dwProcessId + " hostPid=" + System.Diagnostics.Process.GetCurrentProcess().Id);
             if (WaitForSingleObject(process.hProcess, INFINITE) != 0) throw new Win32Exception();
             uint exitCode;
             if (!GetExitCodeProcess(process.hProcess, out exitCode)) throw new Win32Exception();
