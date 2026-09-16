@@ -11276,7 +11276,7 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
           <span>PharmFarm</span>
         </div>
         <div className="agent-build-badge" aria-label="배포 버전 정보">
-          <span>에이전트 1.4.1-ps</span>
+          <span>에이전트 1.4.2-ps</span>
           <span>최근 업데이트 {buildTimeLabel}</span>
           <span>build {commitLabel}</span>
         </div>
@@ -11336,8 +11336,9 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
           <RefreshCw size={24} />
           <strong>자동 실행</strong>
           <span>
-            콘솔 창 없는 실행기로 Windows 로그인 후 자동 실행하고, 매분 상태를
-            확인해 꺼진 에이전트와 트레이만 복구합니다. 사용자가 직접 중지한 상태는 유지합니다.
+            콘솔 창 없는 독립 감시기가 Windows 로그인 후 10초마다 상태를
+            확인합니다. 종료되었거나 장시간 멈춤이 확인된 수집기를 복구하며,
+            사용자가 직접 중지한 상태는 유지합니다.
           </span>
         </div>
       </section>

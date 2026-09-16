@@ -81,5 +81,19 @@ incident recorder, business-hours detector, email or Slack alert. No BE changes.
   diagnosis/restoration **before repair can run**. Do not automatically change
   that shared service or run OS repairs during pharmacy work.
 
+## Verified build (September 16)
+
+Windows Server 2022 / Windows PowerShell 5.1 [native verification passed](https://github.com/Cheetozzeong/pharmfarm/actions/runs/35074202522):
+244 policy/update/tray/windowless assertions, 6 host lifetime assertions and 13
+independent-supervisor assertions. Idle supervisor measured 15.7 MiB working set
+and 0.0 ms CPU over 22 seconds (measurement resolution, not literally zero cost).
+The package contains the same native binary exercised in that run. Additional
+heartbeat recovery regression tests exercise retry after a temporary 404.
+
+Local validation: 426 PowerShell assertions, 2 CMS timestamp tests, TypeScript
+and production Vite build. Real customer Windows 10 desktop/reboot verification
+has **not** been performed; OS repair and customer update remain separate steps.
+
 Sources: [process creation flags](https://learn.microsoft.com/en-us/windows/win32/procthread/process-creation-flags),
+[local process creation](https://learn.microsoft.com/en-us/windows/win32/cimwin32prov/create-method-in-class-win32-process),
 [login startup](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys).
