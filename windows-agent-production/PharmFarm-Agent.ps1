@@ -35,7 +35,7 @@ $LastSqlOkAt = $null
 $LastApiOkAt = $null
 $RemoteCommandPollingUnavailable = $false
 $HeartbeatUnavailableUntil = $null
-$AgentVersion = "1.4.2-ps"
+$AgentVersion = "1.4.3-ps"
 . (Join-Path $PSScriptRoot "PharmFarm-AgentLifecycle.ps1")
 $RuntimeLock = $null
 
@@ -1403,6 +1403,7 @@ function New-BootstrapEnvelope {
     targetPath = "/agent/disabled-bootstrap"
     attempts = 0
     nextAttemptAt = $now
+    lastError = ""
     payload = [ordered]@{
       decoderVersion = "pharmfarm-bootstrap-agent-v1"
       prescriptionGroupId = "bootstrap-" + $Kind
@@ -1453,6 +1454,7 @@ function New-AgentEnvelope {
     targetPath = $TargetPath
     attempts = 0
     nextAttemptAt = $now
+    lastError = ""
     payload = [ordered]@{
       pharmacyId = Convert-NullableInt $Config.pharmacyId
       deviceId = $Config.deviceId
@@ -1971,6 +1973,7 @@ function New-Payload {
     targetPath = "/agent/prescriptions"
     attempts = 0
     nextAttemptAt = $now
+    lastError = ""
     payload = [ordered]@{
       pharmacyId = Convert-NullableInt $Config.pharmacyId
       deviceId = $Config.deviceId
@@ -2264,7 +2267,9 @@ function Flush-Queue {
     $attempts = [int]$envelope.attempts + 1
     $delay = Get-RetryDelaySeconds $attempts
     $envelope.attempts = $attempts
-    $envelope.lastError = $result.message
+    # ConvertFrom-Json returns a fixed PSCustomObject. Older queue files do not
+    # contain lastError, so direct assignment emits a SetValueInvocationException.
+    Set-AgentObjectProperty -Object $envelope -Name "lastError" -Value $result.message
     $envelope.nextAttemptAt = [DateTimeOffset]::Now.AddSeconds($delay).ToString("o")
     Write-JsonFile -Path $file.FullName -Value $envelope -Depth 30
     Write-AgentLog "retry scheduled event=$($envelope.eventId) attempts=$attempts delay=${delay}s error=$($result.message)" "WARN"

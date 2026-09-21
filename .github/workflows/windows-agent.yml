@@ -20,6 +20,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
           & ./tests/windows-agent-supervisor.Tests.ps1
           & ./tests/windows-agent-heartbeat.Tests.ps1
+          & ./tests/windows-agent-queue.Tests.ps1
           & ./tests/windows-agent-update.Tests.ps1
           & ./tests/windows-agent-tray.Tests.ps1
           & ./tests/windows-agent-windowless.Tests.ps1
