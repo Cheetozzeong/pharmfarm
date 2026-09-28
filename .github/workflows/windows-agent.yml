@@ -15,21 +15,24 @@ jobs:
         shell: powershell
     steps:
       - uses: actions/checkout@v4
-      - name: Windows PowerShell 5.1 policy and rollback tests
+      - name: Native supervisor policy
+        run: '& ./tests/windows-agent-supervisor.Tests.ps1'
+      - name: Heartbeat and queue compatibility
+        if: ${{ !cancelled() }}
         run: |
-          $ErrorActionPreference = 'Stop'
-          try {
-            & ./tests/windows-agent-supervisor.Tests.ps1
-            & ./tests/windows-agent-heartbeat.Tests.ps1
-            & ./tests/windows-agent-queue.Tests.ps1
-            & ./tests/windows-agent-update.Tests.ps1
-            & ./tests/windows-agent-remote-update.Tests.ps1
-            & ./tests/windows-agent-tray.Tests.ps1
-            & ./tests/windows-agent-windowless.Tests.ps1
-          } catch {
-            Write-Host "::error title=Windows agent test::$($_.Exception.Message)"
-            throw
-          }
+          & ./tests/windows-agent-heartbeat.Tests.ps1
+          & ./tests/windows-agent-queue.Tests.ps1
+      - name: Repair rollback transaction
+        if: ${{ !cancelled() }}
+        run: '& ./tests/windows-agent-update.Tests.ps1'
+      - name: CMS remote update
+        if: ${{ !cancelled() }}
+        run: '& ./tests/windows-agent-remote-update.Tests.ps1'
+      - name: Tray and windowless policy
+        if: ${{ !cancelled() }}
+        run: |
+          & ./tests/windows-agent-tray.Tests.ps1
+          & ./tests/windows-agent-windowless.Tests.ps1
       - name: Native host lifetime and no-window checks
         if: ${{ !cancelled() }}
         run: '& ./tests/windows-agent-host-integration.Tests.ps1'
