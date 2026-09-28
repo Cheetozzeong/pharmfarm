@@ -18,13 +18,18 @@ jobs:
       - name: Windows PowerShell 5.1 policy and rollback tests
         run: |
           $ErrorActionPreference = 'Stop'
-          & ./tests/windows-agent-supervisor.Tests.ps1
-          & ./tests/windows-agent-heartbeat.Tests.ps1
-          & ./tests/windows-agent-queue.Tests.ps1
-          & ./tests/windows-agent-update.Tests.ps1
-          & ./tests/windows-agent-remote-update.Tests.ps1
-          & ./tests/windows-agent-tray.Tests.ps1
-          & ./tests/windows-agent-windowless.Tests.ps1
+          try {
+            & ./tests/windows-agent-supervisor.Tests.ps1
+            & ./tests/windows-agent-heartbeat.Tests.ps1
+            & ./tests/windows-agent-queue.Tests.ps1
+            & ./tests/windows-agent-update.Tests.ps1
+            & ./tests/windows-agent-remote-update.Tests.ps1
+            & ./tests/windows-agent-tray.Tests.ps1
+            & ./tests/windows-agent-windowless.Tests.ps1
+          } catch {
+            Write-Host "::error title=Windows agent test::$($_.Exception.Message)"
+            throw
+          }
       - name: Native host lifetime and no-window checks
         if: ${{ !cancelled() }}
         run: '& ./tests/windows-agent-host-integration.Tests.ps1'

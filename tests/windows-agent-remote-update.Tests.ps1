@@ -45,7 +45,7 @@ if ($env:OS -eq 'Windows_NT') {
     [IO.File]::ReadAllText($marker) -eq "$commandId|1.4.6-ps") 'Detached hidden updater launches a restricted adjacent script'
 }
 
-function Invoke-WebRequest { param($UseBasicParsing, $Uri, $OutFile, $TimeoutSec, $ErrorAction) $script:downloadCalls++; [IO.File]::WriteAllText($OutFile, 'fixture zip') }
+function Invoke-WebRequest { param([switch]$UseBasicParsing, $Uri, $OutFile, $TimeoutSec, $ErrorAction) $script:downloadCalls++; [IO.File]::WriteAllText($OutFile, 'fixture zip') }
 function Get-FileHash { param($LiteralPath, $Algorithm, $ErrorAction) return [pscustomobject]@{ Hash = $script:downloadHash } }
 function Expand-Archive {
   param($LiteralPath, $DestinationPath, $ErrorAction)
