@@ -35,7 +35,7 @@ $LastSqlOkAt = $null
 $LastApiOkAt = $null
 $RemoteCommandPollingUnavailable = $false
 $HeartbeatUnavailableUntil = $null
-$AgentVersion = "1.4.3-ps"
+$AgentVersion = "1.4.4-ps"
 . (Join-Path $PSScriptRoot "PharmFarm-AgentLifecycle.ps1")
 $RuntimeLock = $null
 
@@ -1992,6 +1992,37 @@ function New-Payload {
   }
 }
 
+function New-PrescriptionCancellationPayload {
+  param(
+    [object]$Config,
+    [string]$PrescriptionCode,
+    [string]$FirstObservedEmptyAt
+  )
+
+  $eventId = Get-Sha256Hex ("EPHARM_DB|CANCELLED|$PrescriptionCode|$FirstObservedEmptyAt")
+  $now = Get-AgentTimestamp
+  return [ordered]@{
+    eventId = $eventId
+    createdAt = $now
+    targetPath = "/agent/prescriptions"
+    attempts = 0
+    nextAttemptAt = $now
+    lastError = ""
+    payload = [ordered]@{
+      pharmacyId = Convert-NullableInt $Config.pharmacyId
+      deviceId = $Config.deviceId
+      deviceName = $Config.deviceName
+      agentVersion = $AgentVersion
+      batchId = "prescription-cancel-$($eventId.Substring(0, 16))"
+      capturedAt = $now
+      source = "EPHARM_DB"
+      sourceSchemaVersion = "epharm-prsdrug-v2"
+      syncMode = "CANCELLED"
+      items = @([ordered]@{ prescriptionCode = $PrescriptionCode })
+    }
+  }
+}
+
 function Save-QueueItem {
   param([object]$Envelope)
 
@@ -3019,6 +3050,7 @@ function Watch-Once {
     $prescriptionStatePath = Get-SyncStatePath "prescription-live"
     $hasPrescriptionState = Test-Path -LiteralPath $prescriptionStatePath
     $prescriptionHashes = Read-SyncHashes "prescription-live"
+    $zeroDrugSince = Read-SyncHashes "prescription-zero-drugs"
     $freshBaseline = (!$script:Initialized -and !$hasPrescriptionState)
     $latest = if ($rows.Count -gt 0) { $rows[0] } else { $null }
     if ($null -ne $latest) {
@@ -3053,10 +3085,36 @@ function Watch-Once {
       $drugRows = @(Convert-DataTableRows (Get-PrescriptionDrugs -Config $Config -PrescriptionCode $code))
 
       if ($drugRows.Count -eq 0) {
-        Write-AgentLog "pending prescription=$((Get-Sha256Hex $code).Substring(0, 12)) drugs=0 willRetry=true" "WARN"
+        $previouslySynced = $prescriptionHashes.ContainsKey($syncKey) -and !$prescriptionHashes[$syncKey].StartsWith("CANCELLED:")
+        if ($previouslySynced -and !$freshBaseline) {
+          $now = Get-Date
+          if (!$zeroDrugSince.ContainsKey($syncKey)) {
+            $zeroDrugSince[$syncKey] = $now.ToString("o")
+            Write-AgentLog "possible cancellation prescription=$((Get-Sha256Hex $code).Substring(0, 12)) recheckAfterMinutes=5" "WARN"
+          } else {
+            $firstEmptyAt = $null
+            try { $firstEmptyAt = [DateTimeOffset]::Parse($zeroDrugSince[$syncKey]) } catch { $firstEmptyAt = $null }
+            if ($null -eq $firstEmptyAt) {
+              $zeroDrugSince[$syncKey] = $now.ToString("o")
+            } elseif (([DateTimeOffset]::Now - $firstEmptyAt).TotalMinutes -ge 5) {
+              $confirmedRows = @(Convert-DataTableRows (Get-PrescriptionDrugs -Config $Config -PrescriptionCode $code))
+              if ($confirmedRows.Count -eq 0) {
+                $envelope = New-PrescriptionCancellationPayload -Config $Config -PrescriptionCode $code -FirstObservedEmptyAt $zeroDrugSince[$syncKey]
+                if (Save-QueueItem $envelope) {
+                  $queued += 1
+                  Write-AgentLog "queued cancellation prescription=$((Get-Sha256Hex $code).Substring(0, 12)) event=$($envelope.eventId)" "WARN"
+                }
+                $prescriptionHashes[$syncKey] = "CANCELLED:$($envelope.eventId)"
+                [void]$zeroDrugSince.Remove($syncKey)
+              }
+            }
+          }
+        }
         $pending += 1
         continue
       }
+
+      [void]$zeroDrugSince.Remove($syncKey)
 
       $snapshotHash = Get-PrescriptionSnapshotHash -QrRow $row -DrugRows $drugRows
       $hasPreviousSnapshot = $prescriptionHashes.ContainsKey($syncKey)
@@ -3095,6 +3153,7 @@ function Watch-Once {
     }
 
     Write-SyncHashes -Kind "prescription-live" -Hashes $prescriptionHashes
+    Write-SyncHashes -Kind "prescription-zero-drugs" -Hashes $zeroDrugSince
     $script:Initialized = $true
     if ($runFullPrescriptionScan) {
       $script:LastPrescriptionFullScanAt = Get-Date

@@ -11276,7 +11276,7 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
           <span>PharmFarm</span>
         </div>
         <div className="agent-build-badge" aria-label="배포 버전 정보">
-          <span>에이전트 1.4.3-ps</span>
+          <span>에이전트 1.4.4-ps</span>
           <span>최근 업데이트 {buildTimeLabel}</span>
           <span>build {commitLabel}</span>
         </div>

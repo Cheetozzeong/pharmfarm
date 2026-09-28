@@ -5,7 +5,7 @@ $agentPath = Join-Path $RepositoryRoot 'windows-agent-production/PharmFarm-Agent
 $tokens = $null; $errors = $null
 $ast = [System.Management.Automation.Language.Parser]::ParseFile($agentPath, [ref]$tokens, [ref]$errors)
 if ($errors.Count) { throw ($errors.Message -join '; ') }
-$selected = @('Set-AgentObjectProperty', 'New-BootstrapEnvelope', 'New-AgentEnvelope', 'New-Payload', 'Flush-Queue')
+$selected = @('Set-AgentObjectProperty', 'New-BootstrapEnvelope', 'New-AgentEnvelope', 'New-Payload', 'New-PrescriptionCancellationPayload', 'Flush-Queue')
 foreach ($definition in $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)) {
   if ($definition.Name -in $selected) { Invoke-Expression $definition.Extent.Text }
 }
@@ -69,9 +69,12 @@ try {
   $bootstrap = New-BootstrapEnvelope $config 'fixture' ([ordered]@{})
   $reference = New-AgentEnvelope $config 'fixture' '/agent/fixture' @()
   $prescription = New-Payload $config ([pscustomobject]@{ ps_Code = 'P1'; ps_Date = '20260921'; ps_edbBarcode = '' }) @()
+  $cancellation = New-PrescriptionCancellationPayload $config 'P1' '2026-09-28T10:00:00+09:00'
   Assert-Test ($bootstrap.Contains('lastError') -and $bootstrap.lastError -eq '') 'New bootstrap queue declares lastError'
   Assert-Test ($reference.Contains('lastError') -and $reference.lastError -eq '') 'New reference queue declares lastError'
   Assert-Test ($prescription.Contains('lastError') -and $prescription.lastError -eq '') 'New prescription queue declares lastError'
+  Assert-Test ($cancellation.payload.syncMode -eq 'CANCELLED' -and $cancellation.payload.items.Count -eq 1 -and $cancellation.payload.items[0].prescriptionCode -eq 'P1') 'Cancellation queue carries only the prescription code'
+  Assert-Test ($cancellation.Contains('lastError') -and $cancellation.lastError -eq '') 'Cancellation queue supports normal retries'
   Write-Host "Passed $checks queue compatibility assertions."
 } finally {
   if (Test-Path $root) { Remove-Item $root -Recurse -Force }
