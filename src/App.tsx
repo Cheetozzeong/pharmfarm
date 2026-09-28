@@ -9813,6 +9813,7 @@ type CmsAgentCommand = {
 };
 
 type CmsAgentCommandType =
+  | "UPDATE_AGENT"
   | "RESYNC_TODAY_PRESCRIPTIONS"
   | "SYNC_REFERENCE_DATA"
   | "SYNC_STOCKS"
@@ -11270,127 +11271,96 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
 
   return (
     <main className="agent-download-page">
-      <section className="agent-download-hero">
+      <header className="agent-page-header">
         <div className="agent-brand-row">
           <BrandMark className="agent-brand-logo" />
           <span>PharmFarm</span>
         </div>
-        <div className="agent-build-badge" aria-label="배포 버전 정보">
-          <span>에이전트 1.4.4-ps</span>
-          <span>최근 업데이트 {buildTimeLabel}</span>
-          <span>build {commitLabel}</span>
+        <button type="button" className="agent-header-link" onClick={() => navigate("/cms")}>
+          관리자 화면 <ArrowRight size={17} aria-hidden="true" />
+        </button>
+      </header>
+
+      <section className="agent-download-hero">
+        <div className="agent-hero-copy">
+          <p className="agent-eyebrow">약국 PC 연결</p>
+          <h1>에이전트 업데이트는<br />관리자 화면에서 진행합니다</h1>
+          <p>
+            이팜 처방과 재고를 팜팜에 연결하는 Windows 프로그램입니다.
+            원격 업데이트가 준비된 PC는 관리자가 CMS에서 명령을 보내면
+            PC가 새 버전을 검증하고 자동으로 적용합니다.
+          </p>
+          <div className="agent-download-actions">
+            <button type="button" className="agent-primary-button" onClick={() => navigate("/cms/agent-control")}>
+              CMS 업데이트 관리 <ArrowRight size={20} aria-hidden="true" />
+            </button>
+          </div>
+          <span className="agent-download-hint">기존 데이터와 설정 유지 · 적용 결과는 CMS 명령 이력에서 확인</span>
         </div>
-        <p className="agent-eyebrow">Windows Production Agent</p>
-        <h1>약국 PC에 설치하는 처방 수집 에이전트</h1>
-        <p>
-          이팜 로컬 SQL Server에서 처방 조제약, 현재 재고, 약품 마스터, 바코드,
-          도매처 데이터를 읽어 PharmFarm 서버로 전송합니다. 설치 시 관리자 약국
-          ID를 입력해 계정과 기기를 연결하고, 네트워크가 끊기면 로컬 큐에 보관한
-          뒤 자동 재시도합니다.
-        </p>
-        <div className="agent-download-actions">
-          <a
-            className="agent-primary-button"
-            href="/pharmfarm-agent-production.zip"
-            download
-          >
-            <HardDriveDownload size={20} />
-            Windows 설치 파일 다운로드
+        <aside className="agent-release-card" aria-label="현재 배포 버전">
+          <span className="agent-release-kicker"><CircleCheck size={18} aria-hidden="true" /> 현재 배포 버전</span>
+          <strong>{__AGENT_RELEASE_VERSION__}</strong>
+          <p>원격 명령을 받은 PC가 배포 파일의 무결성을 확인한 뒤 안전하게 교체합니다. 현재 설치 버전과 연결 상태는 CMS에서 확인하세요.</p>
+          <div className="agent-build-badge">
+            <span>게시 {buildTimeLabel}</span>
+            <span>build {commitLabel}</span>
+          </div>
+        </aside>
+      </section>
+
+      <section className="agent-method-notice" role="note">
+        <ShieldCheck size={22} aria-hidden="true" />
+        <div>
+          <strong>원격 업데이트는 1.4.5-ps 이상 설치된 온라인 PC에서 사용할 수 있습니다.</strong>
+          <p>처음 설치하거나 이전 버전에서 전환할 때만 고객 PC에서 1회 설치가 필요합니다. PC가 꺼져 있거나 에이전트가 연결되지 않으면 명령을 즉시 실행할 수 없습니다.</p>
+        </div>
+      </section>
+
+      <section className="agent-guide-section" aria-label="설치 및 업데이트 방법">
+        <div className="agent-section-heading">
+          <p className="agent-eyebrow">진행 방법</p>
+          <h2>PC 상태에 따라 이렇게 진행합니다</h2>
+        </div>
+        <div className="agent-guide-grid">
+          <article className="agent-steps-panel">
+            <span className="agent-step-tag">1.4.5-ps 이상 · 온라인</span>
+            <h3>CMS에서 원격 업데이트</h3>
+            <ol>
+              <li>관리자가 CMS에서 대상 약국 PC와 현재 버전을 확인합니다.</li>
+              <li><b>원격 업데이트</b>를 누르고 잠시 기다립니다.</li>
+              <li>명령 이력이 완료되고 새 버전으로 다시 연결되는지 확인합니다.</li>
+            </ol>
+            <p className="agent-guide-footnote">약국 ID, 기기 ID, 설정, 전송 대기 데이터와 직접 중지한 상태는 유지됩니다. 교체 중 수집이 잠시 멈출 수 있으므로 한가한 시간에 실행해 주세요.</p>
+          </article>
+          <article className="agent-steps-panel">
+            <span className="agent-step-tag is-new">처음 설치 · 이전 버전</span>
+            <h3>원격 업데이트를 위한 1회 설치</h3>
+            <ol>
+              <li>담당자가 고객 PC에서 설치 파일을 준비합니다.</li>
+              <li>신규 PC는 설치, 이전 버전은 복구 설치를 1회 진행합니다.</li>
+              <li>CMS에 <b>1.4.5-ps 이상</b>으로 연결되면 이후 버전부터 원격 업데이트가 가능합니다.</li>
+            </ol>
+            <p className="agent-guide-footnote">이 단계는 기존 설치에 업데이트 기능을 넣기 위한 전환 작업입니다. 고객이 직접 진행하기보다 담당자와 시간을 맞춰 진행해 주세요.</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="agent-help-panel">
+        <div>
+          <p className="agent-eyebrow">문제가 생겼나요?</p>
+          <h2>연결이 끊겼다면</h2>
+          <p>원격 업데이트는 에이전트가 온라인일 때만 시작됩니다. PC 전원·인터넷과 트레이 상태를 확인하고, 직접 중지한 경우 <b>에이전트 시작</b>을 누르세요. 업데이트가 실패했다면 CMS의 명령 이력과 PC 로그를 담당자에게 전달해 주세요.</p>
+          <p>업데이트를 위해 <b>오늘 처방 전체 재전송</b>을 실행하지 마세요. 이 기능은 기존 처방 데이터를 덮어쓸 수 있습니다.</p>
+        </div>
+        <details className="agent-admin-tools">
+          <summary>관리자용 최초 설치·복구 및 진단 파일</summary>
+          <a href="/pharmfarm-agent-production.zip" download>
+            1회 설치·전환용 파일 다운로드 <HardDriveDownload size={16} aria-hidden="true" />
           </a>
-          <a
-            className="agent-secondary-button"
-            href="/pharmfarm-prescription-trace-tools.zip"
-            download
-          >
-            <HardDriveDownload size={20} />
-            처방 trace 진단 도구 다운로드
+          <a href="/pharmfarm-prescription-trace-tools.zip" download>
+            처방 trace 진단 도구 다운로드 <HardDriveDownload size={16} aria-hidden="true" />
           </a>
-          <button
-            type="button"
-            className="agent-secondary-button"
-            onClick={() => navigate("/cms")}
-          >
-            관리자로 이동
-          </button>
-        </div>
-      </section>
-
-      <section className="agent-feature-grid" aria-label="에이전트 주요 기준">
-        <div>
-          <ShieldCheck size={24} />
-          <strong>보안 기본값</strong>
-          <span>
-            환자 직접 식별자는 수집하지 않고 QR 원문은 운영 기본값에서 전송하지
-            않습니다.
-          </span>
-        </div>
-        <div>
-          <WifiOff size={24} />
-          <strong>오프라인 큐</strong>
-          <span>
-            연결 장애나 네트워크 단절 시 큐에 보관하고 성공할 때까지
-            재시도합니다.
-          </span>
-        </div>
-        <div>
-          <RefreshCw size={24} />
-          <strong>자동 실행</strong>
-          <span>
-            콘솔 창 없는 독립 감시기가 Windows 로그인 후 10초마다 상태를
-            확인합니다. 종료되었거나 장시간 멈춤이 확인된 수집기를 복구하며,
-            사용자가 직접 중지한 상태는 유지합니다.
-          </span>
-        </div>
-      </section>
-
-      <section className="agent-steps-panel">
-        <h2>기존 설치 업데이트</h2>
-        <ol>
-          <li>최신 설치 파일을 다운로드하고 기존 설치 폴더 밖에 압축을 해제합니다.</li>
-          <li>
-            처음 설치했던 Windows 사용자 계정에서 <b>repair-pharmfarm-agent.bat</b>를
-            실행합니다. 기존 약국 ID, 기기 ID, 설정과 전송 대기 데이터는 유지됩니다.
-          </li>
-          <li>
-            복구 결과를 확인한 뒤 관리자 화면에서 최근 연결 시각을 확인합니다.
-            다운로드만으로 실행 중인 에이전트가 업데이트되지는 않습니다.
-          </li>
-        </ol>
-        <p>
-          직접 중지했다면 트레이의 <b>에이전트 시작</b>을 누르세요.
-          트레이를 직접 종료했다면 <b>run-agent-tray.bat</b>로 다시 표시할 수 있습니다.
-          업데이트에 실패하면 오류와 백업 경로를 관리자에게 전달해 주세요.
-          오늘 처방 전체 재전송은 기존 데이터를 덮어쓸 수 있으므로 업데이트 용도로 사용하지 마세요.
-        </p>
-      </section>
-
-      <section className="agent-steps-panel">
-        <h2>신규 설치 순서</h2>
-        <ol>
-          <li>설치 파일을 다운로드하고 압축을 해제합니다.</li>
-          <li>
-            <b>install-pharmfarm-agent.bat</b>을 실행합니다.
-          </li>
-          <li>
-            서버 주소는 기본값을 유지하고 SQL Server는 <b>.\\EPHARM_DB</b>를
-            사용합니다.
-          </li>
-          <li>
-            관리자 페이지에서 확인한 <b>약국 ID</b>를 입력해 서버 계정과 기기를
-            연결합니다.
-          </li>
-          <li>
-            <b>디버깅용 QR 원문 포함</b>은 체크하지 않습니다.
-          </li>
-          <li>
-            <b>약품 마스터</b>와 <b>현재 재고/바코드/도매처 1회 동기화</b>를
-            선택합니다.
-          </li>
-          <li>
-            이팜에서 QR을 등록한 뒤 PharmFarm 처방/리스트에서 수신 여부를
-            확인합니다.
-          </li>
-        </ol>
+        </details>
       </section>
     </main>
   );
@@ -13712,6 +13682,14 @@ function CmsApp({
 
   async function createAgentCommand(commandType: CmsAgentCommandType) {
     if (!selectedAgentDevice || agentCommandSubmitting) return;
+    if (
+      commandType === "UPDATE_AGENT" &&
+      !window.confirm(
+        `${selectedAgentDevice.pharmacyName}의 ${selectedAgentDevice.deviceName} 에이전트를 ${__AGENT_RELEASE_VERSION__} 버전으로 업데이트할까요? 적용 중 처방 수집이 잠시 멈출 수 있습니다.`,
+      )
+    ) {
+      return;
+    }
 
     setAgentCommandSubmitting(true);
     try {
@@ -13721,6 +13699,14 @@ function CmsApp({
           pharmacyId: Number(selectedAgentDevice.pharmacyId),
           deviceId: selectedAgentDevice.deviceId,
           commandType,
+          ...(commandType === "UPDATE_AGENT"
+            ? {
+                payload: {
+                  version: __AGENT_RELEASE_VERSION__,
+                  sha256: __AGENT_RELEASE_SHA256__,
+                },
+              }
+            : {}),
         }),
       });
       setApiState("connected");
@@ -15882,6 +15868,7 @@ function agentDeviceKey(device: CmsAgentDevice) {
 
 function agentCommandLabel(commandType: string) {
   const labels: Record<string, string> = {
+    UPDATE_AGENT: "에이전트 원격 업데이트",
     RESYNC_TODAY_PRESCRIPTIONS: "오늘 처방 재수집",
     SYNC_REFERENCE_DATA: "기준 데이터 전체 동기화",
     RESYNC_REFERENCE_DATA: "기준 데이터 전체 재동기화",
@@ -15897,6 +15884,23 @@ function agentCommandLabel(commandType: string) {
     HEARTBEAT_NOW: "상태 즉시 확인",
   };
   return labels[commandType] ?? commandType;
+}
+
+function agentVersionParts(value: string): number[] | null {
+  const match = value.match(/^(\d+)\.(\d+)\.(\d+)-ps$/);
+  return match ? match.slice(1).map(Number) : null;
+}
+
+function compareAgentVersions(left: string, right: string): number | null {
+  const leftParts = agentVersionParts(left);
+  const rightParts = agentVersionParts(right);
+  if (!leftParts || !rightParts) return null;
+  for (let index = 0; index < 3; index += 1) {
+    if (leftParts[index] !== rightParts[index]) {
+      return leftParts[index] - rightParts[index];
+    }
+  }
+  return 0;
 }
 
 function agentCommandStatusText(status: string) {
@@ -24658,6 +24662,21 @@ function CmsAgentControlPage({
     (sum, device) => sum + device.pendingQueueCount,
     0,
   );
+  const updateSupport = selectedDevice
+    ? compareAgentVersions(selectedDevice.agentVersion, "1.4.5-ps")
+    : null;
+  const updateNeeded = selectedDevice
+    ? compareAgentVersions(selectedDevice.agentVersion, __AGENT_RELEASE_VERSION__)
+    : null;
+  const updateInProgress = selectedDevice
+    ? commands.some(
+        (command) =>
+          command.pharmacyId === selectedDevice.pharmacyId &&
+          command.deviceId === selectedDevice.deviceId &&
+          command.commandType === "UPDATE_AGENT" &&
+          isActiveAgentCommandStatus(command.status),
+      )
+    : false;
   const commandOptions: Array<{
     type: CmsAgentCommandType;
     label: string;
@@ -24814,6 +24833,43 @@ function CmsAgentControlPage({
                 <span>대기 큐</span>
                 <strong>{selectedDevice.pendingQueueCount}건</strong>
               </div>
+            </div>
+          )}
+
+          {selectedDevice && (
+            <div className="cms-agent-update-card">
+              <div>
+                <strong>에이전트 원격 업데이트</strong>
+                <p>
+                  설치 버전 {selectedDevice.agentVersion || "확인 안 됨"} · 최신 배포 {__AGENT_RELEASE_VERSION__}
+                </p>
+                <small>
+                  {updateSupport === null || updateSupport < 0
+                    ? "이 PC는 원격 업데이트를 받기 위한 1회 복구 설치가 필요합니다."
+                    : !selectedDevice.online
+                      ? "PC가 오프라인입니다. 연결을 복구한 뒤 실행해 주세요."
+                      : updateInProgress
+                        ? "업데이트 명령이 진행 중입니다. 아래 이력을 확인해 주세요."
+                        : updateNeeded !== null && updateNeeded >= 0
+                          ? "이미 최신 버전입니다."
+                          : "실행 중 잠시 수집을 멈추고 검증된 버전을 적용합니다."}
+                </small>
+              </div>
+              <button
+                type="button"
+                disabled={
+                  submitting ||
+                  !selectedDevice.online ||
+                  updateSupport === null ||
+                  updateSupport < 0 ||
+                  updateNeeded === null ||
+                  updateNeeded >= 0 ||
+                  updateInProgress
+                }
+                onClick={() => onCommand("UPDATE_AGENT")}
+              >
+                <RefreshCw size={17} aria-hidden="true" /> 원격 업데이트
+              </button>
             </div>
           )}
 

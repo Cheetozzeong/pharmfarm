@@ -35,7 +35,7 @@ $LastSqlOkAt = $null
 $LastApiOkAt = $null
 $RemoteCommandPollingUnavailable = $false
 $HeartbeatUnavailableUntil = $null
-$AgentVersion = "1.4.4-ps"
+$AgentVersion = "1.4.5-ps"
 . (Join-Path $PSScriptRoot "PharmFarm-AgentLifecycle.ps1")
 $RuntimeLock = $null
 
@@ -2716,6 +2716,127 @@ function Submit-AgentCommandStatus {
   }
 }
 
+function Submit-PendingAgentUpdateResult {
+  param([object]$Config)
+
+  $path = Join-Path $InstallRoot 'agent.update-result.json'
+  if (!(Test-Path -LiteralPath $path -PathType Leaf)) { return }
+  $pending = Read-JsonFile $path
+  if ($null -eq $pending) { return }
+  $commandId = Convert-AgentText (Get-AgentObjectValue -Object $pending -Name 'commandId' -DefaultValue '')
+  $status = Convert-AgentText (Get-AgentObjectValue -Object $pending -Name 'status' -DefaultValue '')
+  if ($commandId -notmatch '^[0-9a-fA-F-]{36}$' -or $status -notin @('COMPLETED', 'FAILED')) { return }
+  $message = Convert-AgentText (Get-AgentObjectValue -Object $pending -Name 'message' -DefaultValue '')
+  $result = Get-AgentObjectValue -Object $pending -Name 'result' -DefaultValue $null
+  if (Submit-AgentCommandStatus -Config $Config -CommandId $commandId -CommandType 'UPDATE_AGENT' -Status $status -Message $message -Result $result) {
+    Set-AgentCommandStateEntry -CommandId $commandId -CommandType 'UPDATE_AGENT' -Status $status -Message $message -Result $result
+    Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue
+    Write-AgentLog "remote update result confirmed commandId=$commandId status=$status"
+  }
+}
+
+function Start-AgentDetachedUpdate {
+  param([string]$SourceRoot, [string]$CommandId, [string]$ExpectedVersion)
+
+  if (-not ('PharmFarmDetachedUpdater' -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+using System.Text;
+
+public static class PharmFarmDetachedUpdater {
+  const uint CREATE_NO_WINDOW = 0x08000000, CREATE_BREAKAWAY_FROM_JOB = 0x01000000;
+  [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+  struct STARTUPINFO {
+    public uint cb; public string lpReserved, lpDesktop, lpTitle;
+    public uint dwX, dwY, dwXSize, dwYSize, dwXCountChars, dwYCountChars, dwFillAttribute, dwFlags;
+    public ushort wShowWindow, cbReserved2; public IntPtr lpReserved2, hStdInput, hStdOutput, hStdError;
+  }
+  [StructLayout(LayoutKind.Sequential)]
+  struct PROCESS_INFORMATION { public IntPtr hProcess, hThread; public uint dwProcessId, dwThreadId; }
+  [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true, EntryPoint = "CreateProcessW")]
+  static extern bool CreateProcess(string application, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes,
+    bool inheritHandles, uint flags, IntPtr environment, string directory, ref STARTUPINFO startup, out PROCESS_INFORMATION process);
+  [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+  static string Quote(string value) {
+    StringBuilder output = new StringBuilder("\""); int slashes = 0;
+    foreach (char c in value) {
+      if (c == '\\') { slashes++; continue; }
+      if (c == '"') { output.Append('\\', slashes * 2 + 1); output.Append(c); slashes = 0; continue; }
+      output.Append('\\', slashes); slashes = 0; output.Append(c);
+    }
+    output.Append('\\', slashes * 2); output.Append('"'); return output.ToString();
+  }
+  public static int Start(string powershell, string script, string directory, string installRoot, string commandId, string version) {
+    string args = Quote(powershell) + " -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File " + Quote(script)
+      + " -CommandId " + Quote(commandId) + " -ExpectedVersion " + Quote(version) + " -InstallRoot " + Quote(installRoot);
+    STARTUPINFO startup = new STARTUPINFO(); startup.cb = (uint)Marshal.SizeOf(startup); startup.dwFlags = 1; startup.wShowWindow = 0;
+    PROCESS_INFORMATION process;
+    if (!CreateProcess(powershell, new StringBuilder(args), IntPtr.Zero, IntPtr.Zero, false,
+      CREATE_NO_WINDOW | CREATE_BREAKAWAY_FROM_JOB, IntPtr.Zero, directory, ref startup, out process)) throw new Win32Exception();
+    try { return unchecked((int)process.dwProcessId); }
+    finally { CloseHandle(process.hThread); CloseHandle(process.hProcess); }
+  }
+}
+'@ -ErrorAction Stop
+  }
+
+  $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+  $scriptPath = Join-Path $SourceRoot 'PharmFarm-AgentUpdate.ps1'
+  return [PharmFarmDetachedUpdater]::Start($powerShell, $scriptPath, $SourceRoot, $InstallRoot, $CommandId, $ExpectedVersion)
+}
+
+function Invoke-AgentUpdateCommand {
+  param([object]$Command, [string]$CommandId)
+
+  $payload = Get-AgentObjectValue -Object $Command -Name 'payload' -DefaultValue $null
+  $version = Convert-AgentText (Get-AgentObjectValue -Object $payload -Name 'version' -DefaultValue '')
+  $expectedHash = Convert-AgentText (Get-AgentObjectValue -Object $payload -Name 'sha256' -DefaultValue '')
+  if ($version -notmatch '^[0-9]+\.[0-9]+\.[0-9]+-ps$' -or $expectedHash -notmatch '^[a-fA-F0-9]{64}$' -or
+      $CommandId -notmatch '^[a-fA-F0-9-]{36}$') {
+    throw 'Update command has an invalid version, package digest, or command ID.'
+  }
+  $currentVersion = [version]($AgentVersion -replace '-ps$', '')
+  $targetVersion = [version]($version -replace '-ps$', '')
+  if ($targetVersion -lt $currentVersion) { throw 'An older agent package cannot be installed remotely.' }
+  if ($targetVersion -eq $currentVersion) {
+    return [ordered]@{ status = 'COMPLETED'; message = "Agent $AgentVersion is already installed."; result = [ordered]@{ targetVersion = $version } }
+  }
+
+  $stageRoot = Join-Path ([IO.Path]::GetTempPath()) ('PharmFarmRemoteUpdate-' + $CommandId)
+  if (Test-Path -LiteralPath $stageRoot) { throw 'An update with this command ID is already staged.' }
+  [void](New-Item -ItemType Directory -Path $stageRoot -ErrorAction Stop)
+  $launched = $false
+  try {
+    $zipPath = Join-Path $stageRoot 'agent-package.zip'
+    $url = 'https://pharmfarm.vercel.app/pharmfarm-agent-production.zip?v=' + $expectedHash.ToLowerInvariant()
+    Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile $zipPath -TimeoutSec 120 -ErrorAction Stop
+    if ((Get-FileHash -LiteralPath $zipPath -Algorithm SHA256 -ErrorAction Stop).Hash -ine $expectedHash) {
+      throw 'Downloaded agent package failed SHA-256 verification. Current installation was not changed.'
+    }
+    $extractRoot = Join-Path $stageRoot 'extracted'
+    Expand-Archive -LiteralPath $zipPath -DestinationPath $extractRoot -ErrorAction Stop
+    $sourceRoot = Join-Path $extractRoot 'windows-agent-production'
+    $agentScript = Join-Path $sourceRoot 'PharmFarm-Agent.ps1'
+    if (!(Test-Path -LiteralPath $agentScript -PathType Leaf) -or
+        !(Test-Path -LiteralPath (Join-Path $sourceRoot 'PharmFarm-AgentUpdate.ps1') -PathType Leaf)) {
+      throw 'Verified agent package is incomplete. Current installation was not changed.'
+    }
+    if ([IO.File]::ReadAllText($agentScript) -notmatch ('\$AgentVersion\s*=\s*"' + [regex]::Escape($version) + '"')) {
+      throw 'Verified agent package version does not match the requested version.'
+    }
+    $updaterPid = Start-AgentDetachedUpdate -SourceRoot $sourceRoot -CommandId $CommandId -ExpectedVersion $version
+    $launched = $true
+    Write-AgentLog "remote update staged commandId=$CommandId target=$version updaterPid=$updaterPid"
+    return [ordered]@{ status = 'STARTED'; message = "Verified agent $version; installation started."; result = [ordered]@{ targetVersion = $version } }
+  } finally {
+    if (!$launched -and (Test-Path -LiteralPath $stageRoot)) {
+      Remove-Item -LiteralPath $stageRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+  }
+}
+
 function Submit-AgentHeartbeat {
   param(
     [object]$Config,
@@ -2786,6 +2907,9 @@ function Invoke-AgentCommandAction {
   $normalizedType = $CommandType.Trim().ToUpperInvariant().Replace("-", "_")
 
   switch ($normalizedType) {
+    "UPDATE_AGENT" {
+      return Invoke-AgentUpdateCommand -Command $Command -CommandId $CommandId
+    }
     "RESYNC_TODAY_PRESCRIPTIONS" {
       $summary = Queue-TodayPrescriptionOverwrite -Config $Config -ResyncRequestId $CommandId
       return [ordered]@{ status = "COMPLETED"; message = "today prescriptions queued"; result = $summary }
@@ -2843,7 +2967,7 @@ function Invoke-AgentCommandAction {
         status = "REJECTED"
         message = "unsupported command type: $CommandType"
         result = [ordered]@{
-          supportedTypes = @("RESYNC_TODAY_PRESCRIPTIONS", "SYNC_REFERENCE_DATA", "SYNC_DRUG_MASTERS", "SYNC_STOCKS", "SYNC_BARCODES", "SYNC_WHOLESALERS", "SYNC_PURCHASES", "SYNC_CONTROLLED_DRUGS", "SYNC_DRUG_PRICES", "SYNC_DRUG_UNITS", "HEARTBEAT_NOW")
+          supportedTypes = @("UPDATE_AGENT", "RESYNC_TODAY_PRESCRIPTIONS", "SYNC_REFERENCE_DATA", "SYNC_DRUG_MASTERS", "SYNC_STOCKS", "SYNC_BARCODES", "SYNC_WHOLESALERS", "SYNC_PURCHASES", "SYNC_CONTROLLED_DRUGS", "SYNC_DRUG_PRICES", "SYNC_DRUG_UNITS", "HEARTBEAT_NOW")
         }
       }
     }
@@ -3214,12 +3338,14 @@ try {
 
   Invoke-BootstrapSync $config
   Flush-Queue $config
+  Submit-PendingAgentUpdateResult $config
   $script:LastReferenceSyncAt = Get-Date
   Invoke-AgentHeartbeatIfDue $config
 
   do {
     Write-PharmFarmProgress -InstallRoot $InstallRoot -Phase 'watch'
     Watch-Once $config
+    Submit-PendingAgentUpdateResult $config
     Invoke-AgentCommandPollIfDue $config
     Invoke-AgentHeartbeatIfDue $config
 

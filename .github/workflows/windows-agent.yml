@@ -22,6 +22,7 @@ jobs:
           & ./tests/windows-agent-heartbeat.Tests.ps1
           & ./tests/windows-agent-queue.Tests.ps1
           & ./tests/windows-agent-update.Tests.ps1
+          & ./tests/windows-agent-remote-update.Tests.ps1
           & ./tests/windows-agent-tray.Tests.ps1
           & ./tests/windows-agent-windowless.Tests.ps1
       - name: Native host lifetime and no-window checks

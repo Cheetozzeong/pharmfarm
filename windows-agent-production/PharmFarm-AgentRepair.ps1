@@ -1,6 +1,7 @@
 param(
   [string]$InstallRoot = (Join-Path $env:ProgramData "PharmFarmAgent"),
-  [string]$SourceRoot = $PSScriptRoot
+  [string]$SourceRoot = $PSScriptRoot,
+  [switch]$ReturnReport
 )
 
 $ErrorActionPreference = "Stop"
@@ -46,9 +47,11 @@ try {
   Write-Host "Backup: $($result.BackupRoot)"
   Write-Host "Report: $reportPath"
   Write-Host "Confirm recent heartbeat and collection status in CMS; this repair does not assert that the server is online."
+  if ($ReturnReport) { return $report }
   exit 0
 } catch {
   Write-Host "Repair failed: $($_.Exception.Message)" -ForegroundColor Red
   Write-Host "Automatic-start protection or current execution was not fully verified. Keep the error and any backup path for support."
+  if ($ReturnReport) { throw }
   exit 1
 }

@@ -37,9 +37,16 @@ Files:
 8. repair-pharmfarm-agent.bat
    Updates an existing installation without rewriting agent.config.json or collection state.
    Run from a newly extracted package, using the original installation's Windows account.
+   Version 1.4.5-ps is the one-time bootstrap for later CMS remote updates.
 
 9. PharmFarm-AgentWatchdog.ps1 / PharmFarm-AgentLifecycle.ps1 / PharmFarm-AgentTasks.ps1
    Independent periodic recovery, shared process/control locks, and common scheduler definitions.
+
+9a. PharmFarm-AgentUpdate.ps1
+    Runs a verified CMS-requested update outside the collector process. The collector downloads
+    the fixed PharmFarm release URL and verifies the SHA-256 digest before launching it without
+    a console window. It reuses the safe repair transaction and reports the result to CMS.
+    A PC still on 1.4.4-ps or earlier needs one manual repair before this command is available.
 
 10. run-agent-tray.bat
     Explicitly restores a tray icon that the user intentionally closed.
@@ -151,6 +158,7 @@ Recommended operation:
 
 Updating an installed agent:
 
+- Version 1.4.5-ps: accepts root-CMS UPDATE_AGENT commands. It downloads the fixed PharmFarm release URL, verifies its SHA-256 digest and target version before modifying the installation, launches a detached windowless repair, and reports completion/failure. Initial adoption from 1.4.4-ps or earlier still needs one manual repair.
 - Version 1.4.3-ps: preserves retry diagnostics for both new and legacy queue files. A transient network/API failure no longer emits a missing `lastError` property exception; queued prescriptions and reference data retain their normal retry schedule.
 - Version 1.4.4-ps: detects an EPharm cancellation only for a previously synced prescription whose drug rows remain empty after at least five minutes and a second SQL read. It queues a code-only cancellation event; the server hides the prescription and reverses its automatic stock deduction. A prescription re-entered later is synced again.
 - Version 1.4.2-ps: adds a small independent, windowless supervisor. A same-user Startup shortcut starts it at login; it checks local runtime locks every 10 seconds without SQL/API calls or periodic PowerShell launches. The native scheduled watchdog is a backup for the supervisor, not the primary recovery loop.
