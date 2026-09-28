@@ -158,6 +158,7 @@ Recommended operation:
 
 Updating an installed agent:
 
+- Version 1.4.6-ps: test release to verify the CMS remote-update path from 1.4.5-ps; collection behavior is unchanged.
 - Version 1.4.5-ps: accepts root-CMS UPDATE_AGENT commands. It downloads the fixed PharmFarm release URL, verifies its SHA-256 digest and target version before modifying the installation, launches a detached windowless repair, and reports completion/failure. Initial adoption from 1.4.4-ps or earlier still needs one manual repair.
 - Version 1.4.3-ps: preserves retry diagnostics for both new and legacy queue files. A transient network/API failure no longer emits a missing `lastError` property exception; queued prescriptions and reference data retain their normal retry schedule.
 - Version 1.4.4-ps: detects an EPharm cancellation only for a previously synced prescription whose drug rows remain empty after at least five minutes and a second SQL read. It queues a code-only cancellation event; the server hides the prescription and reverses its automatic stock deduction. A prescription re-entered later is synced again.
