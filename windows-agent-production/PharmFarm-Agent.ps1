@@ -2739,7 +2739,7 @@ function Start-AgentDetachedUpdate {
   param([string]$SourceRoot, [string]$CommandId, [string]$ExpectedVersion)
 
   if (-not ('PharmFarmDetachedUpdater' -as [type])) {
-    Add-Type -TypeDefinition @'
+    $launcherSource = @'
 using System;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
@@ -2779,7 +2779,8 @@ public static class PharmFarmDetachedUpdater {
     finally { CloseHandle(process.hThread); CloseHandle(process.hProcess); }
   }
 }
-'@ -ErrorAction Stop
+'@
+    Add-Type -TypeDefinition $launcherSource -ErrorAction Stop
   }
 
   $powerShell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
