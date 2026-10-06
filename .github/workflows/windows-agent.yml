@@ -28,6 +28,9 @@ jobs:
       - name: CMS remote update
         if: ${{ !cancelled() }}
         run: '& ./tests/windows-agent-remote-update.Tests.ps1'
+      - name: On-demand diagnostic privacy and bounds
+        if: ${{ !cancelled() }}
+        run: '& ./tests/windows-agent-diagnostics.Tests.ps1'
       - name: Tray and windowless policy
         if: ${{ !cancelled() }}
         run: |

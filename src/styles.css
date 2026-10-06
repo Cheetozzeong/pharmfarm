@@ -10191,6 +10191,13 @@ body:has(.cms-shell) {
   gap: 16px;
 }
 
+.cms-agent-diagnostic-card { margin-top: 14px; }
+.cms-agent-log-view-button { display: block; margin-top: 6px; color: #245b85; }
+.cms-agent-diagnostic-report { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
+.cms-agent-diagnostic-report header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.cms-agent-diagnostic-report p { color: var(--muted); font-size: 12px; line-height: 1.6; }
+.cms-agent-diagnostic-report pre { max-height: 480px; overflow: auto; padding: 14px; background: #f5f7f9; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+
 .cms-agent-health-notice {
   padding: 14px 16px;
   margin: 12px 0;

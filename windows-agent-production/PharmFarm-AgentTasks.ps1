@@ -10,7 +10,7 @@ function Get-PharmFarmTaskDefinitions {
 
 function Get-PharmFarmPackageFileNames {
   return @(
-    "PharmFarm-Agent.ps1", "PharmFarm-AgentTray.ps1", "PharmFarm-AgentLifecycle.ps1", "PharmFarm-AgentHost.exe",
+    "PharmFarm-Agent.ps1", "PharmFarm-AgentTray.ps1", "PharmFarm-AgentLifecycle.ps1", "PharmFarm-AgentDiagnostics.ps1", "PharmFarm-AgentHost.exe",
     "PharmFarm-AgentWatchdog.ps1", "PharmFarm-AgentTasks.ps1", "PharmFarm-AgentRepair.ps1", "PharmFarm-AgentUpdate.ps1",
     "PharmFarm-AgentUninstall.ps1", "repair-pharmfarm-agent.bat", "uninstall-pharmfarm-agent.bat",
     "run-agent-console.bat", "run-agent-tray.bat",

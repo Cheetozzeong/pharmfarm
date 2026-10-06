@@ -35,8 +35,9 @@ $LastSqlOkAt = $null
 $LastApiOkAt = $null
 $RemoteCommandPollingUnavailable = $false
 $HeartbeatUnavailableUntil = $null
-$AgentVersion = "1.4.7-ps"
+$AgentVersion = "1.4.8-ps"
 . (Join-Path $PSScriptRoot "PharmFarm-AgentLifecycle.ps1")
+. (Join-Path $PSScriptRoot "PharmFarm-AgentDiagnostics.ps1")
 $RuntimeLock = $null
 
 function Ensure-Directory {
@@ -2908,6 +2909,14 @@ function Invoke-AgentCommandAction {
   $normalizedType = $CommandType.Trim().ToUpperInvariant().Replace("-", "_")
 
   switch ($normalizedType) {
+    "COLLECT_DIAGNOSTICS" {
+      $payload = Get-AgentObjectValue -Object $Command -Name 'payload' -DefaultValue $null
+      $hours = 24
+      $requestedHours = Get-AgentObjectValue -Object $payload -Name 'hours' -DefaultValue 24
+      [void][int]::TryParse([string]$requestedHours, [ref]$hours)
+      $report = Get-PharmFarmDiagnostics -InstallRoot $InstallRoot -AgentVersion $AgentVersion -Hours $hours
+      return [ordered]@{ status = 'COMPLETED'; message = 'Privacy-filtered diagnostics collected.'; result = $report }
+    }
     "UPDATE_AGENT" {
       return Invoke-AgentUpdateCommand -Command $Command -CommandId $CommandId
     }
@@ -2968,7 +2977,7 @@ function Invoke-AgentCommandAction {
         status = "REJECTED"
         message = "unsupported command type: $CommandType"
         result = [ordered]@{
-          supportedTypes = @("UPDATE_AGENT", "RESYNC_TODAY_PRESCRIPTIONS", "SYNC_REFERENCE_DATA", "SYNC_DRUG_MASTERS", "SYNC_STOCKS", "SYNC_BARCODES", "SYNC_WHOLESALERS", "SYNC_PURCHASES", "SYNC_CONTROLLED_DRUGS", "SYNC_DRUG_PRICES", "SYNC_DRUG_UNITS", "HEARTBEAT_NOW")
+          supportedTypes = @("COLLECT_DIAGNOSTICS", "UPDATE_AGENT", "RESYNC_TODAY_PRESCRIPTIONS", "SYNC_REFERENCE_DATA", "SYNC_DRUG_MASTERS", "SYNC_STOCKS", "SYNC_BARCODES", "SYNC_WHOLESALERS", "SYNC_PURCHASES", "SYNC_CONTROLLED_DRUGS", "SYNC_DRUG_PRICES", "SYNC_DRUG_UNITS", "HEARTBEAT_NOW")
         }
       }
     }

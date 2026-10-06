@@ -9810,9 +9810,11 @@ type CmsAgentCommand = {
   createdAt: string;
   startedAt: string;
   completedAt: string;
+  diagnosticsAvailable: boolean;
 };
 
 type CmsAgentCommandType =
+  | "COLLECT_DIAGNOSTICS"
   | "UPDATE_AGENT"
   | "RESYNC_TODAY_PRESCRIPTIONS"
   | "SYNC_REFERENCE_DATA"
@@ -13706,7 +13708,9 @@ function CmsApp({
                   sha256: __AGENT_RELEASE_SHA256__,
                 },
               }
-            : {}),
+            : commandType === "COLLECT_DIAGNOSTICS"
+              ? { payload: { hours: 24 } }
+              : {}),
         }),
       });
       setApiState("connected");
@@ -15859,6 +15863,7 @@ function normalizeCmsAgentCommand(
         item.updatedAt ??
         item.updated_at,
     ),
+    diagnosticsAvailable: item.diagnosticsAvailable === true,
   };
 }
 
@@ -15868,6 +15873,7 @@ function agentDeviceKey(device: CmsAgentDevice) {
 
 function agentCommandLabel(commandType: string) {
   const labels: Record<string, string> = {
+    COLLECT_DIAGNOSTICS: "진단 로그 가져오기",
     UPDATE_AGENT: "에이전트 원격 업데이트",
     RESYNC_TODAY_PRESCRIPTIONS: "오늘 처방 재수집",
     SYNC_REFERENCE_DATA: "기준 데이터 전체 동기화",
@@ -24636,6 +24642,64 @@ function CmsAgentControlPage({
   onSelectDevice: (deviceKey: string) => void;
 }) {
   const [checkedAt, setCheckedAt] = useState(Date.now);
+  const [diagnosticReport, setDiagnosticReport] = useState<Record<
+    string,
+    unknown
+  > | null>(null);
+  const [diagnosticCommandId, setDiagnosticCommandId] = useState("");
+  const [diagnosticMessage, setDiagnosticMessage] = useState("");
+  const [diagnosticLoading, setDiagnosticLoading] = useState(false);
+  const diagnosticRequest = useRef(0);
+  useEffect(() => {
+    diagnosticRequest.current += 1;
+    setDiagnosticReport(null);
+    setDiagnosticMessage("");
+    setDiagnosticLoading(false);
+  }, [selectedDeviceKey]);
+  async function viewDiagnostics(command: CmsAgentCommand) {
+    const request = ++diagnosticRequest.current;
+    setDiagnosticLoading(true);
+    setDiagnosticReport(null);
+    setDiagnosticMessage("진단 로그를 불러오고 있습니다.");
+    try {
+      const query = new URLSearchParams({
+        pharmacyId: command.pharmacyId,
+        deviceId: command.deviceId,
+      });
+      const response = await apiFetch<unknown>(
+        `/admin/agent-commands/${encodeURIComponent(command.commandId)}/diagnostics?${query}`,
+      );
+      if (request !== diagnosticRequest.current) return;
+      setDiagnosticReport(unwrapObjectPayload(response));
+      setDiagnosticCommandId(command.commandId);
+      setDiagnosticMessage(
+        "개인정보를 제외한 진단 결과입니다. 원문 로그와 처방 데이터는 포함하지 않습니다.",
+      );
+    } catch (error) {
+      if (request === diagnosticRequest.current) {
+        setDiagnosticMessage(
+          error instanceof Error
+            ? error.message
+            : "진단 로그를 불러오지 못했습니다.",
+        );
+      }
+    } finally {
+      if (request === diagnosticRequest.current) setDiagnosticLoading(false);
+    }
+  }
+  function downloadDiagnostics() {
+    if (!diagnosticReport) return;
+    const url = URL.createObjectURL(
+      new Blob([JSON.stringify(diagnosticReport, null, 2)], {
+        type: "application/json;charset=utf-8",
+      }),
+    );
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `pharmfarm-diagnostics-${diagnosticCommandId.replace(/[^a-zA-Z0-9-]/g, "")}.json`;
+    link.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1_000);
+  }
   useEffect(() => {
     const timer = window.setInterval(() => setCheckedAt(Date.now()), 30_000);
     return () => window.clearInterval(timer);
@@ -24666,8 +24730,19 @@ function CmsAgentControlPage({
     ? compareAgentVersions(selectedDevice.agentVersion, "1.4.5-ps")
     : null;
   const updateNeeded = selectedDevice
-    ? compareAgentVersions(selectedDevice.agentVersion, __AGENT_RELEASE_VERSION__)
+    ? compareAgentVersions(
+        selectedDevice.agentVersion,
+        __AGENT_RELEASE_VERSION__,
+      )
     : null;
+  const diagnosticSupport = selectedDevice
+    ? compareAgentVersions(selectedDevice.agentVersion, "1.4.8-ps")
+    : null;
+  const diagnosticInProgress = visibleCommands.some(
+    (command) =>
+      command.commandType === "COLLECT_DIAGNOSTICS" &&
+      isActiveAgentCommandStatus(command.status),
+  );
   const updateInProgress = selectedDevice
     ? commands.some(
         (command) =>
@@ -24720,6 +24795,14 @@ function CmsAgentControlPage({
       icon: <RefreshCw size={17} />,
     },
   ];
+
+  const diagnosticCounts = asRecord(diagnosticReport?.counts);
+  const diagnosticRuntime = Array.isArray(diagnosticReport?.runtime)
+    ? diagnosticReport.runtime.map(asRecord)
+    : [];
+  const diagnosticTray = diagnosticRuntime.find(
+    (runtime) => runtime.role === "tray",
+  );
 
   return (
     <section className="cms-content cms-list-page cms-agent-control-page">
@@ -24807,11 +24890,15 @@ function CmsAgentControlPage({
               </p>
               {!selectedDevice.online && (
                 <p>
-                  PC가 켜져 있다면 트레이의 ‘에이전트 시작’을 확인하고, 복구되지 않으면 관리자에게 문의하세요.
-                  아래 원격 명령은 연결 복구 후 실행되며, 꺼진 에이전트를 켜는 기능이 아닙니다.
+                  PC가 켜져 있다면 트레이의 ‘에이전트 시작’을 확인하고, 복구되지
+                  않으면 관리자에게 문의하세요. 아래 원격 명령은 연결 복구 후
+                  실행되며, 꺼진 에이전트를 켜는 기능이 아닙니다.
                 </p>
               )}
-              <small>화면을 열어 둔 동안 약 30초마다 갱신합니다. 외부 알림은 발송하지 않습니다.</small>
+              <small>
+                화면을 열어 둔 동안 약 30초마다 갱신합니다. 외부 알림은 발송하지
+                않습니다.
+              </small>
             </div>
           )}
 
@@ -24841,7 +24928,8 @@ function CmsAgentControlPage({
               <div>
                 <strong>에이전트 원격 업데이트</strong>
                 <p>
-                  설치 버전 {selectedDevice.agentVersion || "확인 안 됨"} · 최신 배포 {__AGENT_RELEASE_VERSION__}
+                  설치 버전 {selectedDevice.agentVersion || "확인 안 됨"} · 최신
+                  배포 {__AGENT_RELEASE_VERSION__}
                 </p>
                 <small>
                   {updateSupport === null || updateSupport < 0
@@ -24889,6 +24977,39 @@ function CmsAgentControlPage({
               </button>
             ))}
           </div>
+          {selectedDevice && (
+            <div className="cms-agent-update-card cms-agent-diagnostic-card">
+              <div>
+                <strong>문제가 있을 때만 진단 로그 가져오기</strong>
+                <p>
+                  최근 24시간의 실행·오류 기록과 알림 처리 상태를 확인합니다.
+                  상시 전송하지 않습니다.
+                </p>
+                <small>
+                  {diagnosticSupport === null || diagnosticSupport < 0
+                    ? "에이전트 1.4.8-ps 이상으로 원격 업데이트한 뒤 사용할 수 있습니다."
+                    : diagnosticInProgress
+                      ? "진단 요청이 대기/진행 중입니다. 완료되면 아래 이력에서 로그 보기를 누르세요."
+                      : !selectedDevice.online
+                        ? "PC가 오프라인입니다. 요청은 연결 복구 후 실행되며 24시간 뒤 만료됩니다."
+                        : "환자·처방 원문과 인증정보는 제외합니다. 최대 128 KiB, 완료 후 7일간 조회 가능합니다."}
+                </small>
+              </div>
+              <button
+                type="button"
+                disabled={
+                  submitting ||
+                  diagnosticInProgress ||
+                  diagnosticSupport === null ||
+                  diagnosticSupport < 0
+                }
+                onClick={() => onCommand("COLLECT_DIAGNOSTICS")}
+              >
+                <HardDriveDownload size={17} aria-hidden="true" /> 진단 로그
+                가져오기
+              </button>
+            </div>
+          )}
         </section>
       </div>
 
@@ -24928,7 +25049,19 @@ function CmsAgentControlPage({
                 >
                   {agentCommandStatusText(command.status)}
                 </span>
-                <span title={command.message}>{command.message || "-"}</span>
+                <span title={command.message}>
+                  {command.message || "-"}
+                  {command.diagnosticsAvailable && (
+                    <button
+                      className="cms-agent-log-view-button"
+                      type="button"
+                      disabled={diagnosticLoading}
+                      onClick={() => void viewDiagnostics(command)}
+                    >
+                      로그 보기
+                    </button>
+                  )}
+                </span>
               </div>
             ))}
             {visibleCommands.length === 0 && (
@@ -24939,6 +25072,52 @@ function CmsAgentControlPage({
           </div>
         </div>
       </div>
+      {diagnosticMessage && (
+        <section
+          className="cms-agent-diagnostic-report"
+          aria-label="진단 로그 결과"
+          aria-busy={diagnosticLoading}
+        >
+          <header>
+            <strong>진단 로그 결과</strong>
+            {diagnosticReport && (
+              <button type="button" onClick={downloadDiagnostics}>
+                JSON 다운로드
+              </button>
+            )}
+          </header>
+          <p role="status">{diagnosticMessage}</p>
+          {diagnosticReport && (
+            <div className="cms-agent-device-summary">
+              <div>
+                <span>전송 대기</span>
+                <strong>{finiteNumber(diagnosticCounts.queue)}건</strong>
+              </div>
+              <div>
+                <span>미표시 재고 경고</span>
+                <strong>{finiteNumber(diagnosticCounts["ui-alerts"])}건</strong>
+              </div>
+              <div>
+                <span>실패한 재고 경고</span>
+                <strong>
+                  {finiteNumber(diagnosticCounts["ui-alerts-failed"])}건
+                </strong>
+              </div>
+              <div>
+                <span>트레이 마지막 응답</span>
+                <strong>
+                  {diagnosticTray?.progressAgeSeconds == null
+                    ? "확인 불가"
+                    : `${finiteNumber(diagnosticTray.progressAgeSeconds)}초 전`}
+                </strong>
+              </div>
+            </div>
+          )}
+          {diagnosticReport && (
+            <pre>{JSON.stringify(diagnosticReport, null, 2)}</pre>
+          )}
+        </section>
+      )}
     </section>
   );
 }
