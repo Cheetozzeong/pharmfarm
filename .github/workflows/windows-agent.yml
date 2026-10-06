@@ -2,7 +2,7 @@ name: Windows agent verification
 on:
   push:
     branches: [main, 'codex/agent-supervisor-*']
-    paths: ['windows-agent-production/**', 'tests/windows-agent*', 'scripts/build-agent-host.ps1', '.github/workflows/windows-agent.yml']
+    paths: ['windows-agent-production/**', 'tests/windows-agent*', 'scripts/build-agent-host.ps1', '.github/workflows/windows-agent.yml', '.gitattributes']
   workflow_dispatch:
 permissions:
   contents: read
