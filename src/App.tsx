@@ -25094,7 +25094,7 @@ function CmsAgentControlPage({
                 <strong>{finiteNumber(diagnosticCounts.queue)}건</strong>
               </div>
               <div>
-                <span>미표시 재고 경고</span>
+                <span>확인 대기 재고 경고</span>
                 <strong>{finiteNumber(diagnosticCounts["ui-alerts"])}건</strong>
               </div>
               <div>
