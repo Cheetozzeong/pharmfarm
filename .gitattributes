@@ -1,0 +1,3 @@
+# Release ZIP verification requires identical runtime bytes on every platform.
+# Windows checkout must not rewrite the already-tested script line endings.
+windows-agent-production/** -text
