@@ -30,6 +30,9 @@ try {
   foreach ($role in @('agent', 'tray', 'watchdog')) {
     $command = $build.Invoke($null, @([string[]]@('-Role', $role), $testRoot))
     Assert-Windowless ($command -match '-File "' -and $command.Contains($testRoot)) "$role is restricted to adjacent script and installation"
+    if ($role -eq 'tray') {
+      Assert-Windowless ($command -match '-STA ' -and $command -notmatch '-WindowStyle Hidden') 'Tray hides only its console, not its first stock alert GUI'
+    }
     $xmlText = New-PharmFarmTaskXml -Role $role -InstallRoot $testRoot -UserSid 'S-1-5-21-1-2-3-1001'
     [xml]$xml = $xmlText
     Assert-Windowless ([string]$xml.Task.Actions.Exec.Command -eq (Join-Path $testRoot 'PharmFarm-AgentHost.exe')) "$role task directly starts GUI host, never powershell/cmd"

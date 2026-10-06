@@ -53,8 +53,8 @@ if ($null -eq $lease) { exit 0 }
 try {
   [IO.File]::WriteAllText((Join-Path $PSScriptRoot ($role + '.pid')), [string]$PID)
   while ($true) {
-    if ($role -eq 'agent' -and !(Test-Path (Join-Path $PSScriptRoot 'hang.fixture'))) {
-      Write-PharmFarmProgress -InstallRoot $PSScriptRoot -Phase 'test-no-network'
+    if (!(Test-Path (Join-Path $PSScriptRoot ($role + '.hang.fixture')))) {
+      Write-PharmFarmProgress -InstallRoot $PSScriptRoot -Role $role -Phase 'test-no-network'
     }
     Start-Sleep -Milliseconds 200
   }
@@ -127,7 +127,8 @@ try {
   # (never change OS time). Its 60s confirmation still runs against a real Stopwatch.
   foreach ($entry in Find-Supervisor) { Stop-Process -Id $entry.ProcessId -Force }
   Wait-Test { !(Test-PharmFarmRuntimeLocked -InstallRoot $root -Role supervisor) } 'fixture supervisor stopped'
-  [IO.File]::WriteAllText((Join-Path $root 'hang.fixture'), 'fixture only')
+  $trayId = (Get-FixtureProcess tray).Id
+  foreach ($role in @('agent','tray')) { [IO.File]::WriteAllText((Join-Path $root ($role + '.hang.fixture')), 'fixture only') }
   Start-Sleep -Seconds 1
   $assembly = [Reflection.Assembly]::Load([IO.File]::ReadAllBytes($hostPath))
   $type = $assembly.GetType('PharmFarmSupervisor')
@@ -135,9 +136,14 @@ try {
   $future = [DateTime]::UtcNow.AddMinutes(16)
   $state = $checkRole.Invoke($null, @([string]$root, 'agent', $future))
   Assert-Test ($state -eq 'stale-confirming') 'Stale sample alone never immediately kills a live collector'
+  $trayState = $checkRole.Invoke($null, @([string]$root, 'tray', $future))
+  Assert-Test ($trayState -eq 'stale-confirming') 'Stalled tray is independently confirmed without killing on one observation'
   Start-Sleep -Seconds 61
   $state = $checkRole.Invoke($null, @([string]$root, 'agent', $future.AddSeconds(61)))
   Assert-Test ($state -eq 'stale-restart-requested') 'Confirmed stalled exact-identity collector is safely restarted'
+  $trayState = $checkRole.Invoke($null, @([string]$root, 'tray', $future.AddSeconds(61)))
+  Assert-Test ($trayState -eq 'stale-restart-requested') 'Confirmed stalled tray is safely restarted through the windowless host'
+  Wait-Test { $p=Get-FixtureProcess tray; $null -ne $p -and $p.Id -ne $trayId } 'stalled tray replacement'
   Wait-Test { $p=Get-FixtureProcess agent; $null -ne $p -and $p.Id -ne $collectorId } 'stalled collector replacement'
   Assert-Test ((Get-FixtureProcess agent).Id -ne $collectorId) 'Stalled collector gets a new process, not a duplicate'
   Write-Host "Passed $checks real Windows supervisor assertions. Visual pharmacy desktop verification is still a separate approval step."

@@ -54,6 +54,15 @@ try {
   $values = @($progress, $now.AddSeconds(950), 0, [long]0)
   Assert-Supervisor ($supervisor.GetMethod('StaleProgress',$flags).Invoke($null,$values)) 'Collector progress becomes stale after conservative limit'
   Assert-Supervisor ($values[2] -eq $PID -and $values[3] -gt 0) 'Progress carries PID and process start identity'
+  $script:PharmFarmProgressAt = $null
+  Write-PharmFarmProgress -InstallRoot $root -Role tray -Phase alerts
+  $trayProgress = [IO.File]::ReadAllText((Join-Path $root 'lifecycle/tray.progress'))
+  $values = @($trayProgress, $now.AddSeconds(100), 0, [long]0)
+  Assert-Supervisor (!$supervisor.GetMethod('StaleTrayProgress',$flags).Invoke($null,$values)) 'Healthy tray loop and an open alert are not stale'
+  $values = @($trayProgress, $now.AddSeconds(150), 0, [long]0)
+  Assert-Supervisor ($supervisor.GetMethod('StaleTrayProgress',$flags).Invoke($null,$values)) 'Tray loop stalls are detected independently of collector liveness'
+  $values = @($trayProgress, $now.AddSeconds(150), 0, [long]0)
+  Assert-Supervisor (!$supervisor.GetMethod('StaleProgress',$flags).Invoke($null,$values)) 'Tray threshold does not shorten the collector safety threshold'
   foreach ($badText in @('', 'bad', "1`n0`n1`n2`nwatch", "1`n123`n5`n2`nwatch")) {
     $values = @($badText, $now, 0, [long]0)
     Assert-Supervisor (!$supervisor.GetMethod('StaleProgress',$flags).Invoke($null,$values)) 'Invalid progress never authorizes a kill'

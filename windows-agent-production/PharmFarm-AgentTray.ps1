@@ -23,6 +23,38 @@ $UiAlertDir = Join-Path $InstallRoot "ui-alerts"
 $UiAlertShownDir = Join-Path $InstallRoot "ui-alerts-shown"
 $UiAlertFailedDir = Join-Path $InstallRoot "ui-alerts-failed"
 
+function Write-TrayLog {
+  param([string]$Message)
+  try {
+    Ensure-Directory $LogDir
+    $path = Join-Path $LogDir ("tray-" + (Get-Date -Format yyyyMMdd) + ".log")
+    if ((Test-Path -LiteralPath $path) -and (Get-Item -LiteralPath $path).Length -gt 2MB) {
+      Move-Item -LiteralPath $path -Destination ($path + '.previous') -Force -ErrorAction Stop
+    }
+    Add-Content -LiteralPath $path -Encoding UTF8 -Value ("$([DateTimeOffset]::Now.ToString('o')) $Message") -ErrorAction Stop
+  } catch { }
+}
+
+function Complete-StockAlertDisplay {
+  # Only archive after the user closes a window that was actually visible.
+  # Shutdown/update/failed display leaves every source alert pending for retry.
+  try {
+    if (!$script:closingTray -and $script:stockAlertDisplayed) {
+      Ensure-Directory $UiAlertShownDir
+      foreach ($file in $script:stockAlertFiles) {
+        Move-Item -LiteralPath $file.FullName -Destination (Join-Path $UiAlertShownDir $file.Name) -Force -ErrorAction Stop
+      }
+      Write-TrayLog "alert acknowledged files=$(@($script:stockAlertFiles).Count)"
+    }
+  } catch { Write-TrayLog "alert archive failed: $($_.Exception.Message)" }
+  finally {
+    $script:stockAlertFiles = @()
+    $script:stockAlertDisplayed = $false
+    $script:stockAlertForm = $null
+    $script:showingStockAlert = $false
+  }
+}
+
 function Ensure-Directory {
   param([string]$Path)
   if (!(Test-Path -LiteralPath $Path)) {
@@ -501,12 +533,12 @@ function Show-PrescriptionStockAlert {
 
   $isSuccessPreview = (Get-AlertValue -Object $Alert -Name "successPreview" -DefaultValue $false) -eq $true
   if ($isSuccessPreview) {
-    return
+    return $false
   }
 
   $rows = @((Get-AlertValue -Object $Alert -Name "rows" -DefaultValue @()) | Where-Object { $null -ne $_ })
   if ($rows.Count -eq 0) {
-    return
+    return $false
   }
 
   $prescriptionCodes = @((Get-AlertValue -Object $Alert -Name "prescriptionCodes" -DefaultValue @()) | Where-Object { ![string]::IsNullOrWhiteSpace($_) })
@@ -559,6 +591,10 @@ function Show-PrescriptionStockAlert {
 
   $source = New-Object System.Windows.Forms.Label
   $source.Text = "기준 재고: PharmFarm 서비스 현재고"
+  if ((Get-AlertValue -Object $Alert -Name "historical" -DefaultValue $false) -eq $true) {
+    $title.Text = "이전에 표시되지 않은 재고 알림을 확인해 주세요"
+    $source.Text = "미확인 알림 $(Get-AlertValue -Object $Alert -Name 'fileCount')건 · 생성 당시 재고입니다. 현재 재고와 취소 반영 결과는 CMS에서 확인하세요."
+  }
   $source.Location = New-Object System.Drawing.Point(29, 83)
   $source.Size = New-Object System.Drawing.Size(840, 22)
   $source.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
@@ -648,15 +684,33 @@ function Show-PrescriptionStockAlert {
   $closeButton.ForeColor = [System.Drawing.Color]::White
   $closeButton.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
   $closeButton.FlatAppearance.BorderSize = 0
-  $closeButton.Add_Click({ $form.DialogResult = [System.Windows.Forms.DialogResult]::OK; $form.Close() })
+  $closeButton.Add_Click({ if ($null -ne $script:stockAlertForm) { $script:stockAlertForm.Close() } })
   $form.AcceptButton = $closeButton
   $form.Controls.Add($closeButton)
 
-  [System.Media.SystemSounds]::Asterisk.Play()
-  [void]$form.ShowDialog()
-  $form.Dispose()
-  if ($null -ne $brandImage) {
-    $brandImage.Dispose()
+  $form.Tag = $brandImage
+  $form.Add_FormClosed({
+    param($sender, $eventArgs)
+    Complete-StockAlertDisplay
+    if ($null -ne $sender.Tag) { $sender.Tag.Dispose() }
+    $sender.Dispose()
+  })
+  $script:stockAlertForm = $form
+  try {
+    # Modeless display keeps the PowerShell timer callback out of a nested
+    # ShowDialog message loop: alert processing and liveness keep ticking.
+    $form.Show()
+    [void][PharmFarmTrayWindow]::ShowWindow($form.Handle, 5)
+    $script:stockAlertDisplayed = [PharmFarmTrayWindow]::IsWindowVisible($form.Handle)
+    if (!$script:stockAlertDisplayed) { throw 'Alert window is not visible.' }
+    $form.BringToFront()
+    [System.Media.SystemSounds]::Asterisk.Play()
+    Write-TrayLog "alert visible files=$(@($script:stockAlertFiles).Count) rows=$($rows.Count)"
+    return $true
+  } catch {
+    $form.Dispose()
+    $script:stockAlertForm = $null
+    throw
   }
 }
 
@@ -666,24 +720,47 @@ function Check-PrescriptionStockAlerts {
   }
 
   Ensure-Directory $UiAlertDir
-  $file = Get-ChildItem -LiteralPath $UiAlertDir -Filter "*.json" -File -ErrorAction SilentlyContinue |
-    Sort-Object LastWriteTime |
-    Select-Object -First 1
-  if ($null -eq $file) {
+  $pending = @(Get-ChildItem -LiteralPath $UiAlertDir -Filter "*.json" -File -ErrorAction SilentlyContinue | Sort-Object LastWriteTime)
+  if ($pending.Count -eq 0) {
     return
   }
-
+  # Fresh prescriptions take priority. Historical backlog is ONE summary,
+  # not dozens of sequential popups and never silently discarded.
+  $fresh = @($pending | Where-Object { $_.LastWriteTime.Date -ge (Get-Date).Date })
+  $files = if ($fresh.Count -gt 0) { @($fresh | Select-Object -First 1) } else { $pending }
+  $script:stockAlertFiles = @()
+  $script:stockAlertDisplayed = $false
   $script:showingStockAlert = $true
   try {
-    $alert = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 | ConvertFrom-Json
-    Show-PrescriptionStockAlert -Alert $alert
-    Ensure-Directory $UiAlertShownDir
-    Move-Item -LiteralPath $file.FullName -Destination (Join-Path $UiAlertShownDir $file.Name) -Force
+    $rows = @(); $codes = @()
+    foreach ($file in $files) {
+      try {
+        $alert = Get-Content -LiteralPath $file.FullName -Raw -Encoding UTF8 -ErrorAction Stop | ConvertFrom-Json -ErrorAction Stop
+        $alertRows = @((Get-AlertValue -Object $alert -Name 'rows' -DefaultValue @()) | Where-Object { $null -ne $_ })
+        if ((Get-AlertValue -Object $alert -Name 'successPreview' -DefaultValue $false) -eq $true -or $alertRows.Count -eq 0) {
+          throw 'Invalid stock alert: missing rows or success preview.'
+        }
+        $rows += $alertRows
+        $codes += @((Get-AlertValue -Object $alert -Name 'prescriptionCodes' -DefaultValue @()))
+        $script:stockAlertFiles += $file
+      } catch {
+        Write-TrayLog "alert invalid file=$($file.Name): $($_.Exception.Message)"
+        Ensure-Directory $UiAlertFailedDir
+        Move-Item -LiteralPath $file.FullName -Destination (Join-Path $UiAlertFailedDir $file.Name) -Force -ErrorAction Stop
+        Show-Balloon "PharmFarm" "읽지 못한 재고 알림이 있습니다. 로그 폴더를 확인해 주세요." "Warning"
+      }
+    }
+    if ($script:stockAlertFiles.Count -eq 0) { $script:showingStockAlert = $false; return }
+    $combined = [pscustomobject]@{
+      rows = $rows; prescriptionCodes = @($codes | Select-Object -Unique)
+      historical = ($fresh.Count -eq 0); fileCount = $script:stockAlertFiles.Count
+    }
+    if (!(Show-PrescriptionStockAlert -Alert $combined)) { throw 'Alert display was skipped.' }
   } catch {
-    Ensure-Directory $UiAlertFailedDir
-    Move-Item -LiteralPath $file.FullName -Destination (Join-Path $UiAlertFailedDir $file.Name) -Force -ErrorAction SilentlyContinue
-    Show-Balloon "PharmFarm" "처방 재고 알림을 표시하지 못했습니다. 로그 폴더를 확인하세요."
-  } finally {
+    # A GUI failure is not bad prescription data. Keep it pending and retry
+    # without a one-second failure/balloon storm.
+    Write-TrayLog "alert display failed: $($_.Exception.Message)"
+    $script:nextAlertAttemptAt = (Get-Date).AddSeconds(60)
     $script:showingStockAlert = $false
   }
 }
@@ -842,6 +919,14 @@ $trayRuntimeLock = Enter-PharmFarmRuntime -InstallRoot $InstallRoot -Role "tray"
 if ($null -eq $trayRuntimeLock) { exit 0 }
 Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
 Add-Type -AssemblyName System.Drawing -ErrorAction Stop
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+public static class PharmFarmTrayWindow {
+  [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr handle, int command);
+  [DllImport("user32.dll")] public static extern bool IsWindowVisible(IntPtr handle);
+}
+'@ -ErrorAction Stop
 Ensure-Directory $LogDir
 Ensure-Directory $QueueDir
 Ensure-Directory $SentDir
@@ -849,6 +934,8 @@ Ensure-Directory $DeadDir
 Ensure-Directory $UiAlertDir
 Ensure-Directory $UiAlertShownDir
 Ensure-Directory $UiAlertFailedDir
+Write-TrayLog "tray starting pid=$PID apartment=$([Threading.Thread]::CurrentThread.ApartmentState)"
+Write-PharmFarmProgress -InstallRoot $InstallRoot -Role tray -Phase starting
 
 $script:trayStartedAt = Get-Date
 $script:startupGraceSeconds = 20
@@ -955,6 +1042,7 @@ $exitItem.Add_Click({
   if ($answer -ne [System.Windows.Forms.DialogResult]::OK) { return }
   try {
     Set-PharmFarmPaused -InstallRoot $InstallRoot -Role "tray" -Paused $true
+    $script:closingTray = $true
     [System.Windows.Forms.Application]::Exit()
   } catch {
     Show-Balloon "PharmFarm" "트레이 종료 설정을 저장하지 못했습니다. 관리자에게 문의해 주세요." "Error" 8000
@@ -967,13 +1055,20 @@ $script:notifyIcon.Add_DoubleClick({ Open-Folder $InstallRoot })
 
 $script:timer = New-Object System.Windows.Forms.Timer
 $script:timer.Interval = 10000
-$script:timer.Add_Tick({ Update-TrayStatus })
+$script:timer.Add_Tick({ try { [void](Update-TrayStatus) } catch { Write-TrayLog "status timer failed: $($_.Exception.Message)" } })
 $script:timer.Start()
 
 $script:showingStockAlert = $false
+$script:closingTray = $false
+$script:nextAlertAttemptAt = [DateTime]::MinValue
 $script:alertTimer = New-Object System.Windows.Forms.Timer
 $script:alertTimer.Interval = 1000
-$script:alertTimer.Add_Tick({ Check-PrescriptionStockAlerts })
+$script:alertTimer.Add_Tick({
+  try {
+    Write-PharmFarmProgress -InstallRoot $InstallRoot -Role tray -Phase alerts
+    if ((Get-Date) -ge $script:nextAlertAttemptAt) { Check-PrescriptionStockAlerts }
+  } catch { Write-TrayLog "alert timer failed: $($_.Exception.Message)" }
+})
 $script:alertTimer.Start()
 
 $initialRuntimeState = Update-TrayStatus
@@ -986,10 +1081,13 @@ if (Test-AgentRuntimeRunning $initialRuntimeState) {
 }
 [System.Windows.Forms.Application]::Run()
 } catch {
+  Write-TrayLog "tray startup failed: $($_.Exception.Message) $($_.ScriptStackTrace)"
   Write-Error "PharmFarm tray failed: $($_.Exception.Message)"
   exit 1
 } finally {
   try {
+    $script:closingTray = $true
+    if ($null -ne $script:stockAlertForm) { $script:stockAlertForm.Dispose() }
     if ($null -ne $script:timer) { $script:timer.Stop(); $script:timer.Dispose() }
     if ($null -ne $script:alertTimer) { $script:alertTimer.Stop(); $script:alertTimer.Dispose() }
     if ($null -ne $script:notifyIcon) { $script:notifyIcon.Visible = $false; $script:notifyIcon.Dispose() }

@@ -33,6 +33,9 @@ jobs:
         run: |
           & ./tests/windows-agent-tray.Tests.ps1
           & ./tests/windows-agent-windowless.Tests.ps1
+      - name: Real stock alert visibility and message loop
+        if: ${{ !cancelled() }}
+        run: '& ./tests/windows-agent-stock-alert-integration.Tests.ps1'
       - name: Native host lifetime and no-window checks
         if: ${{ !cancelled() }}
         run: '& ./tests/windows-agent-host-integration.Tests.ps1'

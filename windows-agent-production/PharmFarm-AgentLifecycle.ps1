@@ -350,7 +350,7 @@ function Stop-PharmFarmProcesses {
 }
 
 function Write-PharmFarmProgress {
-  param([string]$InstallRoot, [string]$Phase)
+  param([string]$InstallRoot, [string]$Phase, [ValidateSet('agent', 'tray')][string]$Role = 'agent')
   # Record actual collector thread progress, not a timer or API success. No patient data.
   $now = [DateTime]::UtcNow
   if ($null -ne $script:PharmFarmProgressAt -and ($now - $script:PharmFarmProgressAt).TotalSeconds -lt 5) { return }
@@ -358,7 +358,7 @@ function Write-PharmFarmProgress {
     if ($null -eq $script:PharmFarmProcessStartTicks) {
       $script:PharmFarmProcessStartTicks = (Get-Process -Id $PID -ErrorAction Stop).StartTime.ToUniversalTime().Ticks
     }
-    $path = Get-PharmFarmLifecyclePath $InstallRoot 'agent.progress'
+    $path = Get-PharmFarmLifecyclePath $InstallRoot ($Role + '.progress')
     $temp = $path + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
     try {
       $safePhase = $Phase -replace '[^a-zA-Z0-9-]', ''

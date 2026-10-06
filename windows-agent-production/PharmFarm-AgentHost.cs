@@ -37,7 +37,7 @@ internal static class PharmFarmAgentHost
             string powershell = Path.Combine(windows, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
             string role = args.Length > 1 ? args[1] : "self-test";
             if (role != "watchdog") Log(root, "host started role=" + role + " pid=" + System.Diagnostics.Process.GetCurrentProcess().Id);
-            int result = Run(powershell, arguments, root);
+            int result = Run(powershell, arguments, root, role == "tray");
             if (role != "watchdog" || result != 0) Log(root, "host exited role=" + role + " exitCode=" + result);
             return result;
         }
@@ -133,7 +133,10 @@ internal static class PharmFarmAgentHost
         else throw new ArgumentException("Unknown role.");
         string path = Path.Combine(root, script);
         if (!File.Exists(path)) throw new FileNotFoundException("Required runtime script is missing.", script);
-        string command = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File " + Quote(path);
+        // CREATE_NO_WINDOW suppresses the console. SW_HIDE / -WindowStyle Hidden
+        // must not suppress the tray's FIRST real GUI alert as well.
+        string command = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass " +
+            (role == "tray" ? "-STA " : "-WindowStyle Hidden ") + "-File " + Quote(path);
         command += role == "agent" ? " -ConfigPath " + Quote(Path.Combine(root, "agent.config.json")) : " -InstallRoot " + Quote(root);
         if (args.Length == 3 && role == "tray" && args[2] == "-Resume") command += " -Resume";
         else if (args.Length == 5 && role == "agent" && args[2] == "-ResyncTodayPrescriptions" && args[3] == "-MaintenanceToken")
@@ -146,7 +149,7 @@ internal static class PharmFarmAgentHost
         return command;
     }
 
-    static int Run(string executable, string arguments, string directory)
+    static int Run(string executable, string arguments, string directory, bool interactiveTray)
     {
         IntPtr job = CreateJobObject(IntPtr.Zero, null);
         if (job == IntPtr.Zero) throw new Win32Exception();
@@ -162,7 +165,7 @@ internal static class PharmFarmAgentHost
             if (!SetInformationJobObject(job, 9, ref limits, (uint)Marshal.SizeOf(limits))) throw new Win32Exception();
             STARTUPINFO startup = new STARTUPINFO();
             startup.cb = (uint)Marshal.SizeOf(startup);
-            startup.dwFlags = 1; // STARTF_USESHOWWINDOW
+            startup.dwFlags = interactiveTray ? 0u : 1u; // Do not inherit SW_HIDE for GUI alerts.
             startup.wShowWindow = 0; // SW_HIDE, secondary protection; CREATE_NO_WINDOW is primary.
             if (!CreateProcess(executable, new StringBuilder(Quote(executable) + " " + arguments), IntPtr.Zero, IntPtr.Zero,
                 false, CREATE_NO_WINDOW | CREATE_SUSPENDED, IntPtr.Zero, directory, ref startup, out process)) throw new Win32Exception();

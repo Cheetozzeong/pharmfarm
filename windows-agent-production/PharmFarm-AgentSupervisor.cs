@@ -11,8 +11,8 @@ using System.Security.Principal;
 internal static class PharmFarmSupervisor
 {
     internal const int PollSeconds = 10, StaleSeconds = 900;
-    static string suspectProgress;
-    static readonly Stopwatch suspectAge = new Stopwatch();
+    static readonly Dictionary<string, string> suspectProgress = new Dictionary<string, string>();
+    static readonly Dictionary<string, Stopwatch> suspectAge = new Dictionary<string, Stopwatch>();
     internal static string Control(string root, string name) { return Path.Combine(root, "lifecycle", name); }
 
     internal static FileStream TryLock(string root, string name)
@@ -68,13 +68,23 @@ internal static class PharmFarmSupervisor
 
     internal static bool StaleProgress(string text, DateTime now, out int pid, out long started)
     {
+        return ProgressStale(text, now, StaleSeconds, out pid, out started);
+    }
+
+    internal static bool StaleTrayProgress(string text, DateTime now, out int pid, out long started)
+    {
+        return ProgressStale(text, now, 120, out pid, out started);
+    }
+
+    static bool ProgressStale(string text, DateTime now, int seconds, out int pid, out long started)
+    {
         pid = 0; started = 0;
         string[] lines = text.Replace("\r", "").Trim().Split('\n');
         long updated;
         return lines.Length == 5 && lines[0] == "1" && int.TryParse(lines[1], out pid) && pid > 0 &&
             long.TryParse(lines[2], out started) && started > 0 &&
             long.TryParse(lines[3], out updated) && updated >= started && updated <= now.Ticks &&
-            now.Ticks - updated >= TimeSpan.FromSeconds(StaleSeconds).Ticks;
+            now.Ticks - updated >= TimeSpan.FromSeconds(seconds).Ticks;
     }
 
     internal static void Launch(string root, string role)
@@ -158,11 +168,12 @@ internal static class PharmFarmSupervisor
         }
     }
 
-    static bool MatchesCollector(Process process, string root, long started)
+    static bool MatchesRuntime(Process process, string root, long started, string role)
     {
         // Bind the handle before inspecting identity so PID reuse cannot kill a replacement.
         IntPtr handle = process.Handle;
-        if (process.HasExited || process.StartTime.ToUniversalTime().Ticks != started) return false;
+        if (process.HasExited || process.StartTime.ToUniversalTime().Ticks != started ||
+            process.SessionId != Process.GetCurrentProcess().SessionId) return false;
         using (ManagementObject row = new ManagementObject("Win32_Process.Handle='" + process.Id + "'"))
         {
             row.Options.Timeout = TimeSpan.FromSeconds(5);
@@ -171,10 +182,12 @@ internal static class PharmFarmSupervisor
             string command = Convert.ToString(row["CommandLine"]);
             string windows = Environment.GetFolderPath(Environment.SpecialFolder.Windows);
             string expectedExe = Path.Combine(windows, "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-            string expectedArgs = PharmFarmAgentHost.BuildArguments(new string[] { "-Role", "agent" }, root);
+            string expectedArgs = PharmFarmAgentHost.BuildArguments(new string[] { "-Role", role }, root);
             // Only the installed host's exact regular collector command; never a resync or foreign script.
+            string expectedCommand = PharmFarmAgentHost.Quote(expectedExe) + " " + expectedArgs;
             return string.Equals(executable, expectedExe, StringComparison.OrdinalIgnoreCase) &&
-                string.Equals(command, PharmFarmAgentHost.Quote(expectedExe) + " " + expectedArgs, StringComparison.OrdinalIgnoreCase);
+                (string.Equals(command, expectedCommand, StringComparison.OrdinalIgnoreCase) ||
+                 (role == "tray" && string.Equals(command, expectedCommand + " -Resume", StringComparison.OrdinalIgnoreCase)));
         }
     }
 
@@ -190,33 +203,33 @@ internal static class PharmFarmSupervisor
                 Launch(root, role);
                 return "start-requested";
             }
-            if (role != "agent") return "running";
-            string progressPath = Control(root, "agent.progress");
+            string progressPath = Control(root, role + ".progress");
             if (!File.Exists(progressPath)) return "running-progress-unavailable";
             int pid; long started;
             string progress = File.ReadAllText(progressPath);
-            if (!StaleProgress(progress, now, out pid, out started))
+            bool stale = role == "tray" ? StaleTrayProgress(progress, now, out pid, out started) : StaleProgress(progress, now, out pid, out started);
+            if (!stale)
             {
-                suspectProgress = null;
-                suspectAge.Reset();
+                suspectProgress.Remove(role);
+                suspectAge.Remove(role);
                 return "running";
             }
             // Observe the SAME stalled sample for another minute. Resume from sleep,
             // clock adjustments and a supervisor restart must not kill a healthy worker.
-            if (suspectProgress != progress)
+            if (!suspectProgress.ContainsKey(role) || suspectProgress[role] != progress)
             {
-                suspectProgress = progress;
-                suspectAge.Restart();
+                suspectProgress[role] = progress;
+                suspectAge[role] = Stopwatch.StartNew();
                 return "stale-confirming";
             }
-            if (suspectAge.Elapsed.TotalSeconds < 60) return "stale-confirming";
+            if (suspectAge[role].Elapsed.TotalSeconds < 60) return "stale-confirming";
             using (Process collector = Process.GetProcessById(pid))
             {
-                if (!MatchesCollector(collector, root, started)) return "stale-identity-unverified";
+                if (!MatchesRuntime(collector, root, started, role)) return "stale-identity-unverified";
                 // Progress may have advanced during WMI lookup. Never use an old sample to stop work.
                 if (!Allowed(root, role) || File.ReadAllText(progressPath) != progress) return "running";
                 if (!ReserveAttempt(root, role, now)) return "stale-retry-limited";
-                PharmFarmAgentHost.Log(root, "supervisor stale collector pid=" + pid + " noProgressSeconds=" + StaleSeconds);
+                PharmFarmAgentHost.Log(root, "supervisor stale role=" + role + " pid=" + pid);
                 collector.Kill();
                 if (!collector.WaitForExit(5000)) return "stop-unconfirmed";
             }
@@ -239,8 +252,8 @@ internal static class PharmFarmSupervisor
                 if (interval.Elapsed.TotalSeconds > 45)
                 {
                     // Sleep/resume or a delayed check breaks the confirmation sequence.
-                    suspectProgress = null;
-                    suspectAge.Reset();
+                    suspectProgress.Clear();
+                    suspectAge.Clear();
                 }
                 interval.Restart();
                 foreach (string role in new string[] { "agent", "tray" })
