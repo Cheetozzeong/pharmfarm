@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'
 $package = Join-Path $RepositoryRoot 'windows-agent-production'
 . (Join-Path $package 'PharmFarm-AgentLifecycle.ps1')
 . (Join-Path $package 'PharmFarm-AgentDiagnostics.ps1')
+. (Join-Path $package 'PharmFarm-AgentTasks.ps1')
 $root = Join-Path ([IO.Path]::GetTempPath()) ('pharmfarm-diagnostics-' + [guid]::NewGuid().ToString('N'))
 [void][IO.Directory]::CreateDirectory((Join-Path $root 'logs'))
 $checks = 0
@@ -10,6 +11,19 @@ function Assert-Diagnostic([bool]$condition, [string]$message) {
   if (!$condition) { throw $message }; $script:checks++; Write-Host "PASS: $message"
 }
 try {
+  Add-Type -AssemblyName System.IO.Compression.FileSystem
+  $archive = [IO.Compression.ZipFile]::OpenRead((Join-Path $RepositoryRoot 'public/pharmfarm-agent-production.zip'))
+  $sha = [Security.Cryptography.SHA256]::Create()
+  try {
+    foreach ($name in @(Get-PharmFarmPackageFileNames)) {
+      $entry = $archive.GetEntry('windows-agent-production/' + $name)
+      Assert-Diagnostic ($null -ne $entry) "Release includes required runtime $name"
+      $stream = $entry.Open()
+      try { $packed = [BitConverter]::ToString($sha.ComputeHash($stream)) } finally { $stream.Dispose() }
+      $source = [BitConverter]::ToString($sha.ComputeHash([IO.File]::ReadAllBytes((Join-Path $package $name))))
+      Assert-Diagnostic ($packed -eq $source) "Release matches tested runtime $name"
+    }
+  } finally { $sha.Dispose(); $archive.Dispose() }
   $now = [DateTimeOffset]::Now.ToString('o')
   $day = Get-Date -Format yyyyMMdd
   $patient = 'PRIVATE-PATIENT-991231'; $secret = 'PRIVATE-SECRET-TOKEN'
