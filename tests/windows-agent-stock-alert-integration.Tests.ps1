@@ -80,6 +80,12 @@ public static class PharmFarmTrayWindow {
         Remove-Item (Join-Path $UiAlertDir 'fresh.json')
         Check-PrescriptionStockAlerts
         Assert-Fixture (Test-Path (Join-Path $UiAlertFailedDir 'bad.json')) 'Malformed alerts are quarantined rather than blocking the queue'
+        New-Alert retry $false
+        function Show-PrescriptionStockAlert { param($Alert) throw 'simulated GUI failure' }
+        Check-PrescriptionStockAlerts
+        Assert-Fixture (Test-Path (Join-Path $UiAlertDir 'retry.json')) 'GUI failures retain valid alerts for retry'
+        Assert-Fixture (!(Test-Path (Join-Path $UiAlertFailedDir 'retry.json')) -and !$script:showingStockAlert) 'GUI failure is not confused with corrupt prescription data'
+        Assert-Fixture ($script:nextAlertAttemptAt -gt (Get-Date)) 'GUI failure applies cooldown instead of a popup storm'
         [IO.File]::WriteAllText((Join-Path $InstallRoot 'success.txt'),'ok')
         $script:timer.Stop()
         [Windows.Forms.Application]::ExitThread()

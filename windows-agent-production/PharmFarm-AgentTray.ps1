@@ -530,6 +530,7 @@ function Add-AlertGridColumn {
 
 function Show-PrescriptionStockAlert {
   param([object]$Alert)
+  $ErrorActionPreference = 'Stop'
 
   $isSuccessPreview = (Get-AlertValue -Object $Alert -Name "successPreview" -DefaultValue $false) -eq $true
   if ($isSuccessPreview) {
@@ -543,6 +544,9 @@ function Show-PrescriptionStockAlert {
 
   $prescriptionCodes = @((Get-AlertValue -Object $Alert -Name "prescriptionCodes" -DefaultValue @()) | Where-Object { ![string]::IsNullOrWhiteSpace($_) })
   $prescriptionLabel = if ($prescriptionCodes.Count -gt 0) { $prescriptionCodes -join ", " } else { "처방전" }
+  if ((Get-AlertValue -Object $Alert -Name 'historical' -DefaultValue $false) -eq $true) {
+    $prescriptionLabel = "이전 미확인 알림 $(Get-AlertValue -Object $Alert -Name 'fileCount')건"
+  }
   $shortageCount = @($rows | Where-Object { (Get-AlertValue -Object $_ -Name "alertType" -DefaultValue "") -eq "SHORTAGE" }).Count
   $lowStockCount = $rows.Count - $shortageCount
 
@@ -917,6 +921,9 @@ if ($Resume) {
 }
 $trayRuntimeLock = Enter-PharmFarmRuntime -InstallRoot $InstallRoot -Role "tray"
 if ($null -eq $trayRuntimeLock) { exit 0 }
+Ensure-Directory $LogDir
+Write-TrayLog "tray starting pid=$PID apartment=$([Threading.Thread]::CurrentThread.ApartmentState)"
+Write-PharmFarmProgress -InstallRoot $InstallRoot -Role tray -Phase starting
 Add-Type -AssemblyName System.Windows.Forms -ErrorAction Stop
 Add-Type -AssemblyName System.Drawing -ErrorAction Stop
 Add-Type -TypeDefinition @'
@@ -934,8 +941,6 @@ Ensure-Directory $DeadDir
 Ensure-Directory $UiAlertDir
 Ensure-Directory $UiAlertShownDir
 Ensure-Directory $UiAlertFailedDir
-Write-TrayLog "tray starting pid=$PID apartment=$([Threading.Thread]::CurrentThread.ApartmentState)"
-Write-PharmFarmProgress -InstallRoot $InstallRoot -Role tray -Phase starting
 
 $script:trayStartedAt = Get-Date
 $script:startupGraceSeconds = 20
