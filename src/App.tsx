@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentConnection, agentTimestamp } from "./agentHealth";
+import { AgentDiagnosticsDialog } from "./AgentDiagnosticsDialog";
 import type { CSSProperties, FormEvent, ReactNode, RefObject } from "react";
 import type {
   BrowserDatamatrixCodeReader,
@@ -24650,12 +24651,19 @@ function CmsAgentControlPage({
   const [diagnosticMessage, setDiagnosticMessage] = useState("");
   const [diagnosticLoading, setDiagnosticLoading] = useState(false);
   const diagnosticRequest = useRef(0);
-  useEffect(() => {
+  const closeDiagnostics = useCallback(() => {
     diagnosticRequest.current += 1;
     setDiagnosticReport(null);
+    setDiagnosticCommandId("");
     setDiagnosticMessage("");
     setDiagnosticLoading(false);
-  }, [selectedDeviceKey]);
+  }, []);
+  useEffect(() => {
+    closeDiagnostics();
+    return () => {
+      diagnosticRequest.current += 1;
+    };
+  }, [selectedDeviceKey, closeDiagnostics]);
   async function viewDiagnostics(command: CmsAgentCommand) {
     const request = ++diagnosticRequest.current;
     setDiagnosticLoading(true);
@@ -24795,14 +24803,6 @@ function CmsAgentControlPage({
       icon: <RefreshCw size={17} />,
     },
   ];
-
-  const diagnosticCounts = asRecord(diagnosticReport?.counts);
-  const diagnosticRuntime = Array.isArray(diagnosticReport?.runtime)
-    ? diagnosticReport.runtime.map(asRecord)
-    : [];
-  const diagnosticTray = diagnosticRuntime.find(
-    (runtime) => runtime.role === "tray",
-  );
 
   return (
     <section className="cms-content cms-list-page cms-agent-control-page">
@@ -25073,50 +25073,13 @@ function CmsAgentControlPage({
         </div>
       </div>
       {diagnosticMessage && (
-        <section
-          className="cms-agent-diagnostic-report"
-          aria-label="진단 로그 결과"
-          aria-busy={diagnosticLoading}
-        >
-          <header>
-            <strong>진단 로그 결과</strong>
-            {diagnosticReport && (
-              <button type="button" onClick={downloadDiagnostics}>
-                JSON 다운로드
-              </button>
-            )}
-          </header>
-          <p role="status">{diagnosticMessage}</p>
-          {diagnosticReport && (
-            <div className="cms-agent-device-summary">
-              <div>
-                <span>전송 대기</span>
-                <strong>{finiteNumber(diagnosticCounts.queue)}건</strong>
-              </div>
-              <div>
-                <span>확인 대기 재고 경고</span>
-                <strong>{finiteNumber(diagnosticCounts["ui-alerts"])}건</strong>
-              </div>
-              <div>
-                <span>실패한 재고 경고</span>
-                <strong>
-                  {finiteNumber(diagnosticCounts["ui-alerts-failed"])}건
-                </strong>
-              </div>
-              <div>
-                <span>트레이 마지막 응답</span>
-                <strong>
-                  {diagnosticTray?.progressAgeSeconds == null
-                    ? "확인 불가"
-                    : `${finiteNumber(diagnosticTray.progressAgeSeconds)}초 전`}
-                </strong>
-              </div>
-            </div>
-          )}
-          {diagnosticReport && (
-            <pre>{JSON.stringify(diagnosticReport, null, 2)}</pre>
-          )}
-        </section>
+        <AgentDiagnosticsDialog
+          report={diagnosticReport}
+          loading={diagnosticLoading}
+          message={diagnosticMessage}
+          onClose={closeDiagnostics}
+          onDownload={downloadDiagnostics}
+        />
       )}
     </section>
   );

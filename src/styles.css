@@ -10193,10 +10193,79 @@ body:has(.cms-shell) {
 
 .cms-agent-diagnostic-card { margin-top: 14px; }
 .cms-agent-log-view-button { display: block; margin-top: 6px; color: #245b85; }
-.cms-agent-diagnostic-report { min-width: 0; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: #fff; }
-.cms-agent-diagnostic-report header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.cms-agent-diagnostic-report p { color: var(--muted); font-size: 12px; line-height: 1.6; }
-.cms-agent-diagnostic-report pre { max-height: 480px; overflow: auto; padding: 14px; background: #f5f7f9; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px; }
+.cms-agent-diagnostic-dialog {
+  width: min(880px, calc(100vw - 32px));
+  max-width: none;
+  height: min(740px, calc(100dvh - 32px));
+  max-height: calc(100dvh - 32px);
+  margin: auto;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: #fff;
+  color: var(--ink);
+  box-shadow: 0 24px 80px #12263d40;
+  overflow: hidden;
+}
+
+.cms-agent-diagnostic-dialog[open] { display: flex; flex-direction: column; }
+.cms-agent-diagnostic-dialog::backdrop { background: #14263d80; }
+.cms-agent-diagnostic-dialog-header,
+.cms-agent-diagnostic-dialog-footer {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px;
+  background: #fff;
+}
+.cms-agent-diagnostic-dialog-header { border-bottom: 1px solid var(--line); }
+.cms-agent-diagnostic-dialog-header > div { min-width: 0; }
+.cms-agent-diagnostic-dialog-header h2 { margin: 0 0 4px; font-size: 18px; }
+.cms-agent-diagnostic-dialog-header span { color: var(--muted); font-size: 12px; }
+.cms-agent-diagnostic-dialog button { cursor: pointer; }
+.cms-agent-diagnostic-dialog button:focus-visible,
+.cms-agent-diagnostic-json summary:focus-visible,
+.cms-agent-diagnostic-json pre:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+.cms-agent-diagnostic-close {
+  display: grid;
+  flex: 0 0 40px;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+}
+.cms-agent-diagnostic-dialog-body { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: auto; overscroll-behavior: contain; padding: 20px; }
+.cms-agent-diagnostic-dialog-body > p { margin: 0 0 18px; color: var(--muted); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.cms-agent-diagnostic-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 0 0 20px; }
+.cms-agent-diagnostic-summary > div { min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 10px; background: #f7f9fc; }
+.cms-agent-diagnostic-summary dt { color: var(--muted); font-size: 12px; }
+.cms-agent-diagnostic-summary dd { margin: 8px 0 0; font-size: 20px; font-weight: 800; overflow-wrap: anywhere; }
+.cms-agent-diagnostic-runtime { margin-bottom: 20px; }
+.cms-agent-diagnostic-runtime h3 { margin: 0 0 8px; font-size: 14px; }
+.cms-agent-diagnostic-runtime > div { display: grid; grid-template-columns: minmax(0, 1fr) 80px minmax(120px, 1fr); align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.cms-agent-diagnostic-runtime small { color: var(--muted); text-align: right; }
+.cms-agent-diagnostic-json { min-width: 0; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.cms-agent-diagnostic-json summary { padding: 14px; cursor: pointer; font-size: 13px; font-weight: 700; }
+.cms-agent-diagnostic-json pre { width: 100%; max-height: 320px; margin: 0; overflow: auto; overscroll-behavior: contain; padding: 14px; background: #f5f7f9; white-space: pre; font: 12px/1.6 ui-monospace, monospace; }
+.cms-agent-diagnostic-dialog-footer { justify-content: flex-end; border-top: 1px solid var(--line); }
+.cms-agent-diagnostic-dialog-footer button { min-height: 40px; padding: 0 16px; border: 1px solid var(--line); border-radius: 8px; background: #fff; color: var(--ink); font-size: 13px; font-weight: 700; }
+.cms-agent-diagnostic-dialog-footer button.is-primary { border-color: var(--blue); background: var(--blue); color: #fff; }
+
+@media (max-width: 600px) {
+  .cms-agent-diagnostic-dialog { width: calc(100vw - 16px); height: calc(100dvh - 16px); max-height: calc(100dvh - 16px); border-radius: 12px; }
+  .cms-agent-diagnostic-dialog-header,
+  .cms-agent-diagnostic-dialog-footer,
+  .cms-agent-diagnostic-dialog-body { padding: 14px; }
+  .cms-agent-diagnostic-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+  .cms-agent-diagnostic-runtime > div { grid-template-columns: minmax(0, 1fr) auto; gap: 6px; }
+  .cms-agent-diagnostic-runtime small { grid-column: 1 / -1; text-align: left; }
+}
 
 .cms-agent-health-notice {
   padding: 14px 16px;
