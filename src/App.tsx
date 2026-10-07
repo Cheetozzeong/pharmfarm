@@ -25049,8 +25049,8 @@ function CmsAgentControlPage({
                 >
                   {agentCommandStatusText(command.status)}
                 </span>
-                <span title={command.message}>
-                  {command.message || "-"}
+                <span className="cms-agent-command-message" title={command.message}>
+                  <span>{command.message || "-"}</span>
                   {command.diagnosticsAvailable && (
                     <button
                       className="cms-agent-log-view-button"
