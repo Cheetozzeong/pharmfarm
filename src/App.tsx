@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentConnection, agentTimestamp } from "./agentHealth";
 import { AgentDiagnosticsDialog } from "./AgentDiagnosticsDialog";
+import { MobileOrderScreen } from "./MobileOrderScreen";
+import { MobileRecentStockScreen } from "./MobileRecentStockScreen";
+import { aggregateRecentStock } from "./mobileRecentStock";
+import type { OrderDateRange } from "./mobileOrderDates";
 import type { CSSProperties, FormEvent, ReactNode, RefObject } from "react";
 import type {
   BrowserDatamatrixCodeReader,
@@ -21,12 +25,14 @@ import {
   CircleCheck,
   CircleHelp,
   ClipboardList,
+  PackageMinus,
   Clock3,
   Copy,
   ExternalLink,
   Focus,
   HardDriveDownload,
   LogOut,
+  Menu,
   Minus,
   PackageCheck,
   PanelLeftClose,
@@ -111,6 +117,8 @@ type Screen =
   | "returnQty"
   | "returnDone"
   | "stocks"
+  | "orders"
+  | "recentStock"
   | "account";
 type Mode = "receipt" | "return";
 type MatchStatus = "NORMAL" | "NAME_MATCH" | "VIRTUAL" | "MISSING";
@@ -4108,6 +4116,242 @@ function MobileApp({
   const cameraDevicesRef = useRef<VideoInputDevice[]>([]);
   const selectedCameraDeviceIdRef = useRef("");
   const modeRef = useRef<Mode>("receipt");
+  const orderReturnScreenRef = useRef<Screen>("scan");
+  const loadMobileShortages = useCallback(
+    async (signal: AbortSignal) => {
+      if (uiPreviewMode) {
+        return demoDeductionRecords.filter(
+          (record) => record.shortageQuantity > 0,
+        );
+      }
+      const response = await apiFetch<unknown>(
+        "/prescription-shortages?sortBy=createdAt&sortDirection=desc",
+        { signal },
+      );
+      return deductionPayload(response).map(normalizeCmsDeduction);
+    },
+    [uiPreviewMode],
+  );
+
+  const loadMobilePrescriptions = useCallback(
+    async (range: OrderDateRange, signal: AbortSignal) => {
+      let records: CmsPrescriptionRecord[];
+      if (uiPreviewMode) {
+        records = createPrescriptionRecordsFromDeductions(
+          demoDeductionRecords,
+        ).filter((record) => {
+          const day = record.capturedAt.slice(0, 10).replace(/\./g, "-");
+          return day >= range.startDate && day <= range.endDate;
+        });
+      } else {
+        const params = new URLSearchParams({
+          ...range,
+          sortBy: "createdAt",
+          sortDirection: "desc",
+        });
+        try {
+          const response = await apiFetch<unknown>(
+            `/prescription-overviews?${params}`,
+            { signal },
+          );
+          records = prescriptionPayload(response).map(
+            normalizeCmsPrescriptionRecord,
+          );
+        } catch (error) {
+          if (
+            !(error instanceof ApiError) ||
+            ![404, 405, 501].includes(error.status)
+          )
+            throw error;
+          const response = await apiFetch<unknown>(
+            `/prescription-deductions?${params}`,
+            { signal },
+          );
+          records = createPrescriptionRecordsFromDeductions(
+            deductionPayload(response).map(normalizeCmsDeduction),
+          );
+        }
+      }
+      return records.map((record) => ({
+        ...record,
+        statusLabel: deductionStatusText(record.status),
+      }));
+    },
+    [uiPreviewMode],
+  );
+
+  const loadMobileRecentStock = useCallback(
+    async (range: OrderDateRange, signal: AbortSignal) => {
+      if (uiPreviewMode) {
+        return aggregateRecentStock(
+          demoDeductionRecords.flatMap(stockDecreaseRecordsFromDeduction),
+          initialStocks,
+          range,
+        );
+      }
+      const pharmacyId = getStoredAuthAccount()?.pharmacyId;
+      const params = new URLSearchParams({
+        ...range,
+        sortBy: "createdAt",
+        sortDirection: "desc",
+      });
+      if (pharmacyId) params.set("pharmacyId", pharmacyId);
+      // These endpoints can return an array or a paginated content envelope.
+      const loadPages = async (
+        path: string,
+        query: URLSearchParams,
+        read: (raw: unknown) => unknown[],
+      ) => {
+        const rows: unknown[] = [];
+        let page = 0;
+        let totalPages = 1;
+        do {
+          signal.throwIfAborted();
+          const pageQuery = new URLSearchParams(query);
+          pageQuery.set("page", String(page));
+          const response = await apiFetch<unknown>(`${path}?${pageQuery}`, { signal });
+          signal.throwIfAborted();
+          rows.push(...read(response));
+          totalPages = normalizeCmsPageResponse(response, 100).pageInfo.totalPages;
+          page += 1;
+        } while (page < totalPages);
+        return rows;
+      };
+      const loadMovements = async () => {
+        if (pharmacyId) {
+          try {
+            const rows = await loadPages(
+              "/stock-movements/decreases",
+              params,
+              stockMovementPayload,
+            );
+            return rows.map((raw, index) => {
+              const record = normalizeCmsStockMovementDecrease(raw, index);
+              const createdAt = asRecord(raw).createdAt;
+              return {
+                ...record,
+                cancelled: normalizeBoolean(
+                  asRecord(raw).cancelled ?? asRecord(raw).canceled ?? false,
+                ),
+                createdAt:
+                  typeof createdAt === "string"
+                    ? createdAt
+                    : formatApiDateTime(createdAt),
+              };
+            });
+          } catch (error) {
+            if (!(error instanceof ApiError) || ![404, 405, 501].includes(error.status))
+              throw error;
+          }
+        }
+        const rows = await loadPages(
+          "/prescription-deductions",
+          params,
+          deductionPayload,
+        );
+        return rows.flatMap((raw, index) => {
+          const record = normalizeCmsDeduction(raw, index);
+          const item = asRecord(raw);
+          if (normalizeBoolean(item.cancelled ?? item.canceled ?? false)) return [];
+          return stockDecreaseRecordsFromDeduction({
+            ...record,
+            createdAt:
+              typeof item.createdAt === "string" ? item.createdAt : record.createdAt,
+            substituteProcessedAt:
+              optionalText(item.substituteProcessedAt) || record.substituteProcessedAt,
+            resolvedAt: optionalText(item.resolvedAt) || record.resolvedAt,
+          });
+        });
+      };
+      const loadPrescribedDrugs = async () => {
+        try {
+          const rows = await loadPages(
+            "/prescription-overviews",
+            params,
+            prescriptionPayload,
+          );
+          return rows.map((raw, index) => {
+            const record = normalizeCmsPrescriptionRecord(raw, index);
+            const capturedAt = unwrapObjectPayload(raw).capturedAt;
+            return {
+              ...record,
+              capturedAt:
+                typeof capturedAt === "string" ? capturedAt : record.capturedAt,
+            };
+          });
+        } catch (error) {
+          if (!(error instanceof ApiError) || ![404, 405, 501].includes(error.status))
+            throw error;
+          const rows = await loadPages(
+            "/prescription-deductions",
+            params,
+            deductionPayload,
+          );
+          return createPrescriptionRecordsFromDeductions(
+            rows.map(normalizeCmsDeduction),
+          );
+        }
+      };
+      const stockParams = new URLSearchParams({
+        includeZero: "true",
+        sortBy: "name",
+        sortDirection: "asc",
+      });
+      if (pharmacyId) stockParams.set("pharmacyId", pharmacyId);
+      const [movements, rawStocks, recentPrescriptions] = await Promise.all([
+        loadMovements(),
+        loadPages("/stocks", stockParams, arrayPayload),
+        loadPrescribedDrugs(),
+      ]);
+      // Keep prescribed drugs visible even when all of the requested quantity was short.
+      const prescribedDrugs = recentPrescriptions.flatMap((record) =>
+        record.drugs.flatMap((drug, index) =>
+          drug.totalQuantity > 0 &&
+          !isCmsPrescriptionNonDeductibleRole(drug.substitutionRole)
+            ? [
+                {
+                  id: `prescribed-${record.id}-${drug.lineNo}-${index}`,
+                  source: "PRESCRIPTION",
+                  createdAt: record.capturedAt,
+                  stockId: drug.stockId,
+                  drugName: drug.drugName,
+                  insuranceCode: drug.insuranceCode,
+                  changeQuantity: 0,
+                  prescriptionExists: true,
+                },
+              ]
+            : [],
+        ),
+      );
+      const currentStocks = rawStocks.map((raw, index) => {
+        const stock = normalizeStock(raw, index);
+        const item = asRecord(raw);
+        const value = item.quantity ?? item.count ?? item.stockQuantity;
+        return {
+          ...stock,
+          quantity:
+            value === undefined ||
+            value === null ||
+            value === "" ||
+            !Number.isFinite(Number(value))
+              ? null
+              : stock.quantity,
+        };
+      });
+      return aggregateRecentStock(
+        [
+          ...movements.filter(
+            (record) =>
+              !record.pharmacyId || !pharmacyId || record.pharmacyId === pharmacyId,
+          ),
+          ...prescribedDrugs,
+        ],
+        currentStocks,
+        range,
+      );
+    },
+    [uiPreviewMode],
+  );
 
   const [screen, setScreen] = useState<Screen>(() => {
     if (receiptMatchPreview) return "receiptMatch";
@@ -4979,7 +5223,9 @@ function MobileApp({
       setReceiptSummary(null);
       setLastScanName("QR 스캔 대기");
       setMode("receipt");
-      setScreen("wholesaler");
+      setScreen((current) =>
+        ["orders", "recentStock"].includes(current) ? current : "wholesaler",
+      );
     } catch (error) {
       setApiFallback(error);
     }
@@ -6390,6 +6636,22 @@ function MobileApp({
           }}
           onReturnFirst={startReturnFirst}
           onSearch={searchWholesalers}
+          onRecentStock={
+            stockAdjustWeb
+              ? undefined
+              : () => {
+                  orderReturnScreenRef.current = "wholesaler";
+                  setScreen("recentStock");
+                }
+          }
+          onOrders={
+            stockAdjustWeb
+              ? undefined
+              : () => {
+                  orderReturnScreenRef.current = "wholesaler";
+                  setScreen("orders");
+                }
+          }
           onStart={() => {
             if (!pendingWholesaler) return;
             const wholesaler = pendingWholesaler;
@@ -6443,9 +6705,34 @@ function MobileApp({
           onScannerEngine={toggleScannerEngine}
           onSwitchCamera={switchCameraDevice}
           onStocks={() => setScreen("stocks")}
+          onRecentStock={() => {
+            orderReturnScreenRef.current = "scan";
+            setScreen("recentStock");
+          }}
+          onOrders={() => {
+            orderReturnScreenRef.current = "scan";
+            setScreen("orders");
+          }}
           onToggleCamera={toggleCamera}
           onToggleTorch={toggleTorch}
           onWholesaler={openWholesalerPicker}
+        />
+      )}
+
+      {screen === "recentStock" && (
+        <MobileRecentStockScreen
+          loadRecords={loadMobileRecentStock}
+          onBack={() => setScreen(orderReturnScreenRef.current)}
+          onLoginRequired={logoutMobile}
+        />
+      )}
+
+      {screen === "orders" && (
+        <MobileOrderScreen
+          loadShortages={loadMobileShortages}
+          loadPrescriptions={loadMobilePrescriptions}
+          onBack={() => setScreen(orderReturnScreenRef.current)}
+          onLoginRequired={logoutMobile}
         />
       )}
 
@@ -6839,6 +7126,8 @@ function ScanScreen({
   onScanPerformanceMode,
   onScannerEngine,
   onStocks,
+  onOrders,
+  onRecentStock,
   onSwitchCamera,
   onToggleCamera,
   onToggleTorch,
@@ -6871,6 +7160,8 @@ function ScanScreen({
   onScanPerformanceMode: () => void;
   onScannerEngine: () => void;
   onStocks: () => void;
+  onOrders: () => void;
+  onRecentStock: () => void;
   onSwitchCamera: () => void;
   onToggleCamera: () => void;
   onToggleTorch: () => void;
@@ -6943,6 +7234,14 @@ function ScanScreen({
         ) : (
           <strong className="dark-title">반품</strong>
         )}
+        <button
+          className="scan-order-button"
+          type="button"
+          onClick={onOrders}
+        >
+          <ClipboardList size={18} aria-hidden="true" />
+          주문관리
+        </button>
         <div className="scan-menu-wrap">
           <button
             ref={statusMenuButtonRef}
@@ -6961,6 +7260,15 @@ function ScanScreen({
           </button>
           {menuOpen && (
             <div className="scan-dropdown">
+              <button
+                type="button"
+                onClick={() => {
+                  setMenuOpen(false);
+                  onRecentStock();
+                }}
+              >
+                최근 차감 재고
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -7234,6 +7542,8 @@ function WholesalerScreen({
   onManualReceipt,
   onReturnFirst,
   onSearch,
+  onOrders,
+  onRecentStock,
   onStart,
 }: {
   currentWholesalerName?: string;
@@ -7248,6 +7558,8 @@ function WholesalerScreen({
   onManualReceipt: () => void;
   onReturnFirst: () => void;
   onSearch: (keyword: string) => void;
+  onOrders?: () => void;
+  onRecentStock?: () => void;
   onStart: () => void;
 }) {
   const selected = wholesalers.find((item) => item.id === pendingId);
@@ -7297,6 +7609,34 @@ function WholesalerScreen({
         />
       </label>
       <section className="scroll-body">
+        {onOrders && (
+          <button
+            className="mobile-order-entry"
+            type="button"
+            onClick={onOrders}
+          >
+            <ClipboardList size={22} aria-hidden="true" />
+            <span>
+              <strong>주문관리</strong>
+              <em>처방 내역과 초과 처방을 함께 확인하세요.</em>
+            </span>
+            <ChevronRight size={20} aria-hidden="true" />
+          </button>
+        )}
+        {onRecentStock && (
+          <button
+            className="mobile-order-entry mobile-recent-stock-entry"
+            type="button"
+            onClick={onRecentStock}
+          >
+            <PackageMinus size={22} aria-hidden="true" />
+            <span>
+              <strong>최근 차감 재고</strong>
+              <em>최근 3일 차감 수량과 남은 재고를 확인하세요.</em>
+            </span>
+            <ChevronRight size={20} aria-hidden="true" />
+          </button>
+        )}
         {selected && (
           <div className="selected-wholesaler">
             <span>선택됨</span>
@@ -17125,6 +17465,34 @@ function CmsSidebar({
   onToggleCollapsed: () => void;
   page: CmsPage;
 }) {
+  const compact = useMediaQuery(cmsCompactNavQuery);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    setMenuOpen(false);
+  }, [page, compact]);
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setMenuOpen(false);
+      menuButtonRef.current?.focus();
+    };
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (
+        event.target instanceof Node &&
+        !menuRef.current?.contains(event.target)
+      )
+        setMenuOpen(false);
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    document.addEventListener("click", closeOnOutsideClick);
+    return () => {
+      document.removeEventListener("keydown", closeOnEscape);
+      document.removeEventListener("click", closeOnOutsideClick);
+    };
+  }, [menuOpen]);
   const canAccessPurchase = canAccessPurchaseCms(account);
   const items: Array<[string, string, string, string]> = [
     ["dashboard", "대시보드", "/cms", homeIcon],
@@ -17197,13 +17565,31 @@ function CmsSidebar({
   const accountDisplay = getCmsAccountDisplay(account);
 
   return (
-    <aside className="cms-sidebar">
+    <aside
+      className={`cms-sidebar ${menuOpen ? "is-mobile-menu-open" : ""}`}
+      ref={menuRef}
+    >
       <div className="cms-brand">
         <BrandMark className="cms-brand-logo" />
         <div>
           <strong>팜팜</strong>
           <em>관리자 페이지</em>
         </div>
+        <button
+          ref={menuButtonRef}
+          className="cms-mobile-menu-toggle"
+          type="button"
+          aria-expanded={menuOpen}
+          aria-controls="cms-navigation"
+          onClick={() => setMenuOpen((current) => !current)}
+        >
+          {menuOpen ? (
+            <X size={20} aria-hidden="true" />
+          ) : (
+            <Menu size={20} aria-hidden="true" />
+          )}
+          {menuOpen ? "닫기" : "전체 메뉴"}
+        </button>
         <button
           className="cms-sidebar-toggle"
           type="button"
@@ -17218,14 +17604,24 @@ function CmsSidebar({
           )}
         </button>
       </div>
-      <nav className="cms-nav">
+      <nav
+        className="cms-nav"
+        id="cms-navigation"
+        aria-label="관리자 메뉴"
+        hidden={compact && !menuOpen}
+      >
         {items.map(([key, label, href, icon]) => (
           <button
             key={key}
             className={page === key ? "is-active" : ""}
             type="button"
             title={label}
-            onClick={() => navigate(href)}
+            aria-current={page === key ? "page" : undefined}
+            onClick={() => {
+              setMenuOpen(false);
+              navigate(href);
+              if (compact) menuButtonRef.current?.focus();
+            }}
           >
             <img className="cms-nav-icon" src={icon} alt="" aria-hidden />
             <span className="cms-nav-label">{label}</span>
@@ -17824,19 +18220,20 @@ function CmsAccountPage({
                   setSheetOpen(true);
                 }}
               >
-                <strong>
+                <strong data-label="약국">
                   {account.pharmacyName}
                   <small>#{account.pharmacyId}</small>
                 </strong>
-                <span>{account.loginId}</span>
-                <span>{account.accountName}</span>
-                <span>{accountTypeLabel(account)}</span>
+                <span data-label="로그인 ID">{account.loginId}</span>
+                <span data-label="계정명">{account.accountName}</span>
+                <span data-label="권한">{accountTypeLabel(account)}</span>
                 <span
+                  data-label="상태"
                   className={`cms-badge ${cmsAccountStatusClass(account.status)}`}
                 >
                   {cmsAccountStatusText(account.status)}
                 </span>
-                <span>{account.lastLoginAt}</span>
+                <span data-label="마지막 로그인">{account.lastLoginAt}</span>
               </button>
             ))}
             {accounts.length === 0 && (
@@ -18906,13 +19303,18 @@ function CmsMasterPage({
                   setSheetOpen(true);
                 }}
               >
-                <span>{shortCode(master.standardCode)}</span>
-                <span>{master.insuranceCode || "-"}</span>
-                <strong>{master.name}</strong>
-                <span>{master.spec}</span>
-                <span>{master.productTotalQuantity}</span>
-                <span>{currency(master.price)}원</span>
-                <span className={`cms-badge ${statusClass(master.status)}`}>
+                <span data-label="표준코드">
+                  {shortCode(master.standardCode)}
+                </span>
+                <span data-label="보험코드">{master.insuranceCode || "-"}</span>
+                <strong data-label="약품명">{master.name}</strong>
+                <span data-label="규격">{master.spec}</span>
+                <span data-label="총수량">{master.productTotalQuantity}</span>
+                <span data-label="가격">{currency(master.price)}원</span>
+                <span
+                  data-label="매칭"
+                  className={`cms-badge ${statusClass(master.status)}`}
+                >
                   {statusText(master.status)}
                 </span>
               </button>
@@ -19434,7 +19836,7 @@ function CmsInventoryPage({
                   }
                 }}
               >
-                <div className="cms-stock-name-cell">
+                <div data-label="약품명" className="cms-stock-name-cell">
                   <strong>{stock.name}</strong>
                   {isVirtualStock(stock) && (
                     <span className="cms-badge virtual">임의</span>
@@ -19452,13 +19854,18 @@ function CmsInventoryPage({
                     </span>
                   )}
                 </div>
-                <span>
+                <span data-label="보험코드">
                   {formatInsuranceCodeForDisplay(stock.insuranceCode)}
                 </span>
-                <span>{currency(stock.price)}원</span>
-                <span>{stock.quantity}</span>
-                <span>{currency(stock.quantity * stock.price)}원</span>
-                <span className={`cms-badge ${statusClass(stock.matchStatus)}`}>
+                <span data-label="가격">{currency(stock.price)}원</span>
+                <span data-label="보유 수량">{stock.quantity}</span>
+                <span data-label="예상 금액">
+                  {currency(stock.quantity * stock.price)}원
+                </span>
+                <span
+                  data-label="매칭"
+                  className={`cms-badge ${statusClass(stock.matchStatus)}`}
+                >
                   {isVirtualStock(stock) && stock.price <= 0
                     ? "가격 필요"
                     : statusText(stock.matchStatus)}
@@ -20176,11 +20583,12 @@ function CmsStockDecreaseHistoryPage({
                 }`}
                 key={record.id}
               >
-                <span>
+                <span data-label="일시">
                   {record.createdAt}
                   {record.pharmacyName && <em>{record.pharmacyName}</em>}
                 </span>
                 <span
+                  data-label="구분"
                   className={`cms-badge ${
                     record.source === "PRESCRIPTION"
                       ? "is-prescription"
@@ -20193,17 +20601,17 @@ function CmsStockDecreaseHistoryPage({
                     ? "취소됨"
                     : stockDecreaseSourceLabel(record.source)}
                 </span>
-                <strong>
+                <strong data-label="약품">
                   {record.drugName}
                   <em>
                     {formatInsuranceCodeForDisplay(record.insuranceCode) ||
                       "보험코드 없음"}
                   </em>
                 </strong>
-                <b className="is-decrease">
+                <b data-label="감소" className="is-decrease">
                   -{currency(Math.abs(record.changeQuantity))}개
                 </b>
-                <span>
+                <span data-label="재고 변화">
                   {record.beforeQuantity === undefined ||
                   record.afterQuantity === undefined
                     ? "-"
@@ -20211,7 +20619,7 @@ function CmsStockDecreaseHistoryPage({
                         record.afterQuantity,
                       )}`}
                 </span>
-                <span>
+                <span data-label="참조">
                   {record.referenceId || "-"}
                   <em>
                     {[
@@ -20222,7 +20630,7 @@ function CmsStockDecreaseHistoryPage({
                       .join(" · ")}
                   </em>
                 </span>
-                <span>
+                <span data-label="사유">
                   {record.reason || "-"}
                   <em>{record.detail}</em>
                 </span>
@@ -20389,6 +20797,7 @@ function CmsStockSnapshotDiffPage({
                 onClick={() => onOpenDetail(record)}
               >
                 <span
+                  data-label="상태"
                   className={`cms-badge ${
                     record.diffType === "SNAPSHOT_ONLY"
                       ? "is-snapshot-only"
@@ -20399,7 +20808,7 @@ function CmsStockSnapshotDiffPage({
                 >
                   {stockSnapshotDiffTypeLabel(record.diffType)}
                 </span>
-                <strong>
+                <strong data-label="약품">
                   {record.drugName}
                   <em>
                     {formatInsuranceCodeForDisplay(record.insuranceCode) ||
@@ -20407,8 +20816,8 @@ function CmsStockSnapshotDiffPage({
                     {record.stockId ? ` · stock#${record.stockId}` : ""}
                   </em>
                 </strong>
-                <b>{currency(record.stockQuantity)}개</b>
-                <span>
+                <b data-label="현재 재고">{currency(record.stockQuantity)}개</b>
+                <span data-label="예상 재고">
                   {currency(record.expectedQuantity)}개
                   <em>
                     기준 {currency(record.baselineQuantity)} · 이후{" "}
@@ -20417,6 +20826,7 @@ function CmsStockSnapshotDiffPage({
                   </em>
                 </span>
                 <b
+                  data-label="차이"
                   className={
                     record.differenceQuantity > 0
                       ? "is-increase"
@@ -20426,7 +20836,7 @@ function CmsStockSnapshotDiffPage({
                   {record.differenceQuantity > 0 ? "+" : ""}
                   {currency(record.differenceQuantity)}개
                 </b>
-                <span>
+                <span data-label="기준 시간">
                   {stockSnapshotBaselineLabel(record.baselineType)}{" "}
                   {record.baselineAt}
                   <em>
@@ -21292,8 +21702,11 @@ function CmsInventoryShortagePage({
                       }
                     }}
                   >
-                    <span>{record.createdAt}</span>
-                    <strong className="cms-shortage-drug-cell">
+                    <span data-label="처방일시">{record.createdAt}</span>
+                    <strong
+                      data-label="약품"
+                      className="cms-shortage-drug-cell"
+                    >
                       <span className="cms-shortage-drug-line">
                         <span className="cms-shortage-drug-name">
                           {record.drugName}
@@ -21306,17 +21719,21 @@ function CmsInventoryShortagePage({
                       </span>
                       <em>{record.insuranceCode}</em>
                     </strong>
-                    <span>{record.prescriptionCode}</span>
-                    <b>
+                    <span data-label="처방전">{record.prescriptionCode}</span>
+                    <b data-label="차감 / 처방 수량">
                       {record.deductedQuantity}/{record.totalQuantity}
                     </b>
-                    <b className="is-shortage">{record.shortageQuantity}개</b>
+                    <b data-label="부족 수량" className="is-shortage">
+                      {record.shortageQuantity}개
+                    </b>
                     <span
+                      data-label="상태"
                       className={`cms-badge ${shortageStatusBadgeClass(record.shortageStatus)}`}
                     >
                       {shortageStatusText(record.shortageStatus)}
                     </span>
                     <button
+                      data-label=""
                       className="cms-shortage-open-detail"
                       type="button"
                       onClick={(event) => {
@@ -22275,17 +22692,18 @@ function CmsReturnReviewPage({
                       }
                     }}
                   >
-                    <span>{record.createdAt}</span>
-                    <strong>
+                    <span data-label="스캔일시">{record.createdAt}</span>
+                    <strong data-label="약품">
                       {record.drugName}
                       <em>{record.insuranceCode || "보험코드 없음"}</em>
                     </strong>
-                    <span>
+                    <span data-label="PC / SN">
                       {record.pc}
                       <em>{record.sn || "SN 없음"}</em>
                     </span>
-                    <b>{record.sellerCandidateCount}건</b>
+                    <b data-label="후보">{record.sellerCandidateCount}건</b>
                     <span
+                      data-label="상태"
                       className={`cms-badge ${returnReviewStatusBadgeClass(
                         record.status,
                       )}`}
@@ -22293,6 +22711,7 @@ function CmsReturnReviewPage({
                       {returnReviewStatusText(record.status)}
                     </span>
                     <button
+                      data-label=""
                       className="cms-shortage-open-detail"
                       type="button"
                       onClick={(event) => {
@@ -22934,9 +23353,9 @@ function CmsWholesalerPage({
                     setSheetMode("edit");
                   }}
                 >
-                  <strong>{wholesaler.name}</strong>
-                  <span>{wholesaler.meta}</span>
-                  <span>{wholesaler.id}</span>
+                  <strong data-label="도매처명">{wholesaler.name}</strong>
+                  <span data-label="구분">{wholesaler.meta}</span>
+                  <span data-label="ID">{wholesaler.id}</span>
                 </button>
               ))}
             {!canSearch && (
@@ -23239,7 +23658,7 @@ function CmsPrescriptionSummaryPage({
                 type="button"
                 onClick={() => onSelectPrescription(record.id)}
               >
-                <strong>
+                <strong data-label="대표 약품">
                   <span className="cms-prescription-title-main">
                     <span>{record.primaryDrugName}</span>
                     {record.substitutionReplacementCount > 0 && (
@@ -23250,11 +23669,11 @@ function CmsPrescriptionSummaryPage({
                   </span>
                   <em>{record.prescriptionCode}</em>
                 </strong>
-                <span>
+                <span data-label="처방일시">
                   {record.capturedAt}
                   <em>{record.source || "처방 데이터"}</em>
                 </span>
-                <span>
+                <span data-label="품목">
                   {record.drugCount}개 품목
                   <em>
                     {record.substitutionReplacementCount > 0
@@ -23262,14 +23681,18 @@ function CmsPrescriptionSummaryPage({
                       : "대체 없음"}
                   </em>
                 </span>
-                <b>
+                <b data-label="차감 / 처방 수량">
                   {currency(record.deductedQuantity)}/
                   {currency(record.totalQuantity)}개
                 </b>
-                <b className={record.shortageQuantity > 0 ? "is-shortage" : ""}>
+                <b
+                  data-label="부족 수량"
+                  className={record.shortageQuantity > 0 ? "is-shortage" : ""}
+                >
                   {currency(record.shortageQuantity)}개
                 </b>
                 <span
+                  data-label="상태"
                   className={`cms-badge ${deductionStatusClass(record.status)}`}
                 >
                   {deductionStatusText(record.status)}
@@ -23937,23 +24360,29 @@ function CmsPrescriptionPage({
                   setSheetOpen(true);
                 }}
               >
-                <span>
+                <span data-label="처방전">
                   {record.prescriptionCode}
                   <em>line {record.lineNo}</em>
                 </span>
-                <strong>
+                <strong data-label="약품">
                   {record.drugName}
                   <em>{record.reason}</em>
                 </strong>
-                <span className="mono">{record.insuranceCode}</span>
-                <b>{record.totalQuantity}개</b>
-                <b className={record.shortageQuantity > 0 ? "is-shortage" : ""}>
+                <span data-label="보험코드" className="mono">
+                  {record.insuranceCode}
+                </span>
+                <b data-label="요청">{record.totalQuantity}개</b>
+                <b
+                  data-label="결과"
+                  className={record.shortageQuantity > 0 ? "is-shortage" : ""}
+                >
                   -{record.deductedQuantity}개
                   {record.shortageQuantity > 0 && (
                     <em>부족 {record.shortageQuantity}개</em>
                   )}
                 </b>
                 <span
+                  data-label="상태"
                   className={`cms-badge ${deductionStatusClass(record.status)}`}
                 >
                   {deductionStatusText(record.status)}
@@ -25029,13 +25458,16 @@ function CmsAgentControlPage({
             </div>
             {visibleCommands.map((command) => (
               <div className="cms-agent-command-row" key={command.commandId}>
-                <span>{command.createdAt}</span>
-                <strong>
+                <span data-label="요청일시">{command.createdAt}</span>
+                <strong data-label="약국·기기">
                   {command.pharmacyName}
                   <em>{command.deviceId}</em>
                 </strong>
-                <span>{agentCommandLabel(command.commandType)}</span>
+                <span data-label="명령">
+                  {agentCommandLabel(command.commandType)}
+                </span>
                 <span
+                  data-label="상태"
                   className={`cms-badge ${
                     command.status === "COMPLETED"
                       ? "normal"
@@ -25049,7 +25481,11 @@ function CmsAgentControlPage({
                 >
                   {agentCommandStatusText(command.status)}
                 </span>
-                <span className="cms-agent-command-message" title={command.message}>
+                <span
+                  data-label="메시지"
+                  className="cms-agent-command-message"
+                  title={command.message}
+                >
                   <span>{command.message || "-"}</span>
                   {command.diagnosticsAvailable && (
                     <button
@@ -25578,24 +26014,27 @@ function CmsReceiptHistoryPage({
             </div>
             {pagination.items.map((history) => (
               <div className="cms-receipt-history-row" key={history.id}>
-                <span>
+                <span data-label="입고일시">
                   {history.receivedAt}
                   <em>등록 {history.createdBy || "-"}</em>
                 </span>
                 {canLookupByPharmacyId && (
-                  <span>
+                  <span data-label="약국">
                     {history.pharmacyName || "약국"}
                     <em>#{history.pharmacyId || appliedFilters.pharmacyId}</em>
                   </span>
                 )}
-                <strong>
+                <strong data-label="약품">
                   {history.drugName}
                   <em>
                     {formatInsuranceCodeForDisplay(history.insuranceCode) ||
                       "-"}
                   </em>
                 </strong>
-                <div className="cms-receipt-wholesaler-cell">
+                <div
+                  data-label="도매처"
+                  className="cms-receipt-wholesaler-cell"
+                >
                   <span title={history.wholesalerName}>
                     {history.wholesalerName}
                   </span>
@@ -25609,12 +26048,20 @@ function CmsReceiptHistoryPage({
                     </button>
                   )}
                 </div>
-                <span className="cms-receipt-quantity-cell">
+                <span
+                  data-label="재고 반영 수량"
+                  className="cms-receipt-quantity-cell"
+                >
                   <b>{currency(history.productTotalQuantity)}개</b>
                   <em>PC 기준 재고 반영</em>
                 </span>
-                <b>{currency(history.returnableQuantity)}개</b>
-                <span className="cms-receipt-trace-cell">
+                <b data-label="반품 가능">
+                  {currency(history.returnableQuantity)}개
+                </b>
+                <span
+                  data-label="PC · QR 추적값"
+                  className="cms-receipt-trace-cell"
+                >
                   <strong title={history.pc}>PC {history.pc || "-"}</strong>
                   <em title={history.sn}>SN {history.sn || "-"}</em>
                   <em>
@@ -25622,6 +26069,7 @@ function CmsReceiptHistoryPage({
                   </em>
                 </span>
                 <span
+                  data-label="상태"
                   className={`cms-badge ${receiptHistoryStatusBadgeClass(
                     history.status,
                   )}`}

@@ -8,6 +8,12 @@
 }
 
 :root {
+  --font-xs: 0.8rem;
+  --font-sm: 0.875rem;
+  --font-md: 1rem;
+  --font-lg: 1.25rem;
+  --font-xl: 1.563rem;
+  --font-2xl: 1.953rem;
   --blue: #0064ff;
   --blue-soft: #eff5ff;
   --blue-line: #cce0ff;
@@ -15922,4 +15928,1240 @@ body:has(.cms-shell) {
   .cms-arrival-compare-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* Mobile work surfaces: shared navigation, readable records and touch controls. */
+.cms-mobile-menu-toggle {
+  display: none;
+}
+
+.scan-order-button {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  margin-right: 8px;
+  border: 1px solid oklch(80% 0.02 230 / 0.5);
+  border-radius: 8px;
+  padding: 0 8px;
+  color: #fff;
+  background: oklch(22% 0.018 230 / 0.85);
+  font-size: var(--font-sm);
+  font-weight: 750;
+  white-space: nowrap;
+}
+
+.scan-top > .glass-pill {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.scan-top > .scan-menu-wrap,
+.scan-order-button {
+  flex-shrink: 0;
+}
+
+.mobile-order-entry {
+  display: flex;
+  width: 100%;
+  min-height: 72px;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 24px;
+  border-bottom: 1px solid var(--line);
+  padding: 12px 0 16px;
+  color: oklch(47% 0.18 255);
+  text-align: left;
+}
+
+.mobile-order-entry > span {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 4px;
+}
+
+.mobile-order-entry strong {
+  font-size: var(--font-md);
+  font-weight: 850;
+}
+
+.mobile-order-entry em {
+  font-weight: 700;
+  color: oklch(48% 0.025 230);
+  font-size: var(--font-sm);
+  font-style: normal;
+  line-height: 1.5;
+}
+
+@media (max-width: 980px), (max-height: 560px) {
+  .cms-shell .cms-sidebar {
+    display: flex;
+    width: 100%;
+    height: auto;
+    flex: 0 0 auto;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    padding: calc(8px + env(safe-area-inset-top)) 16px 8px;
+  }
+
+  .cms-sidebar .cms-brand {
+    gap: 8px;
+    padding: 0;
+  }
+
+  .cms-brand .brand-mark {
+    width: 40px;
+    height: 40px;
+    flex-basis: 40px;
+  }
+
+  .cms-brand em,
+  .cms-sidebar-toggle {
+    display: none;
+  }
+
+  .cms-mobile-menu-toggle {
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    margin-left: auto;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 0 12px;
+    color: oklch(40% 0.025 230);
+    font-size: var(--font-sm);
+    font-weight: 750;
+  }
+
+  .cms-sidebar .cms-nav {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: 60dvh;
+    gap: 8px;
+    overflow-y: auto;
+    padding: 16px 0 8px;
+  }
+
+  .cms-sidebar .cms-nav[hidden] {
+    display: none;
+  }
+
+  .cms-sidebar .cms-nav button {
+    min-width: 0;
+    min-height: 48px;
+    padding: 8px 12px;
+    font-size: var(--font-sm);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .cms-sidebar .cms-account {
+    display: none;
+  }
+
+  .cms-sidebar.is-mobile-menu-open .cms-account {
+    display: flex;
+    justify-content: flex-start;
+    border-top: 1px solid var(--line);
+    padding: 12px 0 4px;
+  }
+
+  .cms-content,
+  .cms-list-page,
+  .cms-content.cms-split {
+    height: auto;
+    min-width: 0;
+    overflow: visible;
+  }
+
+  .cms-grid.two,
+  .cms-split {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cms-content
+    :where(
+      input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+      select,
+      textarea
+    ) {
+    min-width: 0;
+    font-size: var(--font-md);
+  }
+
+  .cms-shell :where(button, a[role="button"], .cms-upload-btn) {
+    min-height: 44px;
+  }
+
+  .cms-content > *,
+  .cms-grid > *,
+  .cms-toolbar > *,
+  .cms-field-grid > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+
+  .cms-content
+    :where(.cms-panel, .cms-sync-card, .cms-list-row, .cms-readonly-item) {
+    overflow-wrap: anywhere;
+  }
+
+  .cms-panel header {
+    gap: 12px;
+  }
+}
+
+@media (max-width: 680px) {
+  .cms-content {
+    padding: 16px 12px calc(24px + env(safe-area-inset-bottom));
+  }
+
+  .cms-header {
+    display: flex;
+    min-height: 64px;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 8px;
+    padding: 8px 12px;
+  }
+
+  .cms-header > div:first-child {
+    width: auto;
+    flex: 1;
+  }
+
+  .cms-header strong {
+    font-size: var(--font-md);
+    line-height: 1.25;
+    overflow-wrap: anywhere;
+  }
+
+  .cms-header > div:first-child > span {
+    display: none;
+  }
+
+  .cms-header .cms-header-actions {
+    width: auto;
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    gap: 4px;
+  }
+
+  .cms-header .cms-header-action {
+    width: 44px;
+    flex: 0 0 44px;
+    padding: 0;
+  }
+
+  .cms-header-action-label {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .cms-content .cms-kpis,
+  .cms-content .cms-shortage-filter {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+
+  .cms-kpi {
+    padding: 12px;
+  }
+
+  .cms-kpi strong {
+    font-size: var(--font-xl);
+    overflow-wrap: anywhere;
+  }
+
+  .cms-list-page .cms-table-card,
+  .cms-prescription-page .prescription-table-card {
+    min-height: 0;
+  }
+
+  .cms-list-page .cms-table-scroll {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .cms-content
+    :is(
+      .cms-table,
+      .cms-shortage-table,
+      .cms-prescription-summary-table,
+      .cms-deduction-table,
+      .cms-stock-decrease-table,
+      .cms-stock-snapshot-diff-table,
+      .cms-receipt-history-table,
+      .cms-agent-command-table
+    ) {
+    width: 100%;
+    min-width: 0;
+  }
+
+  .cms-content
+    :is(
+      .cms-tr,
+      .cms-shortage-row,
+      .cms-prescription-summary-row,
+      .cms-deduction-row,
+      .cms-stock-decrease-row,
+      .cms-stock-snapshot-diff-row,
+      .cms-receipt-history-row,
+      .cms-agent-command-row
+    ):not(.cms-th) {
+    display: grid;
+    min-height: 0;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px 16px;
+    border-bottom: 1px solid var(--line);
+    padding: 16px;
+  }
+
+  .cms-content
+    :is(
+      .cms-tr,
+      .cms-shortage-row,
+      .cms-prescription-summary-row,
+      .cms-deduction-row,
+      .cms-stock-decrease-row,
+      .cms-stock-snapshot-diff-row,
+      .cms-receipt-history-row,
+      .cms-agent-command-row
+    )
+    > [data-label] {
+    display: block;
+    min-width: 0;
+    max-width: 100%;
+    justify-self: stretch;
+    overflow: visible;
+    color: var(--ink);
+    font-size: var(--font-sm);
+    line-height: 1.5;
+    text-align: left;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .cms-content [data-label]::before {
+    display: block;
+    margin-bottom: 4px;
+    color: oklch(45% 0.025 230);
+    content: attr(data-label);
+    font-size: var(--font-xs);
+    font-weight: 600;
+    line-height: 1.3;
+  }
+
+  .cms-content [data-label=""]::before {
+    display: none;
+  }
+
+  .cms-content
+    :is(
+      [data-label="약품"],
+      [data-label="약품명"],
+      [data-label="대표 약품"],
+      strong[data-label="약국"],
+      strong[data-label="도매처명"]
+    ) {
+    grid-column: 1 / -1;
+    order: -1;
+    font-size: var(--font-md);
+    font-weight: 800;
+  }
+
+  .cms-content
+    :is(
+      [data-label="PC · QR 추적값"],
+      [data-label="사유"],
+      [data-label="기준 시간"]
+    ) {
+    grid-column: 1 / -1;
+  }
+
+  .cms-content [data-label].cms-badge {
+    justify-self: start;
+    align-self: start;
+    white-space: normal;
+  }
+
+  .cms-content .cms-th {
+    display: none;
+  }
+
+  .cms-content .cms-th:has(button) {
+    position: static;
+    display: flex;
+    min-height: 44px;
+    flex-wrap: wrap;
+    gap: 4px 12px;
+    padding: 8px 12px;
+  }
+
+  .cms-content .cms-th:has(button)::before {
+    content: "정렬";
+    color: oklch(45% 0.025 230);
+    font-size: var(--font-xs);
+  }
+
+  .cms-content .cms-th > :not(button) {
+    display: none;
+  }
+
+  .cms-content .cms-th button {
+    flex: 0 0 auto;
+    font-size: var(--font-xs);
+  }
+
+  .cms-shortage-row .cms-shortage-drug-line {
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+
+  .cms-shortage-row .cms-shortage-drug-name,
+  .cms-content .cms-stock-name-cell strong,
+  .cms-content .cms-prescription-title-main > span {
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .cms-content .cms-prescription-list-controls {
+    grid-template-columns: minmax(0, 1fr) 64px;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .cms-prescription-list-controls .cms-search,
+  .cms-prescription-list-controls .cms-stock-decrease-pharmacy {
+    grid-column: 1 / -1;
+    width: 100%;
+    max-width: none;
+  }
+
+  .cms-content .cms-prescription-list-controls .cms-toolbar-action {
+    width: 100%;
+    min-height: 44px;
+    grid-column: 2;
+  }
+
+  .cms-prescription-list-controls .cms-date-range-trigger {
+    min-height: 44px;
+    grid-column: 1;
+  }
+
+  .cms-content .cms-toolbar-action,
+  .cms-content .cms-search {
+    width: 100%;
+    min-width: 0;
+    max-width: none;
+  }
+
+  .cms-content .cms-pills {
+    display: flex;
+    width: 100%;
+    min-width: 0;
+    flex-wrap: wrap;
+    overflow: visible;
+    gap: 8px;
+  }
+
+  .cms-content .cms-pills button {
+    flex: 1 1 auto;
+    min-height: 44px;
+    padding: 8px;
+    font-size: var(--font-sm);
+  }
+
+  .cms-inventory-search-controls .cms-inventory-filter {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+    overflow: visible;
+  }
+
+  .cms-inventory-filter button {
+    white-space: normal;
+    font-size: var(--font-xs);
+  }
+
+  .cms-calendar-day,
+  .cms-date-range-preset {
+    min-height: 44px;
+  }
+
+  .cms-calendar-week,
+  .cms-calendar-days {
+    gap: 0;
+  }
+
+  .cms-sheet,
+  .cms-modal,
+  .cms-shortage-layout:not(.is-detail) .cms-shortage-detail-card {
+    width: 100%;
+    max-width: 100%;
+    max-height: 92dvh;
+    height: 92dvh;
+    border-radius: 16px 16px 0 0;
+  }
+
+  .cms-modal-backdrop {
+    padding: 0;
+  }
+
+  .cms-shortage-layout:not(.is-detail) .cms-shortage-detail-card {
+    top: auto;
+    bottom: 0;
+  }
+
+  .cms-sheet-body,
+  .cms-modal-body {
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  }
+
+  .cms-content .cms-field-grid .span-2,
+  .cms-content .cms-cookie-token-grid .span-2 {
+    grid-column: auto;
+  }
+
+  .cms-pagination-controls {
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-order-item summary > svg {
+    transition: none;
+  }
+}
+
+@media (max-width: 680px) {
+  .cms-prescription-paper {
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .cms-prescription-paper > * {
+    min-width: 0;
+  }
+
+  .cms-prescription-paper-head {
+    flex-wrap: wrap;
+  }
+
+  .cms-prescription-paper-head strong,
+  .cms-prescription-paper-meta b,
+  .cms-prescription-line-main strong,
+  .cms-prescription-line-main span {
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .cms-content [data-label].is-shortage {
+    color: var(--red);
+  }
+
+  .cms-content [data-label="메시지"] {
+    grid-column: 1 / -1;
+  }
+
+  .cms-content .cms-agent-command-message > span {
+    overflow: visible;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+
+  .cms-sheet-close,
+  .cms-modal-header > button,
+  .cms-inquiry-contact-actions a {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}
+
+/* Order management shares the weight and inset rhythm of the mobile work screens. */
+.mobile-order-page {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  --order-inset: 24px;
+  --order-muted: oklch(45% 0.025 230);
+  font-weight: 700;
+}
+
+.mobile-order-header {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: 44px minmax(0, 1fr) 44px;
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  padding: 8px 16px;
+}
+
+.mobile-order-header h1 {
+  margin: 0;
+  font-size: var(--font-lg);
+  font-weight: 900;
+  line-height: 1.25;
+  text-align: center;
+}
+
+.mobile-order-header button,
+.mobile-order-date-dialog header button {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+}
+
+.mobile-order-tabs {
+  display: grid;
+  flex: 0 0 auto;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  border-bottom: 1px solid var(--line);
+  padding: 0 var(--order-inset);
+}
+
+.mobile-order-tabs button {
+  min-height: 52px;
+  border-bottom: 3px solid transparent;
+  color: var(--order-muted);
+  font-size: var(--font-md);
+  font-weight: 850;
+}
+
+.mobile-order-tabs button[aria-selected="true"] {
+  border-color: var(--blue);
+  color: var(--blue);
+}
+
+.mobile-order-panel {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.mobile-order-panel[hidden] {
+  display: none;
+}
+
+.mobile-order-controls {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 12px;
+  padding: 20px var(--order-inset) 12px;
+}
+
+.mobile-order-controls > p,
+.mobile-order-count {
+  margin: 0;
+  color: var(--order-muted);
+  font-size: var(--font-sm);
+  font-weight: 750;
+  line-height: 1.5;
+}
+
+.mobile-order-controls .search-field {
+  width: 100%;
+  min-height: 48px;
+  margin: 0;
+  padding: 0 16px;
+}
+
+.mobile-order-controls input {
+  min-width: 0;
+  font-size: var(--font-md);
+  font-weight: 800;
+}
+
+.mobile-order-date-trigger {
+  display: flex;
+  width: 100%;
+  min-height: 56px;
+  align-items: center;
+  gap: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--ink);
+  text-align: left;
+}
+
+.mobile-order-date-trigger > span {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  gap: 4px;
+}
+
+.mobile-order-date-trigger em {
+  color: var(--order-muted);
+  font-size: var(--font-xs);
+  font-style: normal;
+  font-weight: 750;
+}
+
+.mobile-order-date-trigger strong {
+  font-size: var(--font-sm);
+  font-weight: 850;
+  overflow-wrap: anywhere;
+}
+
+.mobile-order-date-trigger > svg {
+  flex-shrink: 0;
+  color: var(--order-muted);
+}
+
+.mobile-order-filters {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mobile-order-filters button {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 12px;
+  color: var(--order-muted);
+  font-size: var(--font-sm);
+  font-weight: 800;
+}
+
+.mobile-order-filters button[aria-pressed="true"] {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.mobile-order-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 var(--order-inset) 24px;
+  scrollbar-width: none;
+}
+
+.mobile-order-list::-webkit-scrollbar {
+  display: none;
+}
+
+.mobile-order-count {
+  padding: 8px 0 12px;
+}
+
+.mobile-order-item {
+  border-top: 1px solid var(--line);
+}
+
+.mobile-order-item summary,
+.mobile-order-record-row {
+  display: flex;
+  min-height: 112px;
+  align-items: center;
+  gap: 8px;
+  padding: 16px 0;
+  cursor: pointer;
+  list-style: none;
+}
+
+.mobile-order-record-row {
+  width: 100%;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-radius: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.mobile-order-item summary::-webkit-details-marker {
+  display: none;
+}
+
+.mobile-order-item-copy {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 8px;
+}
+
+.mobile-order-item-copy strong {
+  color: var(--ink);
+  font-size: var(--font-md);
+  font-weight: 850;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.mobile-order-item-copy > span,
+.mobile-order-item-copy time,
+.mobile-order-quantity > span {
+  color: var(--order-muted);
+  font-size: var(--font-xs);
+  font-weight: 750;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.mobile-order-status {
+  max-width: 72px;
+  flex-shrink: 0;
+  border-radius: 6px;
+  background: var(--blue-soft);
+  padding: 4px 8px;
+  color: var(--blue);
+  font-size: var(--font-xs);
+  font-weight: 850;
+  line-height: 1.3;
+  text-align: center;
+}
+
+.mobile-order-status.is-warning {
+  background: oklch(97% 0.025 72);
+  color: oklch(43% 0.1 60);
+}
+
+.mobile-order-quantity {
+  display: grid;
+  flex-shrink: 0;
+  gap: 4px;
+  text-align: right;
+}
+
+.mobile-order-quantity b {
+  color: var(--red);
+  font-size: var(--font-lg);
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+}
+
+.mobile-order-item summary > svg,
+.mobile-order-record-row > svg {
+  flex-shrink: 0;
+  transition: transform 150ms ease-out;
+}
+
+.mobile-order-item[open] summary > svg {
+  transform: rotate(90deg);
+}
+
+.mobile-order-detail {
+  display: grid;
+  gap: 12px;
+  margin: 0 0 20px;
+  padding: 0;
+  font-size: var(--font-sm);
+  font-weight: 750;
+  line-height: 1.5;
+}
+
+.mobile-order-detail > div {
+  display: grid;
+  grid-template-columns: 72px minmax(0, 1fr);
+  gap: 12px;
+}
+
+.mobile-order-detail dt {
+  color: var(--order-muted);
+}
+
+.mobile-order-detail dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.mobile-order-arrival {
+  margin: 0 0 16px;
+  color: oklch(42% 0.1 72);
+  font-size: var(--font-sm);
+  font-weight: 850;
+}
+
+.mobile-order-drugs {
+  display: grid;
+  border-top: 1px solid var(--line);
+}
+
+.mobile-order-drugs > div {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+  padding: 16px 0;
+  font-size: var(--font-sm);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.mobile-order-drugs strong {
+  font-size: var(--font-md);
+  font-weight: 850;
+}
+
+.mobile-order-drugs span {
+  color: var(--order-muted);
+  font-weight: 750;
+}
+
+.mobile-order-drugs em {
+  color: var(--red);
+  font-style: normal;
+}
+
+.mobile-order-drugs > p {
+  margin: 0 0 16px;
+  color: var(--order-muted);
+  font-size: var(--font-sm);
+}
+
+.mobile-order-footer {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line);
+  padding: 16px var(--order-inset) calc(16px + env(safe-area-inset-bottom));
+}
+
+.mobile-order-footer button {
+  width: 100%;
+}
+
+.mobile-order-loading {
+  display: grid;
+  gap: 16px;
+  color: var(--order-muted);
+  font-size: var(--font-sm);
+  font-weight: 750;
+}
+
+.mobile-order-skeleton {
+  height: 96px;
+  border-radius: 8px;
+  background: oklch(95% 0.01 230);
+}
+
+.mobile-order-page :is(button, summary, input):focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.mobile-order-date-dialog,
+.mobile-order-prescription-dialog {
+  width: min(380px, calc(100% - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: oklch(99% 0.004 230);
+  padding: 24px;
+  color: var(--ink);
+  font-family: inherit;
+  font-weight: 750;
+}
+
+.mobile-order-date-dialog::backdrop,
+.mobile-order-prescription-dialog::backdrop {
+  background: oklch(20% 0.02 230 / 0.4);
+}
+
+.mobile-order-date-dialog form {
+  display: grid;
+  min-width: 0;
+  gap: 16px;
+}
+
+.mobile-order-date-dialog header,
+.mobile-order-prescription-dialog header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mobile-order-date-dialog h2,
+.mobile-order-prescription-dialog h2 {
+  flex: 1;
+  margin: 0;
+  font-size: var(--font-lg);
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.mobile-order-date-dialog p {
+  margin: 0;
+  color: oklch(45% 0.025 230);
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+.mobile-order-date-presets {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mobile-order-date-presets button {
+  min-width: 0;
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 4px;
+  font-size: var(--font-sm);
+  font-weight: 800;
+}
+
+.mobile-order-date-presets button[aria-pressed="true"] {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+  color: var(--blue);
+}
+
+.mobile-order-date-dialog label {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  font-size: var(--font-sm);
+}
+
+.mobile-order-date-dialog input {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  min-height: 48px;
+  border: 1px solid oklch(85% 0.01 230);
+  border-radius: 8px;
+  background: oklch(98% 0.006 230);
+  padding: 8px 12px;
+  font-size: var(--font-md);
+  font-weight: 800;
+}
+
+.mobile-order-date-dialog footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.6fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.mobile-order-date-dialog footer button {
+  min-width: 0;
+  min-height: 48px;
+  padding: 8px;
+  font-size: var(--font-sm);
+}
+
+.mobile-order-date-dialog :is(button, input):focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.mobile-order-date-dialog .mobile-order-date-error {
+  color: var(--red);
+}
+
+.mobile-order-prescription-dialog {
+  width: min(430px, calc(100% - 32px));
+  overflow: hidden;
+}
+
+.mobile-order-prescription-dialog[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.mobile-order-prescription-dialog header,
+.mobile-order-prescription-dialog footer {
+  flex-shrink: 0;
+}
+
+.mobile-order-prescription-dialog header button {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 8px;
+}
+
+.mobile-order-prescription-body {
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+}
+
+.mobile-order-prescription-overview {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 24px;
+}
+
+.mobile-order-prescription-overview time {
+  color: var(--order-muted);
+  font-size: var(--font-sm);
+}
+
+.mobile-order-prescription-overview > strong {
+  font-size: var(--font-lg);
+  font-weight: 850;
+  line-height: 1.25;
+  overflow-wrap: anywhere;
+}
+
+.mobile-order-prescription-overview .mobile-order-status {
+  justify-self: start;
+}
+
+.mobile-order-prescription-dialog footer button {
+  width: 100%;
+  min-height: 48px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mobile-order-item summary > svg {
+    transition: none;
+  }
+}
+
+/* Recent prescription deductions use the same navigation and spacing as orders. */
+.mobile-recent-stock-entry {
+  margin-top: 12px;
+}
+
+.mobile-recent-stock-period {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--blue);
+}
+
+.mobile-recent-stock-period > span {
+  display: grid;
+  gap: 8px;
+}
+
+.mobile-recent-stock-period strong {
+  font-size: var(--font-md);
+  font-weight: 850;
+}
+
+.mobile-recent-stock-period time {
+  color: var(--order-muted);
+  font-size: var(--font-sm);
+  font-weight: 750;
+}
+
+.mobile-recent-stock-count {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.mobile-recent-stock-row {
+  display: grid;
+  width: 100%;
+  gap: 16px;
+  border-right: 0;
+  border-bottom: 0;
+  border-left: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 20px 0;
+  text-align: left;
+}
+
+.mobile-recent-stock-row-top {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mobile-recent-stock-row-top > svg {
+  flex-shrink: 0;
+}
+
+.mobile-recent-stock-remaining {
+  display: grid;
+  max-width: 96px;
+  flex-shrink: 0;
+  gap: 8px;
+  color: var(--order-muted);
+  font-size: var(--font-xs);
+  font-weight: 750;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.mobile-recent-stock-remaining b {
+  color: var(--blue);
+  font-size: var(--font-lg);
+  font-weight: 900;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+
+.mobile-recent-stock-remaining.is-empty b {
+  color: var(--red);
+}
+
+.mobile-recent-stock-daily {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mobile-recent-stock-daily > span {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  font-size: var(--font-sm);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.mobile-recent-stock-daily > span > span {
+  color: var(--order-muted);
+  font-size: var(--font-xs);
+  font-weight: 750;
+}
+
+.mobile-recent-stock-daily b {
+  font-weight: 850;
+  font-variant-numeric: tabular-nums;
+}
+
+.mobile-recent-stock-total {
+  color: var(--order-muted);
+  font-size: var(--font-sm);
+  font-weight: 750;
+}
+
+.mobile-recent-stock-total b {
+  margin-left: 8px;
+  color: var(--ink);
+  font-weight: 850;
+}
+
+.mobile-recent-stock-note {
+  margin: 0;
+  color: var(--order-muted);
+  font-size: var(--font-sm);
+  line-height: 1.5;
 }
