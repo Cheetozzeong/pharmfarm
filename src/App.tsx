@@ -4,6 +4,11 @@ import { AgentDiagnosticsDialog } from "./AgentDiagnosticsDialog";
 import { MobileOrderScreen } from "./MobileOrderScreen";
 import { MobileRecentStockScreen } from "./MobileRecentStockScreen";
 import { aggregateRecentStock } from "./mobileRecentStock";
+import {
+  MobileWholesalerHome,
+  MobileWholesalerRow,
+  useWholesalerFavorites,
+} from "./MobileWholesalerFavorites";
 import type { OrderDateRange } from "./mobileOrderDates";
 import type { CSSProperties, FormEvent, ReactNode, RefObject } from "react";
 import type {
@@ -25,7 +30,6 @@ import {
   CircleCheck,
   CircleHelp,
   ClipboardList,
-  PackageMinus,
   Clock3,
   Copy,
   ExternalLink,
@@ -6606,6 +6610,8 @@ function MobileApp({
     >
       {screen === "wholesaler" && (
         <WholesalerScreen
+          key={`${stockAdjustWeb ? "manual" : "mobile"}:${uiPreviewMode ? "preview" : authAccount?.pharmacyId ?? "guest"}`}
+          favoriteScope={uiPreviewMode ? "preview" : authAccount?.pharmacyId ?? null}
           currentWholesalerName={selectedWholesaler?.name ?? ""}
           manualOnly={stockAdjustWeb}
           pendingId={pendingWholesalerId}
@@ -6625,7 +6631,10 @@ function MobileApp({
                   }
                 : undefined
           }
-          onChoose={setPendingWholesalerId}
+          onChoose={(wholesaler) => {
+            setWholesalers((current) => mergeWholesalers(current, [wholesaler]));
+            setPendingWholesalerId(wholesaler.id);
+          }}
           onManualReceipt={() => {
             if (!pendingWholesaler) return;
             const wholesaler = pendingWholesaler;
@@ -7531,6 +7540,7 @@ function apiStateLabel(state: ApiState) {
 
 function WholesalerScreen({
   currentWholesalerName,
+  favoriteScope,
   manualOnly = false,
   pendingId,
   preservedQueueCount,
@@ -7547,6 +7557,7 @@ function WholesalerScreen({
   onStart,
 }: {
   currentWholesalerName?: string;
+  favoriteScope: string | null;
   manualOnly?: boolean;
   pendingId: string;
   preservedQueueCount: number;
@@ -7554,7 +7565,7 @@ function WholesalerScreen({
   searchStatus: "idle" | "short" | "loading" | "done" | "error";
   wholesalers: Wholesaler[];
   onBack?: () => void;
-  onChoose: (id: string) => void;
+  onChoose: (wholesaler: Wholesaler) => void;
   onManualReceipt: () => void;
   onReturnFirst: () => void;
   onSearch: (keyword: string) => void;
@@ -7568,6 +7579,13 @@ function WholesalerScreen({
   const [query, setQuery] = useState("");
   const normalizedQuery = normalizeSearchText(query);
   const canSearch = normalizedQuery.length >= 2;
+  const hasQuery = query.trim().length > 0;
+  const favorites = useWholesalerFavorites(favoriteScope, !manualOnly);
+  const favoriteIds = new Set(favorites.items.map((item) => item.id));
+  const favoriteItems = favorites.items.map(
+    (item) => wholesalers.find((row) => row.id === item.id) ?? item,
+  );
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   function handleStart() {
     if (!selected) return;
@@ -7599,55 +7617,62 @@ function WholesalerScreen({
   return (
     <>
       <Header title="도매처 선택" onBack={onBack} />
-      <label className="search-field">
+      <div className="search-field mobile-wholesaler-search">
         <span className="search-icon" />
         <input
-          autoFocus
+          ref={searchInputRef}
+          autoFocus={manualOnly}
+          aria-label="도매처 이름 검색"
           placeholder="도매처 이름 검색"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-      </label>
-      <section className="scroll-body">
-        {onOrders && (
+        {hasQuery && (
           <button
-            className="mobile-order-entry"
             type="button"
-            onClick={onOrders}
+            aria-label="도매처 검색어 지우기"
+            onClick={() => {
+              setQuery("");
+              searchInputRef.current?.focus();
+            }}
           >
-            <ClipboardList size={22} aria-hidden="true" />
-            <span>
-              <strong>주문관리</strong>
-              <em>처방 내역과 초과 처방을 함께 확인하세요.</em>
-            </span>
-            <ChevronRight size={20} aria-hidden="true" />
+            <X size={20} aria-hidden="true" />
           </button>
         )}
-        {onRecentStock && (
-          <button
-            className="mobile-order-entry mobile-recent-stock-entry"
-            type="button"
-            onClick={onRecentStock}
-          >
-            <PackageMinus size={22} aria-hidden="true" />
-            <span>
-              <strong>최근 차감 재고</strong>
-              <em>최근 3일 차감 수량과 남은 재고를 확인하세요.</em>
-            </span>
-            <ChevronRight size={20} aria-hidden="true" />
-          </button>
+      </div>
+      <section className="scroll-body mobile-wholesaler-body">
+        {!manualOnly && !hasQuery && (
+          <MobileWholesalerHome
+            favorites={favoriteItems}
+            pendingId={pendingId}
+            onChoose={onChoose}
+            onToggleFavorite={favorites.toggle}
+            onOrders={onOrders}
+            onRecentStock={onRecentStock}
+          />
         )}
-        {selected && (
+        {!manualOnly && (
+          <p
+            className={`mobile-wholesaler-feedback ${favorites.feedback.error ? "is-error" : ""}`}
+            role={favorites.feedback.error ? "alert" : "status"}
+          >
+            {favorites.feedback.text}
+          </p>
+        )}
+        {selected && !hasQuery && (
           <div className="selected-wholesaler">
             <span>선택됨</span>
             <strong>{selected.name}</strong>
             <em>{selected.meta}</em>
           </div>
         )}
-        <div className="section-label">
-          검색 결과 {canSearch ? searchResults.length : 0}
-        </div>
-        {!canSearch && (
+        {hasQuery && (
+          <div className="section-label" role="status">
+            검색 결과{" "}
+            {canSearch && searchStatus === "done" ? searchResults.length : 0}
+          </div>
+        )}
+        {!canSearch && (hasQuery || manualOnly) && (
           <div className="empty-state compact">
             <strong>2글자 이상 검색하세요</strong>
           </div>
@@ -7660,17 +7685,34 @@ function WholesalerScreen({
                 <span>도매처 목록을 불러오고 있습니다.</span>
               </div>
             )}
-            {searchStatus !== "loading" &&
-              searchResults.map((wholesaler) => (
-                <ChoiceRow
-                  key={wholesaler.id}
-                  active={pendingId === wholesaler.id}
-                  title={wholesaler.name}
-                  detail={wholesaler.meta}
-                  onClick={() => onChoose(wholesaler.id)}
-                />
-              ))}
-            {searchStatus !== "loading" && searchResults.length === 0 && (
+            {searchStatus === "error" && (
+              <p className="mobile-wholesaler-search-error" role="alert">
+                도매처를 불러오지 못했어요. 연결 상태를 확인하고 다시 검색해
+                주세요.
+              </p>
+            )}
+            {searchStatus === "done" &&
+              searchResults.map((wholesaler) =>
+                manualOnly ? (
+                  <ChoiceRow
+                    key={wholesaler.id}
+                    active={pendingId === wholesaler.id}
+                    title={wholesaler.name}
+                    detail={wholesaler.meta}
+                    onClick={() => onChoose(wholesaler)}
+                  />
+                ) : (
+                  <MobileWholesalerRow
+                    key={wholesaler.id}
+                    wholesaler={wholesaler}
+                    selected={pendingId === wholesaler.id}
+                    favorite={favoriteIds.has(wholesaler.id)}
+                    onChoose={onChoose}
+                    onToggleFavorite={favorites.toggle}
+                  />
+                ),
+              )}
+            {searchStatus === "done" && searchResults.length === 0 && (
               <div className="empty-state compact">
                 <strong>검색 결과가 없습니다</strong>
                 <span>도매처 등록과 수정은 관리자페이지에서 진행합니다.</span>
@@ -7678,7 +7720,7 @@ function WholesalerScreen({
             )}
           </>
         )}
-        {selected && !manualOnly && (
+        {selected && !manualOnly && !hasQuery && (
           <button
             className="manual-receipt-entry-card"
             type="button"

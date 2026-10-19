@@ -17165,3 +17165,179 @@ body:has(.cms-shell) {
   font-size: var(--font-sm);
   line-height: 1.5;
 }
+
+/* Mobile wholesaler search keeps shortcuts and favorites out of search results. */
+.mobile-wholesaler-search {
+  min-height: 48px;
+  margin: 16px 24px;
+  padding: 0 12px;
+}
+
+.mobile-wholesaler-search input {
+  min-height: 48px;
+  font-size: var(--font-md);
+}
+
+.mobile-wholesaler-search > button {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 8px;
+}
+
+.mobile-wholesaler-body {
+  padding: 4px 24px 24px;
+  scrollbar-width: thin;
+}
+
+.mobile-wholesaler-body + .bottom-bar {
+  position: static;
+  gap: 8px;
+  padding: 16px 24px calc(16px + env(safe-area-inset-bottom));
+}
+
+.mobile-wholesaler-shortcuts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 24px;
+}
+
+.mobile-wholesaler-shortcuts .mobile-order-entry {
+  display: grid;
+  min-height: 96px;
+  align-content: start;
+  gap: 12px;
+  margin: 0;
+  border: 0;
+  border-radius: 12px;
+  background: var(--blue-soft);
+  padding: 16px;
+}
+
+.mobile-wholesaler-shortcuts strong {
+  font-size: var(--font-sm);
+  font-weight: 850;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+
+.mobile-wholesaler-favorites > header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 16px;
+}
+
+.mobile-wholesaler-favorites h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--font-md);
+  font-weight: 850;
+  line-height: 1.25;
+}
+
+.mobile-wholesaler-favorites > header > span {
+  color: oklch(45% 0.025 230);
+  font-size: var(--font-sm);
+  font-weight: 750;
+}
+
+.mobile-wholesaler-favorites-empty {
+  padding: 24px 0;
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+.mobile-wholesaler-favorites-empty strong {
+  font-weight: 800;
+}
+
+.mobile-wholesaler-favorites-empty p {
+  margin: 8px 0 0;
+  color: oklch(45% 0.025 230);
+}
+
+.mobile-wholesaler-choice {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.mobile-wholesaler-choice.is-active {
+  border-color: var(--blue);
+  background: var(--blue-soft);
+}
+
+.mobile-wholesaler-choice .choice-row {
+  min-height: 80px;
+  min-width: 0;
+  gap: 12px;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 16px 0;
+}
+
+.mobile-wholesaler-choice .choice-row strong {
+  font-size: var(--font-md);
+  font-weight: 850;
+  line-height: 1.45;
+}
+
+.mobile-wholesaler-choice .choice-row em {
+  margin-top: 4px;
+  color: oklch(45% 0.025 230);
+  font-size: var(--font-sm);
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.mobile-wholesaler-heart {
+  display: grid;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  border-radius: 8px;
+  color: oklch(47% 0.025 230);
+}
+
+.mobile-wholesaler-heart[aria-pressed="true"] {
+  color: oklch(49% 0.18 15);
+}
+
+.mobile-wholesaler-feedback {
+  margin: 0;
+  color: var(--blue);
+  font-size: var(--font-sm);
+  font-weight: 750;
+  line-height: 1.5;
+}
+
+.mobile-wholesaler-feedback:not(:empty) {
+  margin: 12px 0;
+}
+
+.mobile-wholesaler-feedback.is-error,
+.mobile-wholesaler-search-error {
+  color: var(--red);
+}
+
+.mobile-wholesaler-search-error {
+  font-size: var(--font-sm);
+  line-height: 1.5;
+}
+
+:is(.mobile-wholesaler-body, .mobile-wholesaler-search) :is(button, input):focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 2px;
+}
