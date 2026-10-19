@@ -1,66 +1,19 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { Check, ClipboardList, Heart, PackageMinus } from "lucide-react";
-import {
-  parseWholesalerFavorites,
-  toggleWholesalerFavorite,
-  wholesalerFavoriteKey,
-} from "./wholesalerFavorites";
 import type { FavoriteWholesaler } from "./wholesalerFavorites";
-import { useToast } from "./Toast";
-
-export function useWholesalerFavorites(
-  pharmacyId: string | null,
-  enabled: boolean,
-) {
-  const key = pharmacyId && enabled ? wholesalerFavoriteKey(pharmacyId) : null;
-  const read = () => {
-    try {
-      return key ? parseWholesalerFavorites(localStorage.getItem(key)) : [];
-    } catch {
-      return [];
-    }
-  };
-  const [items, setItems] = useState(read);
-  const toast = useToast();
-  useEffect(() => {
-    const sync = (event: StorageEvent) => {
-      if (event.key === key || event.key === null) setItems(read());
-    };
-    window.addEventListener("storage", sync);
-    return () => window.removeEventListener("storage", sync);
-  }, [key]);
-  const toggle = (item: FavoriteWholesaler) => {
-    if (!key) {
-      toast("로그인 정보를 확인한 뒤 다시 시도해 주세요.", { tone: "error" });
-      return;
-    }
-    try {
-      // Re-read before changing so another tab's favorites are preserved.
-      const current = parseWholesalerFavorites(localStorage.getItem(key));
-      const next = toggleWholesalerFavorite(current, item);
-      localStorage.setItem(key, JSON.stringify(next));
-      setItems(next);
-      toast(
-        `${item.name} ${next.some((row) => row.id === item.id) ? "찜했어요." : "찜을 해제했어요."}`,
-        { tone: "success" },
-      );
-    } catch {
-      toast("찜을 저장하지 못했어요. 다시 시도해 주세요.", { tone: "error" });
-    }
-  };
-  return { items, toggle };
-}
 
 export function MobileWholesalerRow({
   wholesaler,
   selected,
   favorite,
+  favoriteDisabled = false,
   onChoose,
   onToggleFavorite,
 }: {
   wholesaler: FavoriteWholesaler;
   selected: boolean;
   favorite: boolean;
+  favoriteDisabled?: boolean;
   onChoose: (item: FavoriteWholesaler) => void;
   onToggleFavorite: (item: FavoriteWholesaler) => void;
 }) {
@@ -86,6 +39,7 @@ export function MobileWholesalerRow({
         className="mobile-wholesaler-heart"
         aria-label={`${wholesaler.name} ${favorite ? "찜 해제" : "찜하기"}`}
         aria-pressed={favorite}
+        disabled={favoriteDisabled}
         onClick={() => onToggleFavorite(wholesaler)}
       >
         <Heart
@@ -100,6 +54,8 @@ export function MobileWholesalerRow({
 
 export function MobileWholesalerHome({
   favorites,
+  status,
+  pendingIds,
   pendingId,
   onChoose,
   onToggleFavorite,
@@ -107,6 +63,8 @@ export function MobileWholesalerHome({
   onRecentStock,
 }: {
   favorites: FavoriteWholesaler[];
+  status: "loading" | "ready" | "error";
+  pendingIds: Set<string>;
   pendingId: string;
   onChoose: (item: FavoriteWholesaler) => void;
   onToggleFavorite: (item: FavoriteWholesaler) => void;
@@ -164,13 +122,18 @@ export function MobileWholesalerHome({
           </h2>
           <span>{favorites.length}곳</span>
         </header>
-        {visibleFavorites.length ? (
+        {status === "loading" ? (
+          <p className="mobile-wholesaler-favorites-empty" role="status">
+            찜한 도매상을 불러오고 있어요.
+          </p>
+        ) : visibleFavorites.length ? (
           visibleFavorites.map((item) => (
             <MobileWholesalerRow
               key={item.id}
               wholesaler={item}
               selected={pendingId === item.id}
               favorite={favoriteIds.has(item.id)}
+              favoriteDisabled={pendingIds.size > 0}
               onChoose={onChoose}
               onToggleFavorite={(wholesaler) => {
                 setRetainedFavorites(visibleFavorites);
@@ -180,8 +143,15 @@ export function MobileWholesalerHome({
           ))
         ) : (
           <div className="mobile-wholesaler-favorites-empty">
-            <strong>찜한 도매상이 없어요</strong>
-            <p>도매처를 검색한 뒤 하트를 눌러 추가해 보세요.</p>
+            <span className="mobile-wholesaler-empty-icon" aria-hidden="true">
+              <Heart size={28} strokeWidth={1.8} />
+            </span>
+            <strong>도매처를 검색해 보세요</strong>
+            <p>
+              검색 결과에서 하트를 누르면
+              <br />
+              자주 찾는 도매상으로 모아볼 수 있어요.
+            </p>
           </div>
         )}
       </section>

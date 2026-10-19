@@ -17250,18 +17250,37 @@ body:has(.cms-shell) {
 }
 
 .mobile-wholesaler-favorites-empty {
-  padding: 24px 0;
+  display: flex;
+  min-height: 240px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px 16px;
   font-size: var(--font-sm);
   line-height: 1.5;
+  text-align: center;
 }
 
 .mobile-wholesaler-favorites-empty strong {
-  font-weight: 800;
+  font-size: var(--font-md);
+  font-weight: 850;
 }
 
 .mobile-wholesaler-favorites-empty p {
-  margin: 8px 0 0;
+  margin: 0;
   color: oklch(45% 0.025 230);
+}
+
+.mobile-wholesaler-empty-icon {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  margin-bottom: 4px;
+  border-radius: 20px;
+  background: var(--blue-soft);
+  color: var(--blue);
 }
 
 .mobile-wholesaler-choice {
@@ -17354,6 +17373,10 @@ body:has(.cms-shell) {
 
 .mobile-wholesaler-heart[aria-pressed="true"] {
   color: oklch(49% 0.18 15);
+}
+
+.mobile-wholesaler-heart:disabled {
+  opacity: 0.45;
 }
 
 .mobile-wholesaler-search-error {

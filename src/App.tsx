@@ -7,8 +7,9 @@ import { aggregateRecentStock } from "./mobileRecentStock";
 import {
   MobileWholesalerHome,
   MobileWholesalerRow,
-  useWholesalerFavorites,
 } from "./MobileWholesalerFavorites";
+import { useWholesalerFavorites } from "./useWholesalerFavorites";
+import type { WholesalerFavoritesApi } from "./useWholesalerFavorites";
 import type { OrderDateRange } from "./mobileOrderDates";
 import type { CSSProperties, FormEvent, ReactNode, RefObject } from "react";
 import type {
@@ -1776,6 +1777,28 @@ function normalizeWholesaler(raw: unknown, index: number): Wholesaler {
     meta: String(item.meta ?? item.typeName ?? item.address ?? "공통"),
   };
 }
+
+const wholesalerFavoritesApi: WholesalerFavoritesApi = {
+  load: async (signal) =>
+    arrayPayload(
+      await apiFetch<unknown>("/me/wholesaler-favorites", { signal }),
+    ).map(normalizeWholesaler),
+  save: async (id, favorite, signal) =>
+    arrayPayload(
+      await apiFetch<unknown>(
+        `/me/wholesaler-favorites/${encodeURIComponent(id)}`,
+        { method: favorite ? "PUT" : "DELETE", signal },
+      ),
+    ).map(normalizeWholesaler),
+  import: async (ids, signal) =>
+    arrayPayload(
+      await apiFetch<unknown>("/me/wholesaler-favorites/import", {
+        method: "POST",
+        body: JSON.stringify(ids.map(Number)),
+        signal,
+      }),
+    ).map(normalizeWholesaler),
+};
 
 function mergeWholesalers(current: Wholesaler[], incoming: Wholesaler[]) {
   const next = new Map(
@@ -4193,166 +4216,13 @@ function MobileApp({
           range,
         );
       }
-      const pharmacyId = getStoredAuthAccount()?.pharmacyId;
-      const params = new URLSearchParams({
-        ...range,
-        sortBy: "createdAt",
-        sortDirection: "desc",
-      });
-      if (pharmacyId) params.set("pharmacyId", pharmacyId);
-      // These endpoints can return an array or a paginated content envelope.
-      const loadPages = async (
-        path: string,
-        query: URLSearchParams,
-        read: (raw: unknown) => unknown[],
-      ) => {
-        const rows: unknown[] = [];
-        let page = 0;
-        let totalPages = 1;
-        do {
-          signal.throwIfAborted();
-          const pageQuery = new URLSearchParams(query);
-          pageQuery.set("page", String(page));
-          const response = await apiFetch<unknown>(`${path}?${pageQuery}`, { signal });
-          signal.throwIfAborted();
-          rows.push(...read(response));
-          totalPages = normalizeCmsPageResponse(response, 100).pageInfo.totalPages;
-          page += 1;
-        } while (page < totalPages);
-        return rows;
-      };
-      const loadMovements = async () => {
-        if (pharmacyId) {
-          try {
-            const rows = await loadPages(
-              "/stock-movements/decreases",
-              params,
-              stockMovementPayload,
-            );
-            return rows.map((raw, index) => {
-              const record = normalizeCmsStockMovementDecrease(raw, index);
-              const createdAt = asRecord(raw).createdAt;
-              return {
-                ...record,
-                cancelled: normalizeBoolean(
-                  asRecord(raw).cancelled ?? asRecord(raw).canceled ?? false,
-                ),
-                createdAt:
-                  typeof createdAt === "string"
-                    ? createdAt
-                    : formatApiDateTime(createdAt),
-              };
-            });
-          } catch (error) {
-            if (!(error instanceof ApiError) || ![404, 405, 501].includes(error.status))
-              throw error;
-          }
-        }
-        const rows = await loadPages(
-          "/prescription-deductions",
-          params,
-          deductionPayload,
-        );
-        return rows.flatMap((raw, index) => {
-          const record = normalizeCmsDeduction(raw, index);
-          const item = asRecord(raw);
-          if (normalizeBoolean(item.cancelled ?? item.canceled ?? false)) return [];
-          return stockDecreaseRecordsFromDeduction({
-            ...record,
-            createdAt:
-              typeof item.createdAt === "string" ? item.createdAt : record.createdAt,
-            substituteProcessedAt:
-              optionalText(item.substituteProcessedAt) || record.substituteProcessedAt,
-            resolvedAt: optionalText(item.resolvedAt) || record.resolvedAt,
-          });
-        });
-      };
-      const loadPrescribedDrugs = async () => {
-        try {
-          const rows = await loadPages(
-            "/prescription-overviews",
-            params,
-            prescriptionPayload,
-          );
-          return rows.map((raw, index) => {
-            const record = normalizeCmsPrescriptionRecord(raw, index);
-            const capturedAt = unwrapObjectPayload(raw).capturedAt;
-            return {
-              ...record,
-              capturedAt:
-                typeof capturedAt === "string" ? capturedAt : record.capturedAt,
-            };
-          });
-        } catch (error) {
-          if (!(error instanceof ApiError) || ![404, 405, 501].includes(error.status))
-            throw error;
-          const rows = await loadPages(
-            "/prescription-deductions",
-            params,
-            deductionPayload,
-          );
-          return createPrescriptionRecordsFromDeductions(
-            rows.map(normalizeCmsDeduction),
-          );
-        }
-      };
-      const stockParams = new URLSearchParams({
-        includeZero: "true",
-        sortBy: "name",
-        sortDirection: "asc",
-      });
-      if (pharmacyId) stockParams.set("pharmacyId", pharmacyId);
-      const [movements, rawStocks, recentPrescriptions] = await Promise.all([
-        loadMovements(),
-        loadPages("/stocks", stockParams, arrayPayload),
-        loadPrescribedDrugs(),
-      ]);
-      // Keep prescribed drugs visible even when all of the requested quantity was short.
-      const prescribedDrugs = recentPrescriptions.flatMap((record) =>
-        record.drugs.flatMap((drug, index) =>
-          drug.totalQuantity > 0 &&
-          !isCmsPrescriptionNonDeductibleRole(drug.substitutionRole)
-            ? [
-                {
-                  id: `prescribed-${record.id}-${drug.lineNo}-${index}`,
-                  source: "PRESCRIPTION",
-                  createdAt: record.capturedAt,
-                  stockId: drug.stockId,
-                  drugName: drug.drugName,
-                  insuranceCode: drug.insuranceCode,
-                  changeQuantity: 0,
-                  prescriptionExists: true,
-                },
-              ]
-            : [],
+      const params = new URLSearchParams({ endDate: range.endDate });
+      return arrayPayload(
+        await apiFetch<unknown>(
+          `/stocks/recent-prescription-deductions?${params}`,
+          { signal },
         ),
-      );
-      const currentStocks = rawStocks.map((raw, index) => {
-        const stock = normalizeStock(raw, index);
-        const item = asRecord(raw);
-        const value = item.quantity ?? item.count ?? item.stockQuantity;
-        return {
-          ...stock,
-          quantity:
-            value === undefined ||
-            value === null ||
-            value === "" ||
-            !Number.isFinite(Number(value))
-              ? null
-              : stock.quantity,
-        };
-      });
-      return aggregateRecentStock(
-        [
-          ...movements.filter(
-            (record) =>
-              !record.pharmacyId || !pharmacyId || record.pharmacyId === pharmacyId,
-          ),
-          ...prescribedDrugs,
-        ],
-        currentStocks,
-        range,
-      );
+      ) as import("./mobileRecentStock").RecentStockRecord[];
     },
     [uiPreviewMode],
   );
@@ -6610,8 +6480,10 @@ function MobileApp({
     >
       {screen === "wholesaler" && (
         <WholesalerScreen
-          key={`${stockAdjustWeb ? "manual" : "mobile"}:${uiPreviewMode ? "preview" : authAccount?.pharmacyId ?? "guest"}`}
-          favoriteScope={uiPreviewMode ? "preview" : authAccount?.pharmacyId ?? null}
+          key={`${stockAdjustWeb ? "manual" : "mobile"}:${uiPreviewMode ? "preview" : `${authAccount?.accountId}:${authAccount?.pharmacyId}`}`}
+          favoriteScope={uiPreviewMode ? "preview" : authAccount?.accountId ?? null}
+          favoriteApi={uiPreviewMode ? undefined : wholesalerFavoritesApi}
+          legacyPharmacyId={authAccount?.pharmacyId}
           currentWholesalerName={selectedWholesaler?.name ?? ""}
           manualOnly={stockAdjustWeb}
           pendingId={pendingWholesalerId}
@@ -7541,6 +7413,8 @@ function apiStateLabel(state: ApiState) {
 function WholesalerScreen({
   currentWholesalerName,
   favoriteScope,
+  favoriteApi,
+  legacyPharmacyId,
   manualOnly = false,
   pendingId,
   preservedQueueCount,
@@ -7558,6 +7432,8 @@ function WholesalerScreen({
 }: {
   currentWholesalerName?: string;
   favoriteScope: string | null;
+  favoriteApi?: WholesalerFavoritesApi;
+  legacyPharmacyId?: string | null;
   manualOnly?: boolean;
   pendingId: string;
   preservedQueueCount: number;
@@ -7580,7 +7456,12 @@ function WholesalerScreen({
   const normalizedQuery = normalizeSearchText(query);
   const canSearch = normalizedQuery.length >= 2;
   const hasQuery = query.trim().length > 0;
-  const favorites = useWholesalerFavorites(favoriteScope, !manualOnly);
+  const favorites = useWholesalerFavorites(
+    favoriteScope,
+    !manualOnly,
+    favoriteApi,
+    legacyPharmacyId,
+  );
   const favoriteIds = new Set(favorites.items.map((item) => item.id));
   const favoriteItems = favorites.items.map(
     (item) => wholesalers.find((row) => row.id === item.id) ?? item,
@@ -7644,6 +7525,8 @@ function WholesalerScreen({
         {!manualOnly && !hasQuery && (
           <MobileWholesalerHome
             favorites={favoriteItems}
+            status={favorites.status}
+            pendingIds={favorites.pendingIds}
             pendingId={pendingId}
             onChoose={onChoose}
             onToggleFavorite={favorites.toggle}
@@ -7699,6 +7582,10 @@ function WholesalerScreen({
                     wholesaler={wholesaler}
                     selected={pendingId === wholesaler.id}
                     favorite={favoriteIds.has(wholesaler.id)}
+                    favoriteDisabled={
+                      favorites.status === "loading" ||
+                      favorites.pendingIds.size > 0
+                    }
                     onChoose={onChoose}
                     onToggleFavorite={favorites.toggle}
                   />
