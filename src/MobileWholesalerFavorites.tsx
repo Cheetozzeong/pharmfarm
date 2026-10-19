@@ -1,11 +1,12 @@
-import { useEffect, useRef, useState } from "react";
-import { ClipboardList, Heart, PackageMinus } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Check, ClipboardList, Heart, PackageMinus } from "lucide-react";
 import {
   parseWholesalerFavorites,
   toggleWholesalerFavorite,
   wholesalerFavoriteKey,
 } from "./wholesalerFavorites";
 import type { FavoriteWholesaler } from "./wholesalerFavorites";
+import { useToast } from "./Toast";
 
 export function useWholesalerFavorites(
   pharmacyId: string | null,
@@ -20,7 +21,7 @@ export function useWholesalerFavorites(
     }
   };
   const [items, setItems] = useState(read);
-  const [feedback, setFeedback] = useState({ text: "", error: false });
+  const toast = useToast();
   useEffect(() => {
     const sync = (event: StorageEvent) => {
       if (event.key === key || event.key === null) setItems(read());
@@ -30,10 +31,7 @@ export function useWholesalerFavorites(
   }, [key]);
   const toggle = (item: FavoriteWholesaler) => {
     if (!key) {
-      setFeedback({
-        text: "로그인 정보를 확인한 뒤 다시 시도해 주세요.",
-        error: true,
-      });
+      toast("로그인 정보를 확인한 뒤 다시 시도해 주세요.", { tone: "error" });
       return;
     }
     try {
@@ -42,18 +40,15 @@ export function useWholesalerFavorites(
       const next = toggleWholesalerFavorite(current, item);
       localStorage.setItem(key, JSON.stringify(next));
       setItems(next);
-      setFeedback({
-        text: `${item.name} ${next.some((row) => row.id === item.id) ? "찜했어요." : "찜을 해제했어요."}`,
-        error: false,
-      });
+      toast(
+        `${item.name} ${next.some((row) => row.id === item.id) ? "찜했어요." : "찜을 해제했어요."}`,
+        { tone: "success" },
+      );
     } catch {
-      setFeedback({
-        text: "찜을 저장하지 못했어요. 다시 시도해 주세요.",
-        error: true,
-      });
+      toast("찜을 저장하지 못했어요. 다시 시도해 주세요.", { tone: "error" });
     }
   };
-  return { items, feedback, toggle };
+  return { items, toggle };
 }
 
 export function MobileWholesalerRow({
@@ -78,7 +73,9 @@ export function MobileWholesalerRow({
         aria-label={`${wholesaler.name} 선택`}
         onClick={() => onChoose(wholesaler)}
       >
-        <span className="radio" aria-hidden="true" />
+        <span className="mobile-wholesaler-selection" aria-hidden="true">
+          {selected && <Check size={14} strokeWidth={3} />}
+        </span>
         <span>
           <strong>{wholesaler.name}</strong>
           <em>{wholesaler.meta}</em>
@@ -116,7 +113,17 @@ export function MobileWholesalerHome({
   onOrders?: () => void;
   onRecentStock?: () => void;
 }) {
-  const headingRef = useRef<HTMLHeadingElement>(null);
+  // Keep rows in place for this visit so an accidental removal is reversible.
+  // Leaving the home view unmounts this component and clears the snapshot.
+  const [retainedFavorites, setRetainedFavorites] = useState(favorites);
+  const retainedIds = new Set(retainedFavorites.map((item) => item.id));
+  const favoriteIds = new Set(favorites.map((item) => item.id));
+  const visibleFavorites = [
+    ...retainedFavorites.map(
+      (item) => favorites.find((current) => current.id === item.id) ?? item,
+    ),
+    ...favorites.filter((item) => !retainedIds.has(item.id)),
+  ];
   return (
     <div className="mobile-wholesaler-home">
       {(onOrders || onRecentStock) && (
@@ -151,22 +158,22 @@ export function MobileWholesalerHome({
         aria-labelledby="wholesaler-favorites-title"
       >
         <header>
-          <h2 id="wholesaler-favorites-title" ref={headingRef} tabIndex={-1}>
+          <h2 id="wholesaler-favorites-title">
             <Heart size={18} aria-hidden="true" />
             자주 찾는 도매상
           </h2>
           <span>{favorites.length}곳</span>
         </header>
-        {favorites.length ? (
-          favorites.map((item) => (
+        {visibleFavorites.length ? (
+          visibleFavorites.map((item) => (
             <MobileWholesalerRow
               key={item.id}
               wholesaler={item}
               selected={pendingId === item.id}
-              favorite
+              favorite={favoriteIds.has(item.id)}
               onChoose={onChoose}
               onToggleFavorite={(wholesaler) => {
-                headingRef.current?.focus({ preventScroll: true });
+                setRetainedFavorites(visibleFavorites);
                 onToggleFavorite(wholesaler);
               }}
             />

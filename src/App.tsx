@@ -7651,15 +7651,7 @@ function WholesalerScreen({
             onRecentStock={onRecentStock}
           />
         )}
-        {!manualOnly && (
-          <p
-            className={`mobile-wholesaler-feedback ${favorites.feedback.error ? "is-error" : ""}`}
-            role={favorites.feedback.error ? "alert" : "status"}
-          >
-            {favorites.feedback.text}
-          </p>
-        )}
-        {selected && !hasQuery && (
+        {selected && manualOnly && !hasQuery && (
           <div className="selected-wholesaler">
             <span>선택됨</span>
             <strong>{selected.name}</strong>
@@ -7738,6 +7730,12 @@ function WholesalerScreen({
         )}
       </section>
       <BottomBar stack>
+        {selected && !manualOnly && (
+          <div className="mobile-wholesaler-selected-summary">
+            <span>선택한 도매처</span>
+            <strong>{selected.name}</strong>
+          </div>
+        )}
         <button
           className="primary-btn"
           type="button"

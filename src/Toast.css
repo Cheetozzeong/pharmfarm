@@ -1,0 +1,82 @@
+.app-toast-viewport {
+  position: fixed;
+  right: 16px;
+  bottom: calc(24px + env(safe-area-inset-bottom));
+  left: 16px;
+  z-index: 10000;
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+}
+
+.app-toast {
+  display: flex;
+  width: max-content;
+  max-width: min(100%, 398px);
+  align-items: center;
+  gap: 12px;
+  border: 1px solid oklch(34% 0.018 230);
+  border-radius: 12px;
+  background: oklch(24% 0.018 230);
+  padding: 16px;
+  color: oklch(98% 0.006 230);
+  box-shadow: 0 4px 16px oklch(20% 0.018 230 / 16%);
+  font-size: var(--font-sm);
+  font-weight: 750;
+  line-height: 1.5;
+  animation: app-toast-in 180ms ease-out both;
+}
+
+.app-toast > svg {
+  flex-shrink: 0;
+}
+
+.app-toast > span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.app-toast--success > svg {
+  color: oklch(85% 0.12 160);
+}
+
+.app-toast--error > svg {
+  color: oklch(85% 0.1 25);
+}
+
+.app-toast.is-exiting {
+  animation: app-toast-out 180ms ease-in both;
+}
+
+@keyframes app-toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes app-toast-out {
+  from {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-toast,
+  .app-toast.is-exiting {
+    animation: none;
+  }
+
+  .app-toast.is-exiting {
+    opacity: 0;
+  }
+}
