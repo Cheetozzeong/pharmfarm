@@ -7109,8 +7109,13 @@ function ScanScreen({
             type="button"
             onClick={onWholesaler}
           >
-            <span className="dot" />
-            {selectedWholesaler?.name ?? "도매처 선택 필요"}
+            <span className="scan-top-action-label scan-wholesaler-label">
+              <span className="dot" />
+              <span className="scan-wholesaler-name">
+                {selectedWholesaler?.name ?? "도매처 선택 필요"}
+              </span>
+              <ChevronDown size={12} aria-hidden="true" />
+            </span>
           </button>
         ) : (
           <strong className="dark-title">반품</strong>
@@ -7120,27 +7125,33 @@ function ScanScreen({
           type="button"
           onClick={onOrders}
         >
-          <ClipboardList size={18} aria-hidden="true" />
-          주문관리
+          <span className="scan-top-action-label">
+            <ClipboardList size={16} aria-hidden="true" />
+            주문관리
+          </span>
         </button>
         <div className="scan-menu-wrap">
           <button
             ref={statusMenuButtonRef}
             className="count-chip status-menu-btn"
             type="button"
+            aria-expanded={menuOpen}
+            aria-controls="scan-status-menu"
             onClick={() => setMenuOpen((current) => !current)}
           >
-            {isReceipt && queueCount > 0 ? (
-              <>
-                <b>{queueCount}</b>
-                <span>장</span>
-              </>
-            ) : (
-              <span>상태</span>
-            )}
+            <span className="scan-top-action-label">
+              {isReceipt && queueCount > 0 ? (
+                <>
+                  <b>{queueCount}</b>
+                  <span>장</span>
+                </>
+              ) : (
+                <span>상태</span>
+              )}
+            </span>
           </button>
           {menuOpen && (
-            <div className="scan-dropdown">
+            <div className="scan-dropdown" id="scan-status-menu">
               <button
                 type="button"
                 onClick={() => {

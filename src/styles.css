@@ -15937,26 +15937,95 @@ body:has(.cms-shell) {
 
 .scan-order-button {
   display: inline-flex;
+  min-width: 44px;
   min-height: 44px;
   align-items: center;
-  gap: 4px;
+  justify-content: center;
   margin-left: auto;
-  margin-right: 8px;
-  border: 1px solid oklch(80% 0.02 230 / 0.5);
-  border-radius: 8px;
-  padding: 0 8px;
+  border: 0;
+  border-radius: 999px;
+  padding: 0;
+  background: transparent;
+}
+
+.scan-top {
+  gap: 8px;
+}
+
+.scan-top-action-label {
+  display: inline-flex;
+  min-height: 32px;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.13);
+  padding: 0 12px;
+  -webkit-backdrop-filter: blur(8px);
+  backdrop-filter: blur(8px);
   color: #fff;
-  background: oklch(22% 0.018 230 / 0.85);
-  font-size: var(--font-sm);
+  font-size: var(--font-xs);
   font-weight: 750;
+  line-height: 1.25;
   white-space: nowrap;
 }
 
+.scan-top-action-label > svg {
+  flex-shrink: 0;
+}
+
+.scan-top .status-menu-btn {
+  min-width: 44px;
+  height: 44px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.scan-top .status-menu-btn b {
+  font-size: var(--font-xs);
+  font-variant-numeric: tabular-nums;
+}
+
 .scan-top > .glass-pill {
+  max-width: none;
+  min-width: 0;
+  min-height: 44px;
+  flex: 1;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.scan-top > .glass-pill::after {
+  content: none;
+}
+
+.scan-wholesaler-label {
+  min-width: 0;
+  max-width: 100%;
+  gap: 8px;
+}
+
+.scan-wholesaler-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.scan-top button:focus-visible {
+  outline: 2px solid white;
+  outline-offset: 2px;
+}
+
+.phone.is-scan-performance .scan-top-action-label {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 
 .scan-top > .scan-menu-wrap,
