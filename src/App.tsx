@@ -3021,7 +3021,7 @@ function returnHistorySourceText(history: CmsReturnHistory) {
 }
 
 function receiptHistoryStatusBadgeClass(status: CmsReceiptHistory["status"]) {
-  if (status === "RETURNABLE") return "normal";
+  if (status === "RETURNABLE" || status === "MANUAL") return "normal";
   if (status === "RETURNED") return "name";
   return "missing";
 }
@@ -9975,6 +9975,8 @@ type CmsPurchaseHistory = {
 
 type CmsReceiptHistory = {
   id: string;
+  receiptType?: "QR" | "MANUAL";
+  receiptDetail?: string;
   pharmacyId?: string;
   pharmacyName?: string;
   stockId?: string;
@@ -9993,7 +9995,7 @@ type CmsReceiptHistory = {
   receivedAt: string;
   createdAt: string;
   createdBy: string;
-  status: "RETURNABLE" | "RETURNED" | "UNKNOWN";
+  status: "RETURNABLE" | "RETURNED" | "UNKNOWN" | "MANUAL";
 };
 
 type CmsReceiptWholesalerAudit = {
@@ -15704,6 +15706,8 @@ function normalizeCmsReceiptHistory(
   index: number,
 ): CmsReceiptHistory {
   const item = unwrapObjectPayload(raw);
+  const receiptType = item.receiptType === "MANUAL" ? "MANUAL" : "QR";
+  const manual = receiptType === "MANUAL";
   const productTotalQuantity = finiteNumber(
     item.productTotalQuantity ??
       item.product_total_quantity ??
@@ -15721,8 +15725,9 @@ function normalizeCmsReceiptHistory(
   );
   const explicitReturnable =
     item.returnableQuantity ?? item.returnable_quantity;
-  const returnableQuantity =
-    explicitReturnable === undefined || explicitReturnable === null
+  const returnableQuantity = manual
+    ? 0
+    : explicitReturnable === undefined || explicitReturnable === null
       ? Math.max(0, productTotalQuantity - returnedQuantity)
       : finiteNumber(explicitReturnable);
   const receivedAt = formatTransactionAt(
@@ -15733,15 +15738,18 @@ function normalizeCmsReceiptHistory(
       item.createdAt ??
       item.created_at,
   );
-  const status: CmsReceiptHistory["status"] =
-    productTotalQuantity > 0 && returnableQuantity <= 0
+  const status: CmsReceiptHistory["status"] = manual
+    ? "MANUAL"
+    : productTotalQuantity > 0 && returnableQuantity <= 0
       ? "RETURNED"
       : productTotalQuantity > 0
         ? "RETURNABLE"
         : "UNKNOWN";
 
   return {
-    id: String(item.id ?? item.receiptId ?? item.stockItemId ?? index),
+    id: `${manual ? "manual:" : ""}${String(item.id ?? item.receiptId ?? item.stockItemId ?? index)}`,
+    receiptType,
+    receiptDetail: optionalText(item.receiptDetail),
     pharmacyId: optionalText(item.pharmacyId ?? item.pharmacy_id),
     pharmacyName: optionalText(item.pharmacyName ?? item.pharmacy_name),
     stockId: optionalText(item.stockId ?? item.stock_id),
@@ -15924,7 +15932,18 @@ function receiptHistoryMatchesFilters(
   return true;
 }
 
+function receiptHistoryQuantityDetail(history: CmsReceiptHistory) {
+  if (history.receiptType !== "MANUAL") return "PC 기준 재고 반영";
+  const packageMatch = history.receiptDetail?.match(
+    /^(\d+)통 간편 입고 \(1통 (\d+)개\)/,
+  );
+  return packageMatch
+    ? `${packageMatch[1]}통 × ${packageMatch[2]}개`
+    : "간편입고 수량";
+}
+
 function receiptHistoryStatusText(status: CmsReceiptHistory["status"]) {
+  if (status === "MANUAL") return "입고 완료";
   if (status === "RETURNED") return "반품 완료";
   if (status === "RETURNABLE") return "반품 가능";
   return "확인 필요";
@@ -17580,7 +17599,7 @@ function CmsHeader({
     "inventory-snapshot-diff":
       "에이전트 스냅샷과 현재 재고 수량 차이를 확인합니다.",
     "inventory-shortages": "초과 처방과 부족 수량을 확인합니다.",
-    receipts: "QR/SN 단위 입고 이력과 반품 가능 수량을 확인합니다.",
+    receipts: "QR 입고와 간편입고 이력, 반품 가능 수량을 확인합니다.",
     "receipt-wholesaler-audits":
       "입고·약국·변경 계정 ID로 도매처 변경 감사 로그를 조회합니다.",
     "agent-control":
@@ -25917,6 +25936,11 @@ function CmsReceiptHistoryPage({
               <div className="cms-receipt-history-row" key={history.id}>
                 <span data-label="입고일시">
                   {history.receivedAt}
+                  <em
+                    className={`cms-receipt-source ${history.receiptType === "MANUAL" ? "is-manual" : ""}`}
+                  >
+                    {history.receiptType === "MANUAL" ? "간편입고" : "QR 입고"}
+                  </em>
                   <em>등록 {history.createdBy || "-"}</em>
                 </span>
                 {canLookupByPharmacyId && (
@@ -25939,7 +25963,7 @@ function CmsReceiptHistoryPage({
                   <span title={history.wholesalerName}>
                     {history.wholesalerName}
                   </span>
-                  {canChangeWholesaler && (
+                  {canChangeWholesaler && history.receiptType !== "MANUAL" && (
                     <button
                       aria-label={`${history.drugName} 입고 도매처 변경`}
                       type="button"
@@ -25954,20 +25978,30 @@ function CmsReceiptHistoryPage({
                   className="cms-receipt-quantity-cell"
                 >
                   <b>{currency(history.productTotalQuantity)}개</b>
-                  <em>PC 기준 재고 반영</em>
+                  <em title={history.receiptDetail}>
+                    {receiptHistoryQuantityDetail(history)}
+                  </em>
                 </span>
                 <b data-label="반품 가능">
-                  {currency(history.returnableQuantity)}개
+                  {history.receiptType === "MANUAL"
+                    ? "대상 아님"
+                    : `${currency(history.returnableQuantity)}개`}
                 </b>
                 <span
                   data-label="PC · QR 추적값"
                   className="cms-receipt-trace-cell"
                 >
                   <strong title={history.pc}>PC {history.pc || "-"}</strong>
-                  <em title={history.sn}>SN {history.sn || "-"}</em>
-                  <em>
-                    LOT {history.lot || "-"} · EXP {history.exp || "-"}
-                  </em>
+                  {history.receiptType === "MANUAL" ? (
+                    <em>QR 반품 대상 아님</em>
+                  ) : (
+                    <>
+                      <em title={history.sn}>SN {history.sn || "-"}</em>
+                      <em>
+                        LOT {history.lot || "-"} · EXP {history.exp || "-"}
+                      </em>
+                    </>
+                  )}
                 </span>
                 <span
                   data-label="상태"

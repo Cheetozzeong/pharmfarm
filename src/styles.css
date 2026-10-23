@@ -9492,6 +9492,15 @@ body:has(.cms-shell) {
   white-space: nowrap;
 }
 
+.cms-receipt-history-row .cms-receipt-source {
+  color: #075bcf;
+  font-weight: 850;
+}
+
+.cms-receipt-history-row .cms-receipt-source.is-manual {
+  color: #6c45d8;
+}
+
 .cms-receipt-history-row .cms-receipt-quantity-cell {
   display: grid;
   justify-items: end;
