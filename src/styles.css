@@ -2901,6 +2901,10 @@ p {
     max-width: 560px;
   }
 
+  .is-stock-adjust-web .bottom-bar:has(.manual-receipt-cart-action) {
+    justify-content: center;
+  }
+
   .is-stock-adjust-web
     .bottom-bar:has(.manual-receipt-cart-action)
     .primary-btn,
