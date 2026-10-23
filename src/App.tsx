@@ -6306,18 +6306,24 @@ function MobileApp({
       );
       void refreshFromBackend();
     } catch (error) {
+      let message =
+        "입고 저장을 확인하지 못했습니다. 연결 상태와 입고 이력을 확인한 뒤 다시 시도해 주세요.";
       if (error instanceof ApiError) {
-        const message = error.message || "입고 요청에 실패했습니다.";
-        setReceiptSubmitError(message);
+        message = error.message || "입고 저장에 실패했습니다.";
         setApiState("connected");
-        setApiMessage(message);
-        setScanNotice(message);
-        return;
+      } else if (error instanceof Error && error.message === "UNAUTHORIZED") {
+        message = "로그인이 만료되어 입고를 저장하지 못했습니다.";
+        setApiState("unauthorized");
+      } else if (error instanceof Error && error.message === "FORBIDDEN") {
+        message = "입고 권한이 없어 저장하지 못했습니다.";
+        setApiState("forbidden");
       }
 
-      setApiFallback(error);
-      if (receiptMatchPreview) return;
-      commitReceiptDemo(eligibleReceiptItems, wholesaler);
+      const notice = `${message} 스캔 목록과 선택한 약품·수량은 유지됩니다.`;
+      setReceiptSubmitError(notice);
+      setApiMessage(notice);
+      setScanNotice(notice);
+      return;
     }
 
     const committedIds = new Set(eligibleReceiptItems.map((item) => item.id));
@@ -6338,29 +6344,6 @@ function MobileApp({
       current.filter((item) => !committedIds.has(item.id)),
     );
     setScreen("receiptDone");
-  }
-
-  function commitReceiptDemo(
-    items: ReceiptQueueItem[],
-    wholesaler: Wholesaler,
-  ) {
-    setTraces((current) => [
-      ...items.map((item) => ({
-        id: createId("R"),
-        pc: item.qr.pc,
-        sn: item.qr.sn,
-        lot: item.qr.lot,
-        exp: item.qr.exp,
-        drugName: item.drug.name,
-        insuranceCode: item.drug.insuranceCode,
-        productTotalQuantity: item.drug.productTotalQuantity,
-        returnedQuantity: 0,
-        wholesalerId: wholesaler.id,
-        wholesalerName: wholesaler.name,
-      })),
-      ...current,
-    ]);
-    setStocks((current) => applyReceiptStocks(current, items));
   }
 
   async function commitReturn(quantityOverride?: number) {
@@ -6941,30 +6924,6 @@ function lookupReturnDemo(
     insuranceCode: "",
     message: "입고·구매 내역에 근거가 없어 반품 대상으로 등록할 수 없습니다.",
   };
-}
-
-function applyReceiptStocks(current: StockItem[], items: ReceiptQueueItem[]) {
-  const next = [...current];
-  for (const item of items) {
-    const stock = next.find(
-      (candidate) => candidate.insuranceCode === item.drug.insuranceCode,
-    );
-    if (stock) {
-      stock.quantity += item.drug.productTotalQuantity;
-    } else {
-      next.push({
-        id: createId("S"),
-        pc: item.qr.pc,
-        insuranceCode: item.drug.insuranceCode,
-        name: item.drug.name,
-        quantity: item.drug.productTotalQuantity,
-        price: item.drug.price,
-        matchStatus: item.drug.matchStatus,
-        controlledDrug: { controlled: false },
-      });
-    }
-  }
-  return next;
 }
 
 function screenClass(screen: Screen, mode: Mode) {
@@ -8058,7 +8017,9 @@ function ReceiptMatchScreen({
           <p className="receipt-bottom-warning">{commitBlockedReason}</p>
         )}
         {submitErrorMessage && (
-          <p className="receipt-bottom-error">{submitErrorMessage}</p>
+          <p className="receipt-bottom-error" role="alert">
+            {submitErrorMessage}
+          </p>
         )}
         <div style={{ display: "flex", gap: "10px" }}>
           {issueCount > 0 && (
@@ -8174,7 +8135,9 @@ function ReceiptIssuesScreen({
       </section>
       <BottomBar stack>
         {submitErrorMessage && (
-          <p className="receipt-bottom-error">{submitErrorMessage}</p>
+          <p className="receipt-bottom-error" role="alert">
+            {submitErrorMessage}
+          </p>
         )}
         <button
           className="primary-btn"
