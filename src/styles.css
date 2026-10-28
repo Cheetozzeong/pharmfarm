@@ -17474,3 +17474,11 @@ body:has(.cms-shell) {
   outline: 3px solid var(--blue);
   outline-offset: 2px;
 }
+
+.cms-agent-prescription-range { margin-bottom: 16px; }
+.cms-agent-prescription-range fieldset { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; border: 0; padding: 12px 0 0; margin: 0; }
+.cms-agent-prescription-range .cms-input { flex: 1 1 155px; }
+.cms-agent-prescription-range input { min-width: 0; width: 100%; }
+.cms-agent-prescription-range fieldset button { background: #e9eef4; color: var(--ink); }
+.cms-agent-prescription-range legend { font-size: 11px; color: #667888; padding: 0; }
+.cms-agent-command-table [data-label="명령"] > small { display: block; font-size: 11px; margin-top: 4px; }

@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>처방 기간 수집 검증</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main class="cms-agent-command-panel" style="max-width:900px;margin:36px auto;padding:24px;background:#fff">
+      <h1>에이전트 제어 · 검증용 PC</h1>
+      <div id="root"></div>
+    </main>
+    <script type="module">
+      import React, { useState } from "react";
+      import { createRoot } from "react-dom/client";
+      import { AgentPrescriptionSyncCard } from "/src/AgentPrescriptionSyncCard.tsx";
+      function Fixture() {
+        const [result, setResult] = useState(null);
+        return React.createElement(React.Fragment, null,
+          React.createElement(AgentPrescriptionSyncCard, { supported: true, busy: false, onCollect: setResult }),
+          React.createElement("output", { "aria-label": "요청 기간" }, result ? `${result.startDate} ~ ${result.endDate}` : "수집 요청 전"),
+          React.createElement("h2", null, "업데이트 전 PC"),
+          React.createElement(AgentPrescriptionSyncCard, { supported: false, busy: false, onCollect: () => { throw new Error("Unsupported PC submitted"); } })
+        );
+      }
+      createRoot(document.getElementById("root")).render(React.createElement(Fixture));
+    </script>
+  </body>
+</html>

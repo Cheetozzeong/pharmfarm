@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentConnection, agentTimestamp } from "./agentHealth";
 import { AgentDiagnosticsDialog } from "./AgentDiagnosticsDialog";
+import { AgentPrescriptionSyncCard } from "./AgentPrescriptionSyncCard";
+import type { AgentPrescriptionRange } from "./agentPrescriptionRange";
+import { prescriptionRangeError } from "./agentPrescriptionRange";
 import { MobileOrderScreen } from "./MobileOrderScreen";
 import { MobileRecentStockScreen } from "./MobileRecentStockScreen";
 import { aggregateRecentStock } from "./mobileRecentStock";
@@ -10055,12 +10058,14 @@ type CmsAgentCommand = {
   startedAt: string;
   completedAt: string;
   diagnosticsAvailable: boolean;
+  prescriptionRange?: AgentPrescriptionRange;
 };
 
 type CmsAgentCommandType =
   | "COLLECT_DIAGNOSTICS"
   | "UPDATE_AGENT"
   | "RESYNC_TODAY_PRESCRIPTIONS"
+  | "RESYNC_PRESCRIPTIONS_RANGE"
   | "SYNC_REFERENCE_DATA"
   | "SYNC_STOCKS"
   | "SYNC_PURCHASES"
@@ -13926,8 +13931,20 @@ function CmsApp({
     }
   }
 
-  async function createAgentCommand(commandType: CmsAgentCommandType) {
+  async function createAgentCommand(
+    commandType: CmsAgentCommandType,
+    range?: AgentPrescriptionRange,
+  ) {
     if (!selectedAgentDevice || agentCommandSubmitting) return;
+    if (commandType === "RESYNC_PRESCRIPTIONS_RANGE") {
+      const error = range
+        ? prescriptionRangeError(range)
+        : "처방 수집 기간을 지정해 주세요.";
+      if (error) {
+        setApiMessage(error);
+        return;
+      }
+    }
     if (
       commandType === "UPDATE_AGENT" &&
       !window.confirm(
@@ -13954,7 +13971,9 @@ function CmsApp({
               }
             : commandType === "COLLECT_DIAGNOSTICS"
               ? { payload: { hours: 24 } }
-              : {}),
+              : commandType === "RESYNC_PRESCRIPTIONS_RANGE"
+                ? { payload: range }
+                : {}),
         }),
       });
       setApiState("connected");
@@ -14585,8 +14604,8 @@ function CmsApp({
                 devices={agentDevices}
                 selectedDeviceKey={selectedAgentDeviceKey}
                 submitting={agentCommandSubmitting}
-                onCommand={(commandType) =>
-                  void createAgentCommand(commandType)
+                onCommand={(commandType, range) =>
+                  void createAgentCommand(commandType, range)
                 }
                 onSelectDevice={setSelectedAgentDeviceKey}
               />
@@ -16125,6 +16144,14 @@ function normalizeCmsAgentCommand(
         item.updated_at,
     ),
     diagnosticsAvailable: item.diagnosticsAvailable === true,
+    prescriptionRange:
+      typeof asRecord(item.payload).startDate === "string" &&
+      typeof asRecord(item.payload).endDate === "string"
+        ? {
+            startDate: String(asRecord(item.payload).startDate),
+            endDate: String(asRecord(item.payload).endDate),
+          }
+        : undefined,
   };
 }
 
@@ -16137,6 +16164,7 @@ function agentCommandLabel(commandType: string) {
     COLLECT_DIAGNOSTICS: "진단 로그 가져오기",
     UPDATE_AGENT: "에이전트 원격 업데이트",
     RESYNC_TODAY_PRESCRIPTIONS: "오늘 처방 재수집",
+    RESYNC_PRESCRIPTIONS_RANGE: "기간 지정 처방 수집",
     SYNC_REFERENCE_DATA: "기준 데이터 전체 동기화",
     RESYNC_REFERENCE_DATA: "기준 데이터 전체 재동기화",
     SYNC_DRUG_MASTERS: "약품 마스터 동기화",
@@ -24988,7 +25016,10 @@ function CmsAgentControlPage({
   devices: CmsAgentDevice[];
   selectedDeviceKey: string;
   submitting: boolean;
-  onCommand: (commandType: CmsAgentCommandType) => void;
+  onCommand: (
+    commandType: CmsAgentCommandType,
+    range?: AgentPrescriptionRange,
+  ) => void;
   onSelectDevice: (deviceKey: string) => void;
 }) {
   const [checkedAt, setCheckedAt] = useState(Date.now);
@@ -25092,6 +25123,15 @@ function CmsAgentControlPage({
         __AGENT_RELEASE_VERSION__,
       )
     : null;
+  const rangeSupport = selectedDevice
+    ? compareAgentVersions(selectedDevice.agentVersion, "1.4.9-ps")
+    : null;
+  const prescriptionSyncInProgress = visibleCommands.some(
+    (command) =>
+      ["RESYNC_TODAY_PRESCRIPTIONS", "RESYNC_PRESCRIPTIONS_RANGE"].includes(
+        command.commandType,
+      ) && isActiveAgentCommandStatus(command.status),
+  );
   const diagnosticSupport = selectedDevice
     ? compareAgentVersions(selectedDevice.agentVersion, "1.4.8-ps")
     : null;
@@ -25310,10 +25350,24 @@ function CmsAgentControlPage({
             </div>
           )}
 
+          {selectedDevice && (
+            <AgentPrescriptionSyncCard
+              key={selectedDeviceKey}
+              supported={rangeSupport !== null && rangeSupport >= 0}
+              busy={submitting || prescriptionSyncInProgress || updateInProgress}
+              onCollect={(range) => onCommand("RESYNC_PRESCRIPTIONS_RANGE", range)}
+            />
+          )}
           <div className="cms-agent-command-grid">
             {commandOptions.map((option) => (
               <button
-                disabled={!selectedDevice || submitting}
+                disabled={
+                  !selectedDevice ||
+                  submitting ||
+                  updateInProgress ||
+                  (option.type === "RESYNC_TODAY_PRESCRIPTIONS" &&
+                    prescriptionSyncInProgress)
+                }
                 key={option.type}
                 type="button"
                 onClick={() => onCommand(option.type)}
@@ -25385,6 +25439,12 @@ function CmsAgentControlPage({
                 </strong>
                 <span data-label="명령">
                   {agentCommandLabel(command.commandType)}
+                  {command.prescriptionRange && (
+                    <small>
+                      {command.prescriptionRange.startDate} ~{" "}
+                      {command.prescriptionRange.endDate}
+                    </small>
+                  )}
                 </span>
                 <span
                   data-label="상태"

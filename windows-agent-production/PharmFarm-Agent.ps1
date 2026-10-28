@@ -35,7 +35,7 @@ $LastSqlOkAt = $null
 $LastApiOkAt = $null
 $RemoteCommandPollingUnavailable = $false
 $HeartbeatUnavailableUntil = $null
-$AgentVersion = "1.4.8-ps"
+$AgentVersion = "1.4.9-ps"
 . (Join-Path $PSScriptRoot "PharmFarm-AgentLifecycle.ps1")
 . (Join-Path $PSScriptRoot "PharmFarm-AgentDiagnostics.ps1")
 $RuntimeLock = $null
@@ -1711,13 +1711,42 @@ function Get-PrescriptionFullScanIntervalMinutes {
   return $minutes
 }
 
-function Get-TodayPrescriptionRows {
-  param([object]$Config)
+function Get-PrescriptionWeekRange {
+  param([DateTimeOffset]$Now = [DateTimeOffset]::UtcNow)
 
+  $today = $Now.ToOffset([TimeSpan]::FromHours(9)).Date
+  $daysSinceMonday = ([int]$today.DayOfWeek + 6) % 7
+  $monday = $today.AddDays(-$daysSinceMonday)
+  return [ordered]@{
+    startDate = $monday.ToString("yyyy-MM-dd")
+    endDate = $monday.AddDays(6).ToString("yyyy-MM-dd")
+  }
+}
+
+function Get-PrescriptionDateRange {
+  param([string]$StartDate, [string]$EndDate)
+
+  $start = [DateTime]::MinValue
+  $end = [DateTime]::MinValue
+  $culture = [Globalization.CultureInfo]::InvariantCulture
+  $style = [Globalization.DateTimeStyles]::None
+  if (![DateTime]::TryParseExact($StartDate, "yyyy-MM-dd", $culture, $style, [ref]$start) -or
+      ![DateTime]::TryParseExact($EndDate, "yyyy-MM-dd", $culture, $style, [ref]$end)) {
+    throw "Prescription dates must use valid yyyy-MM-dd dates."
+  }
+  if ($start.Year -lt 1900 -or $end.Year -gt 9998 -or $end -lt $start -or ($end - $start).Days -ge 31) {
+    throw "Prescription range must be ordered and include at most 31 days (years 1900-9998)."
+  }
+  return [ordered]@{ startDate = $StartDate; endDate = $EndDate }
+}
+
+function Get-PrescriptionRowsInRange {
+  param([object]$Config, [string]$StartDate, [string]$EndDate)
+
+  $range = Get-PrescriptionDateRange -StartDate $StartDate -EndDate $EndDate
+  $start8 = $range.startDate.Replace("-", "")
+  $end8 = $range.endDate.Replace("-", "")
   $query = @"
-DECLARE @today8 VARCHAR(8)
-SET @today8 = CONVERT(VARCHAR(8), GETDATE(), 112)
-
 SELECT
   ps_Code,
   ps_Date,
@@ -1728,14 +1757,29 @@ SELECT
 FROM dbo.PRESCRIPT_EDB WITH (NOLOCK)
 WHERE ps_Code IS NOT NULL
   AND (
-    CONVERT(VARCHAR(8), ps_Date, 112) = @today8
-    OR LEFT(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(64), ps_Date), '-', ''), '/', ''), '.', ''), 8) = @today8
+    CONVERT(VARCHAR(8), ps_Date, 112) BETWEEN '$start8' AND '$end8'
+    OR LEFT(REPLACE(REPLACE(REPLACE(CONVERT(NVARCHAR(64), ps_Date), '-', ''), '/', ''), '.', ''), 8) BETWEEN '$start8' AND '$end8'
   )
 ORDER BY ps_Date ASC, ps_Code ASC
 "@
 
-  return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_ERROR_LOG" -Query $query -TimeoutSeconds 20
+  return Invoke-SqlQuery -SqlServer $Config.sqlServer -DbName "eP_ERROR_LOG" -Query $query -TimeoutSeconds 30
 }
+
+function Get-TodayPrescriptionRows {
+  param([object]$Config)
+
+  $today = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(9)).ToString("yyyy-MM-dd")
+  return Get-PrescriptionRowsInRange -Config $Config -StartDate $today -EndDate $today
+}
+
+function Get-WeekPrescriptionRows {
+  param([object]$Config)
+
+  $range = Get-PrescriptionWeekRange
+  return Get-PrescriptionRowsInRange -Config $Config -StartDate $range.startDate -EndDate $range.endDate
+}
+
 
 function Get-PrescriptionDrugs {
   param(
@@ -2924,6 +2968,13 @@ function Invoke-AgentCommandAction {
       $summary = Queue-TodayPrescriptionOverwrite -Config $Config -ResyncRequestId $CommandId
       return [ordered]@{ status = "COMPLETED"; message = "today prescriptions queued"; result = $summary }
     }
+    "RESYNC_PRESCRIPTIONS_RANGE" {
+      $payload = Get-AgentObjectValue -Object $Command -Name "payload" -DefaultValue $null
+      $startDate = Convert-AgentText (Get-AgentObjectValue -Object $payload -Name "startDate" -DefaultValue "")
+      $endDate = Convert-AgentText (Get-AgentObjectValue -Object $payload -Name "endDate" -DefaultValue "")
+      $summary = Queue-PrescriptionRangeOverwrite -Config $Config -StartDate $startDate -EndDate $endDate -ResyncRequestId $CommandId
+      return [ordered]@{ status = "COMPLETED"; message = "prescription date range queued"; result = $summary }
+    }
     "SYNC_REFERENCE_DATA" {
       $result = Invoke-AgentReferenceCommand -Config $Config -Kinds @("drug-master", "stock", "barcode", "wholesaler", "controlled-drug", "drug-price", "drug-unit")
       return [ordered]@{ status = "COMPLETED"; message = "reference data sync queued"; result = $result }
@@ -2977,7 +3028,7 @@ function Invoke-AgentCommandAction {
         status = "REJECTED"
         message = "unsupported command type: $CommandType"
         result = [ordered]@{
-          supportedTypes = @("COLLECT_DIAGNOSTICS", "UPDATE_AGENT", "RESYNC_TODAY_PRESCRIPTIONS", "SYNC_REFERENCE_DATA", "SYNC_DRUG_MASTERS", "SYNC_STOCKS", "SYNC_BARCODES", "SYNC_WHOLESALERS", "SYNC_PURCHASES", "SYNC_CONTROLLED_DRUGS", "SYNC_DRUG_PRICES", "SYNC_DRUG_UNITS", "HEARTBEAT_NOW")
+          supportedTypes = @("COLLECT_DIAGNOSTICS", "UPDATE_AGENT", "RESYNC_TODAY_PRESCRIPTIONS", "RESYNC_PRESCRIPTIONS_RANGE", "SYNC_REFERENCE_DATA", "SYNC_DRUG_MASTERS", "SYNC_STOCKS", "SYNC_BARCODES", "SYNC_WHOLESALERS", "SYNC_PURCHASES", "SYNC_CONTROLLED_DRUGS", "SYNC_DRUG_PRICES", "SYNC_DRUG_UNITS", "HEARTBEAT_NOW")
         }
       }
     }
@@ -3096,12 +3147,15 @@ function Write-State {
   Write-JsonFile -Path $StateFile -Value $state -Depth 8
 }
 
-function Queue-TodayPrescriptionOverwrite {
+function Queue-PrescriptionRangeOverwrite {
   param(
     [object]$Config,
+    [string]$StartDate,
+    [string]$EndDate,
     [string]$ResyncRequestId = ""
   )
 
+  $range = Get-PrescriptionDateRange -StartDate $StartDate -EndDate $EndDate
   $requestId = $ResyncRequestId
   if ([string]::IsNullOrWhiteSpace($requestId)) {
     $requestId = [Guid]::NewGuid().ToString("N")
@@ -3111,8 +3165,8 @@ function Queue-TodayPrescriptionOverwrite {
   $skipped = 0
 
   try {
-    $rows = @(Convert-DataTableRows (Get-TodayPrescriptionRows $Config))
-    Write-AgentLog "today prescription overwrite scan rows=$($rows.Count) requestId=$requestId"
+    $rows = @(Convert-DataTableRows (Get-PrescriptionRowsInRange -Config $Config -StartDate $range.startDate -EndDate $range.endDate))
+    Write-AgentLog "prescription range overwrite scan rows=$($rows.Count) requestId=$requestId"
 
     foreach ($row in $rows) {
       Write-PharmFarmProgress -InstallRoot $InstallRoot -Phase 'rows'
@@ -3126,12 +3180,12 @@ function Queue-TodayPrescriptionOverwrite {
       $drugRows = @(Convert-DataTableRows (Get-PrescriptionDrugs -Config $Config -PrescriptionCode $code))
 
       if ($drugRows.Count -eq 0) {
-        Write-AgentLog "today prescription overwrite skipped prescription=$((Get-Sha256Hex $code).Substring(0, 12)) drugs=0 requestId=$requestId" "WARN"
+        Write-AgentLog "prescription range overwrite skipped prescription=$((Get-Sha256Hex $code).Substring(0, 12)) drugs=0 requestId=$requestId" "WARN"
         $skipped += 1
         continue
       }
 
-      $envelope = New-Payload -Config $Config -QrRow $row -DrugRows $drugRows -SyncMode "TODAY_OVERWRITE" -OverwriteExisting $true -ResyncRequestId $requestId
+      $envelope = New-Payload -Config $Config -QrRow $row -DrugRows $drugRows -SyncMode "RANGE_OVERWRITE" -OverwriteExisting $true -ResyncRequestId $requestId
       $syncKey = Get-PrescriptionSyncKey $code
       if (![string]::IsNullOrWhiteSpace($syncKey)) {
         $prescriptionHashes[$syncKey] = Get-PrescriptionSnapshotHash -QrRow $row -DrugRows $drugRows
@@ -3139,26 +3193,35 @@ function Queue-TodayPrescriptionOverwrite {
 
       if (Save-QueueItem $envelope) {
         $queued += 1
-        Write-AgentLog "today prescription overwrite queued event=$($envelope.eventId) drugs=$($drugRows.Count) requestId=$requestId"
+        Write-AgentLog "prescription range overwrite queued event=$($envelope.eventId) drugs=$($drugRows.Count) requestId=$requestId"
       }
     }
 
     Write-SyncHashes -Kind "prescription-live" -Hashes $prescriptionHashes
     Flush-Queue $Config
-    Write-State -Config $Config -Status "OK" -Message "today prescription overwrite queued=$queued skipped=$skipped"
-    Write-AgentLog "today prescription overwrite complete queued=$queued skipped=$skipped requestId=$requestId"
+    Write-State -Config $Config -Status "OK" -Message "prescription range overwrite queued=$queued skipped=$skipped"
+    Write-AgentLog "prescription range overwrite complete queued=$queued skipped=$skipped requestId=$requestId"
     return [ordered]@{
       requestId = $requestId
+      startDate = $range.startDate
+      endDate = $range.endDate
       scanned = $rows.Count
       queued = $queued
       skipped = $skipped
       queueCount = (Get-QueueFiles).Count
     }
   } catch {
-    Write-AgentLog "today prescription overwrite error $($_.Exception.Message)" "ERROR"
+    Write-AgentLog "prescription range overwrite error $($_.Exception.Message)" "ERROR"
     Write-State -Config $Config -Status "ERROR" -Message $_.Exception.Message
     throw
   }
+}
+
+function Queue-TodayPrescriptionOverwrite {
+  param([object]$Config, [string]$ResyncRequestId = "")
+
+  $today = [DateTimeOffset]::UtcNow.ToOffset([TimeSpan]::FromHours(9)).ToString("yyyy-MM-dd")
+  return Queue-PrescriptionRangeOverwrite -Config $Config -StartDate $today -EndDate $today -ResyncRequestId $ResyncRequestId
 }
 
 function Watch-Once {
@@ -3175,8 +3238,8 @@ function Watch-Once {
 
     $scanMode = "recent"
     if ($runFullPrescriptionScan) {
-      $rows = @(Convert-DataTableRows (Get-TodayPrescriptionRows $Config))
-      $scanMode = "today"
+      $rows = @(Convert-DataTableRows (Get-WeekPrescriptionRows $Config))
+      $scanMode = "week"
     } else {
       $rows = @(Convert-DataTableRows (Get-RecentPrescriptionRows $Config))
     }

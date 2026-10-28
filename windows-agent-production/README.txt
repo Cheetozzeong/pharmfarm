@@ -310,3 +310,14 @@ Controlled-drug trace:
 - Output folder: C:\ProgramData\PharmFarmAgent\debug-export\controlled-trace-YYYYMMDD-HHMMSS
 - Files include pdf_reference.csv, reference_match_summary.csv, habitdrug_match.csv, dgmast_match.csv, dgtrans_price_match.csv, and summary.txt.
 - Use this when a controlled-drug candidate looks wrong and the source DB columns need to be verified.
+
+Prescription modification coverage (1.4.9-ps):
+- Frequent scan: most recent prescriptions (default 32).
+- Full recheck: current Korea calendar week, Monday through Sunday inclusive
+  (default every 5 minutes; existing prescriptionFullScanIntervalMinutes setting).
+- CMS RESYNC_PRESCRIPTIONS_RANGE accepts startDate/endDate (yyyy-MM-dd),
+  inclusive up to 31 days, and reimports through the existing overwrite/stock
+  correction path. Requires backend and agent support for 1.4.9-ps.
+- Existing today-only tray/CMS actions remain today-only.
+- A queued/completed command is not proof that every server overwrite succeeded;
+  verify the prescription, pending queue, and rejected/failed records.
