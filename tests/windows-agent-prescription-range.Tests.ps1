@@ -86,3 +86,12 @@ function Get-PrescriptionDrugs { param($Config, $PrescriptionCode) return @() }
 $summary = Queue-PrescriptionRangeOverwrite $config '2026-10-27' '2026-10-27' 'empty-fixture'
 Assert-Range ($summary.queued -eq 0 -and $summary.skipped -eq 1) 'Empty drug snapshot is not sent as a destructive overwrite'
 Write-Host "Passed $checks prescription range assertions."
+
+# A -> B -> A must create a fresh event, even when the first A was already sent.
+function Get-PrescriptionDrugs { param($Config, $PrescriptionCode) return $script:drug }
+$beforeRevert = $script:queued.Count
+$script:drug.pd_amount = 480; $script:drug.pd_dday = 60
+$script:LastPrescriptionFullScanAt = $null
+Watch-Once $config
+if ($script:queued.Count -ne $beforeRevert + 1 -or $script:queued[$beforeRevert].eventId -eq $envelope.eventId) { throw 'Reverting a source snapshot must enqueue a fresh event' }
+Write-Host 'PASS: A -> B -> A source edits create a fresh event identity'

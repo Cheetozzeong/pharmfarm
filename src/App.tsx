@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentConnection, agentTimestamp } from "./agentHealth";
 import { AgentDiagnosticsDialog } from "./AgentDiagnosticsDialog";
+import { PrescriptionChangeAlert, PrescriptionChangePage } from "./PrescriptionChanges";
 import { AgentPrescriptionSyncCard } from "./AgentPrescriptionSyncCard";
 import type { AgentPrescriptionRange } from "./agentPrescriptionRange";
 import { prescriptionRangeError } from "./agentPrescriptionRange";
@@ -9900,6 +9901,7 @@ type CmsPage =
   | "agent-control"
   | "wholesaler"
   | "prescriptions"
+  | "prescription-changes"
   | "purchase";
 
 type CmsMaster = {
@@ -11636,6 +11638,7 @@ function getCmsPage(path: string): CmsPage {
   if (segment === "inventory" && subSegment === "receipts") {
     return "receipts";
   }
+  if (segment === "prescriptions" && subSegment === "changes") return "prescription-changes";
   if (segment === "agent-control") {
     return "agent-control";
   }
@@ -11829,6 +11832,7 @@ function CmsApp({
   >("ALL");
   const [selectedInquiryId, setSelectedInquiryId] = useState("");
   const [inquirySubmitting, setInquirySubmitting] = useState(false);
+  const [changeRefresh, setChangeRefresh] = useState(0);
   const [dashboardData, setDashboardData] = useState<CmsDashboardData | null>(
     null,
   );
@@ -14525,7 +14529,10 @@ function CmsApp({
           <CmsHeader
             onLogout={hasStoredAuthTokens() ? logoutCms : undefined}
             page={visiblePage}
-            onRefresh={refreshCms}
+            onRefresh={() => {
+              if (visiblePage === "prescription-changes") setChangeRefresh((value) => value + 1);
+              else void refreshCms();
+            }}
           />
           <>
             {visiblePage === "dashboard" && (
@@ -14801,7 +14808,20 @@ function CmsApp({
                 onSelect={setSelectedWholesalerId}
               />
             )}
+            {visiblePage === "prescription-changes" && (
+              <PrescriptionChangePage
+                key={authAccount?.accountId}
+                request={apiFetch}
+                refreshKey={changeRefresh}
+                root={canAccessRootCms(authAccount)}
+                limited={authAccount?.role === "PHARMACY_LIMITED"}
+              />
+            )}
             {visiblePage === "prescriptions" && (
+              <div>
+              <div className="cms-content" style={{paddingBottom:0}}>
+                <button className="cms-primary" type="button" onClick={() => navigate("/cms/prescriptions/changes")}>변동 처방 내역관리</button>
+              </div>
               <CmsPrescriptionSummaryPage
                 endDate={prescriptionEndDate}
                 filter={deductionFilter}
@@ -14830,6 +14850,7 @@ function CmsApp({
                 onSortKey={setPrescriptionSortKey}
                 onStartDate={setPrescriptionStartDate}
               />
+              </div>
             )}
             {visiblePage === "purchase" && (
               <CmsPurchasePage
@@ -17504,6 +17525,7 @@ function CmsSidebar({
       : []),
     ["return-reviews", "반품 확인", "/cms/inventory/returns", briefcaseIcon],
     ["prescriptions", "처방전", "/cms/prescriptions", fileTextIcon],
+    ["prescription-changes", "변동 처방 내역관리", "/cms/prescriptions/changes", fileTextIcon],
     ...(canAccessPurchase
       ? ([["purchase", "구매 내역", "/cms/purchase", pieGraphIcon]] as Array<
           [CmsPage, string, string, string]
@@ -17613,6 +17635,7 @@ function CmsHeader({
     "return-reviews": "반품 확인",
     wholesaler: "도매처 관리",
     prescriptions: "처방전",
+    "prescription-changes": "변동 처방 내역관리",
     purchase: "구매 내역",
   };
   const subtitles: Record<CmsPage, string> = {
@@ -17635,6 +17658,7 @@ function CmsHeader({
     "return-reviews": "앱에서 확정되지 않은 반품을 확인하고 처리합니다.",
     wholesaler: "약국별 도매처 정보를 관리합니다.",
     prescriptions: "처방전 차감 결과와 수동 처리 항목을 확인합니다.",
+    "prescription-changes": "이팜 수정 반영과 확인이 필요한 처방을 관리합니다.",
     purchase: "구매 내역과 주문 기록을 확인합니다.",
   };
   return (
@@ -18603,6 +18627,7 @@ function CmsDashboard({
 
   return (
     <section className="cms-content cms-dashboard-page">
+      <PrescriptionChangeAlert request={apiFetch} navigate={navigate} />
       <header className="cms-dashboard-intro">
         <div className="cms-dashboard-intro-copy">
           <span>오늘의 운영 현황</span>

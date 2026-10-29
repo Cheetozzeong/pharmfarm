@@ -321,3 +321,9 @@ Prescription modification coverage (1.4.9-ps):
 - Existing today-only tray/CMS actions remain today-only.
 - A queued/completed command is not proof that every server overwrite succeeded;
   verify the prescription, pending queue, and rejected/failed records.
+
+Prescription revision handling (1.4.10-ps):
+- Wrapped HTTP failures preserve status/body; business rejections are not retried.
+- 408/429/5xx/connection failures retain normal backoff. 409 is not blanket success.
+- Each observed source change gets a fresh event identity, including A -> B -> A.
+- Supported servers durably accept revisions needing review and expose them in CMS.

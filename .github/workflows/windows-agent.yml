@@ -23,6 +23,7 @@ jobs:
           & ./tests/windows-agent-heartbeat.Tests.ps1
           & ./tests/windows-agent-queue.Tests.ps1
           & ./tests/windows-agent-prescription-range.Tests.ps1
+          & ./tests/windows-agent-http-errors.Tests.ps1
       - name: Repair rollback transaction
         if: ${{ !cancelled() }}
         run: '& ./tests/windows-agent-update.Tests.ps1'

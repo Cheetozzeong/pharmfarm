@@ -35,7 +35,7 @@ $LastSqlOkAt = $null
 $LastApiOkAt = $null
 $RemoteCommandPollingUnavailable = $false
 $HeartbeatUnavailableUntil = $null
-$AgentVersion = "1.4.9-ps"
+$AgentVersion = "1.4.10-ps"
 . (Join-Path $PSScriptRoot "PharmFarm-AgentLifecycle.ps1")
 . (Join-Path $PSScriptRoot "PharmFarm-AgentDiagnostics.ps1")
 $RuntimeLock = $null
@@ -88,11 +88,24 @@ function Convert-LogText {
   return $text
 }
 
+function Get-AgentHttpResponseFromError {
+  param($ErrorRecord)
+
+  $exception = $ErrorRecord.Exception
+  for ($depth = 0; $depth -lt 8 -and $null -ne $exception; $depth++) {
+    if ($null -ne $exception.PSObject.Properties["Response"] -and $null -ne $exception.Response) {
+      return $exception.Response
+    }
+    $exception = $exception.InnerException
+  }
+  return $null
+}
+
 function Get-ResponseBodyFromException {
   param($ErrorRecord)
 
   try {
-    $response = $ErrorRecord.Exception.Response
+    $response = Get-AgentHttpResponseFromError $ErrorRecord
     if ($null -eq $response) {
       return ""
     }
@@ -2259,18 +2272,14 @@ function Submit-Envelope {
     $script:LastApiOkAt = Get-AgentTimestamp
     return @{ ok = $true; retry = $false; status = 200; message = "sent"; stockAlertCount = $stockAlertCount }
   } catch {
-    $statusCode = $null
+    $statusCode = Get-AgentHttpStatusCodeFromError $_
     $responseBody = Get-ResponseBodyFromException $_
     $safeBody = Convert-LogText $responseBody
 
-    if ($_.Exception.Response) {
-      $statusCode = [int]$_.Exception.Response.StatusCode
-    }
-
     Write-AgentLog "submit failed event=$($Envelope.eventId) status=$statusCode error=$($_.Exception.Message) response=$safeBody" "WARN"
 
-    if ($statusCode -eq 409) {
-      return @{ ok = $true; retry = $false; status = 409; message = "duplicate" }
+    if ($statusCode -eq 408 -or $statusCode -eq 429) {
+      return @{ ok = $false; retry = $true; status = $statusCode; message = $_.Exception.Message }
     }
 
     if ($statusCode -ge 400 -and $statusCode -lt 500) {
@@ -2356,13 +2365,9 @@ function Get-AgentHttpStatusCodeFromError {
   param($ErrorRecord)
 
   try {
-    if ($ErrorRecord.Exception.Response) {
-      return [int]$ErrorRecord.Exception.Response.StatusCode
-    }
-  } catch {
-    return $null
-  }
-
+    $response = Get-AgentHttpResponseFromError $ErrorRecord
+    if ($null -ne $response) { return [int]$response.StatusCode }
+  } catch { return $null }
   return $null
 }
 
@@ -3339,7 +3344,7 @@ function Watch-Once {
         $newRows += 1
       }
 
-      $envelope = New-Payload -Config $Config -QrRow $row -DrugRows $drugRows -SyncMode $syncMode -OverwriteExisting $overwriteExisting
+      $envelope = New-Payload -Config $Config -QrRow $row -DrugRows $drugRows -SyncMode $syncMode -OverwriteExisting $overwriteExisting -ResyncRequestId ([Guid]::NewGuid().ToString("N"))
 
       if (Save-QueueItem $envelope) {
         $queued += 1
