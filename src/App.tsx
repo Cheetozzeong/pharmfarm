@@ -25,6 +25,7 @@ import type { DecodeHintType } from "@zxing/library";
 import {
   AlertTriangle,
   ArrowDown,
+  ArrowLeft,
   ArrowRight,
   ArrowUp,
   ArrowUpDown,
@@ -40,6 +41,7 @@ import {
   ExternalLink,
   Focus,
   HardDriveDownload,
+  History,
   LogOut,
   Menu,
   Minus,
@@ -14529,6 +14531,7 @@ function CmsApp({
           <CmsHeader
             onLogout={hasStoredAuthTokens() ? logoutCms : undefined}
             page={visiblePage}
+            navigate={navigate}
             onRefresh={() => {
               if (visiblePage === "prescription-changes") setChangeRefresh((value) => value + 1);
               else void refreshCms();
@@ -14818,10 +14821,6 @@ function CmsApp({
               />
             )}
             {visiblePage === "prescriptions" && (
-              <div>
-              <div className="cms-content" style={{paddingBottom:0}}>
-                <button className="cms-primary" type="button" onClick={() => navigate("/cms/prescriptions/changes")}>변동 처방 내역관리</button>
-              </div>
               <CmsPrescriptionSummaryPage
                 endDate={prescriptionEndDate}
                 filter={deductionFilter}
@@ -14850,7 +14849,6 @@ function CmsApp({
                 onSortKey={setPrescriptionSortKey}
                 onStartDate={setPrescriptionStartDate}
               />
-              </div>
             )}
             {visiblePage === "purchase" && (
               <CmsPurchasePage
@@ -17525,7 +17523,6 @@ function CmsSidebar({
       : []),
     ["return-reviews", "반품 확인", "/cms/inventory/returns", briefcaseIcon],
     ["prescriptions", "처방전", "/cms/prescriptions", fileTextIcon],
-    ["prescription-changes", "변동 처방 내역관리", "/cms/prescriptions/changes", fileTextIcon],
     ...(canAccessPurchase
       ? ([["purchase", "구매 내역", "/cms/purchase", pieGraphIcon]] as Array<
           [CmsPage, string, string, string]
@@ -17533,6 +17530,7 @@ function CmsSidebar({
       : []),
   ];
   const accountDisplay = getCmsAccountDisplay(account);
+  const activePage = page === "prescription-changes" ? "prescriptions" : page;
 
   return (
     <aside
@@ -17583,10 +17581,10 @@ function CmsSidebar({
         {items.map(([key, label, href, icon]) => (
           <button
             key={key}
-            className={page === key ? "is-active" : ""}
+            className={activePage === key ? "is-active" : ""}
             type="button"
             title={label}
-            aria-current={page === key ? "page" : undefined}
+            aria-current={activePage === key ? "page" : undefined}
             onClick={() => {
               setMenuOpen(false);
               navigate(href);
@@ -17612,10 +17610,12 @@ function CmsSidebar({
 function CmsHeader({
   onLogout,
   page,
+  navigate,
   onRefresh,
 }: {
   onLogout?: () => void;
   page: CmsPage;
+  navigate: (path: string) => void;
   onRefresh: () => void;
 }) {
   const titles: Record<CmsPage, string> = {
@@ -17668,6 +17668,30 @@ function CmsHeader({
         <span>{subtitles[page]}</span>
       </div>
       <div className="cms-header-actions">
+        {page === "prescriptions" && (
+          <button
+            className="cms-header-action is-prescription-changes"
+            type="button"
+            aria-label="변동 처방 내역관리"
+            title="변동 처방 내역관리"
+            onClick={() => navigate("/cms/prescriptions/changes")}
+          >
+            <History size={17} strokeWidth={2.2} aria-hidden="true" />
+            <span className="cms-header-action-label">변동 처방 내역관리</span>
+          </button>
+        )}
+        {page === "prescription-changes" && (
+          <button
+            className="cms-header-action is-prescription-changes"
+            type="button"
+            aria-label="처방전으로 돌아가기"
+            title="처방전으로 돌아가기"
+            onClick={() => navigate("/cms/prescriptions")}
+          >
+            <ArrowLeft size={17} strokeWidth={2.2} aria-hidden="true" />
+            <span className="cms-header-action-label">처방전으로</span>
+          </button>
+        )}
         <a
           className="cms-header-action is-manual-receipt"
           aria-label="새 창에서 간편 입고"

@@ -17482,3 +17482,17 @@ body:has(.cms-shell) {
 .cms-agent-prescription-range fieldset button { background: #e9eef4; color: var(--ink); }
 .cms-agent-prescription-range legend { font-size: 11px; color: #667888; padding: 0; }
 .cms-agent-command-table [data-label="명령"] > small { display: block; font-size: 11px; margin-top: 4px; }
+
+/* Keep prescription history navigation with the page header actions. */
+.cms-header .cms-header-action.is-prescription-changes {
+  border-color: #d1dff5;
+  background: #f4f8ff;
+  color: #315b9f;
+  white-space: nowrap;
+}
+
+.cms-header .cms-header-action.is-prescription-changes:hover {
+  border-color: #a9c3ea;
+  background: #eaf2ff;
+  color: #244b88;
+}
