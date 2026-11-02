@@ -34,7 +34,12 @@ const handler = ts.transpileModule(
   { compilerOptions: { target: ts.ScriptTarget.ES2020 } },
 ).outputText;
 
-function setup({ failure, preview = false, unresolved = false } = {}) {
+function setup({
+  failure,
+  preview = false,
+  unresolved = false,
+  box = false,
+} = {}) {
   const ready = {
     id: "ready",
     qr: { pc: "8806419068936", sn: "TEST-SN" },
@@ -42,7 +47,15 @@ function setup({ failure, preview = false, unresolved = false } = {}) {
       name: "케이슈머현탁액",
       insuranceCode: "641906891",
       priceMasterId: "123",
-      productTotalQuantity: 20,
+      productTotalQuantity: box ? 24 : 20,
+      ...(box
+        ? {
+            boxPackage: true,
+            boxPackageCount: 24,
+            boxMappingRevision: 1,
+            boxQuantityConfirmed: true,
+          }
+        : {}),
     },
   };
   const issue = {
@@ -172,4 +185,15 @@ test("a confirmed successful save completes only the submitted items", async () 
   assert.equal(state.requests[0].body.items[0].productTotalQuantity, 20);
   assert.equal(state.refreshes, 1);
   assert.equal(state.demoWrites, 0);
+});
+
+test("confirmed box quantity and revision reach the receipt API", async () => {
+  const { state, commit } = setup({ box: true });
+  await commit();
+  const item = state.requests.find((request) => request.path === "/receipts")
+    .body.items[0];
+  assert.equal(item.boxPackageCount, 24);
+  assert.equal(item.boxMappingRevision, 1);
+  assert.equal(item.boxQuantityConfirmed, true);
+  assert.equal(item.productTotalQuantity, 24);
 });

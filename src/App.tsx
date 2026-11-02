@@ -1,7 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentConnection, agentTimestamp } from "./agentHealth";
 import { AgentDiagnosticsDialog } from "./AgentDiagnosticsDialog";
-import { PrescriptionChangeAlert, PrescriptionChangePage } from "./PrescriptionChanges";
+import {
+  PrescriptionChangeAlert,
+  PrescriptionChangePage,
+} from "./PrescriptionChanges";
 import { AgentPrescriptionSyncCard } from "./AgentPrescriptionSyncCard";
 import type { AgentPrescriptionRange } from "./agentPrescriptionRange";
 import { prescriptionRangeError } from "./agentPrescriptionRange";
@@ -183,6 +186,12 @@ type DrugMaster = {
   priceMasters?: PriceMaster[];
   stockCandidates?: StockCandidate[];
   name: string;
+  boxPackage?: boolean;
+  basePc?: string;
+  baseProductTotalQuantity?: number;
+  boxPackageCount?: number;
+  boxMappingRevision?: number;
+  boxQuantityConfirmed?: boolean;
   scannedProductTotalQuantity?: number;
   productTotalQuantity: number;
   price: number;
@@ -2099,8 +2108,10 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
     (effectivePriceMasters.length === 1 ? firstEffectivePrice : undefined);
   const selectedPriceProductTotalQuantity =
     selectedPrice?.productTotalQuantity ?? 0;
-  const productTotalQuantity =
-    baseProductTotalQuantity > 0
+  const boxPackage = normalizeBoolean(item.boxPackage);
+  const productTotalQuantity = boxPackage
+    ? baseProductTotalQuantity
+    : baseProductTotalQuantity > 0
       ? baseProductTotalQuantity
       : selectedPriceProductTotalQuantity > 0
         ? selectedPriceProductTotalQuantity
@@ -2141,6 +2152,19 @@ function normalizeReceiptValidation(raw: unknown, qr: QrFields): DrugMaster {
 
   return {
     pc: String(item.pc ?? item.standardCode ?? qr.pc),
+    boxPackage,
+    basePc: boxPackage ? String(item.basePc ?? "") : undefined,
+    baseProductTotalQuantity: boxPackage
+      ? Number(item.baseProductTotalQuantity ?? 0)
+      : undefined,
+    boxPackageCount:
+      boxPackage && item.boxPackageCount != null
+        ? Number(item.boxPackageCount)
+        : undefined,
+    boxMappingRevision: boxPackage
+      ? Number(item.boxMappingRevision ?? 0)
+      : undefined,
+    boxQuantityConfirmed: false,
     drugMasterId:
       rawDrugMasterId === undefined || rawDrugMasterId === null
         ? undefined
@@ -2228,6 +2252,20 @@ function getReceiptIssueReason(
 ) {
   if (item.qr.errors.length > 0) {
     return `QR 필드 오류: ${item.qr.errors.join(", ")}`;
+  }
+
+  if (!item.drug.drugMasterId) {
+    return "PC에 해당하는 기준 데이터가 없습니다. 약품 기준 정보를 먼저 확인해 주세요.";
+  }
+  if (item.drug.boxPackage) {
+    const count = item.drug.boxPackageCount ?? 0;
+    if (!Number.isInteger(count) || count < 1 || count > 10000) {
+      return "박스당 포장 수량을 1~10,000개로 입력해 주세요.";
+    }
+    if (!item.drug.boxQuantityConfirmed)
+      return "박스당 포장 수량이 맞는지 확인해 주세요.";
+    if (item.drug.productTotalQuantity <= 0)
+      return "박스 입고 수량을 확인해 주세요.";
   }
 
   const hasPriceCandidates = (item.drug.priceMasters?.length ?? 0) > 0;
@@ -2512,10 +2550,16 @@ function parseBarcodePayload(rawValue: string): QrFields {
 function normalizeBarcodePc(value: string) {
   const compact = value.trim();
   const digits = compact.replace(/\D/g, "");
-  if (digits.length === 14 && digits.slice(1).startsWith("880")) {
-    return digits.slice(1);
-  }
   return normalizePc(digits || compact);
+}
+
+function isBoxPackagePc(pc: string) {
+  if (!/^[1-8]880[0-9]{10}$/.test(pc)) return false;
+  let sum = 0;
+  for (let index = 12, weight = 3; index >= 0; index--, weight = 4 - weight) {
+    sum += Number(pc[index]) * weight;
+  }
+  return (10 - (sum % 10)) % 10 === Number(pc[13]);
 }
 
 function getLowConfidenceBarcodeReason(rawValue: string, qr: QrFields) {
@@ -2525,8 +2569,9 @@ function getLowConfidenceBarcodeReason(rawValue: string, qr: QrFields) {
   if (!pc) {
     return "바코드 값을 읽었지만 약품 PC로 판단할 수 없습니다. 바코드를 프레임 안에 다시 맞춰주세요.";
   }
+  if (isBoxPackagePc(pc)) return "";
   if (!/^\d{13}$/.test(pc)) {
-    return "약품 바코드는 13자리 PC만 자동 입고합니다. 바코드를 더 크게 맞춰 다시 스캔해 주세요.";
+    return "약품 표준코드 또는 유효한 박스 코드인지 확인해 주세요.";
   }
   if (!pc.startsWith("880")) {
     return "880으로 시작하는 약품 표준코드가 아니어서 무시했습니다.";
@@ -3106,6 +3151,7 @@ function receiptQuantityOptions(
   item: ReceiptQueueItem,
 ): ReceiptQuantityOption[] {
   const options: ReceiptQuantityOption[] = [];
+  if (item.drug.boxPackage) return options;
   const scannedQuantity = item.drug.scannedProductTotalQuantity ?? 0;
   const selectedPrice = (item.drug.priceMasters ?? []).find(
     (candidate) => candidate.id === item.drug.priceMasterId,
@@ -4997,6 +5043,7 @@ function MobileApp({
       if (
         (drug.matchStatus === "MISSING" ||
           (drug.matchStatus === "VIRTUAL" && !drug.pcOnlyUninsured)) &&
+        Boolean(drug.drugMasterId) &&
         !drug.selectedStockId &&
         !drug.virtualInsuranceCode
       ) {
@@ -5161,8 +5208,9 @@ function MobileApp({
           );
           if (!price) return item;
           const scannedQuantity = item.drug.scannedProductTotalQuantity ?? 0;
-          const productTotalQuantity =
-            scannedQuantity > 0
+          const productTotalQuantity = item.drug.boxPackage
+            ? item.drug.productTotalQuantity
+            : scannedQuantity > 0
               ? scannedQuantity
               : price.productTotalQuantity > 0
                 ? price.productTotalQuantity
@@ -5196,7 +5244,7 @@ function MobileApp({
   );
 
   const selectReceiptProductTotalQuantity = useCallback(
-    (itemId: string, productTotalQuantity: number) => {
+    (itemId: string, productTotalQuantity: number, boxConfirmed?: boolean) => {
       setReceiptSubmitError("");
       setReceiptQueue((current) =>
         current.map((item) =>
@@ -5205,7 +5253,13 @@ function MobileApp({
                 ...item,
                 drug: {
                   ...item.drug,
-                  productTotalQuantity,
+                  ...(item.drug.boxPackage
+                    ? boxReceiptQuantityPatch(
+                        item.drug,
+                        productTotalQuantity,
+                        boxConfirmed,
+                      )
+                    : { productTotalQuantity }),
                 },
               }
             : item,
@@ -6266,6 +6320,13 @@ function MobileApp({
             stockId: optionalId(drug.selectedStockId),
             priceMasterId: optionalId(drug.priceMasterId),
             productTotalQuantity: drug.productTotalQuantity,
+            boxPackageCount: drug.boxPackage ? drug.boxPackageCount : undefined,
+            boxMappingRevision: drug.boxPackage
+              ? drug.boxMappingRevision
+              : undefined,
+            boxQuantityConfirmed: drug.boxPackage
+              ? drug.boxQuantityConfirmed === true
+              : undefined,
             virtualDrugName:
               drug.priceMasterId || knownInsuranceFallback
                 ? null
@@ -6470,7 +6531,9 @@ function MobileApp({
       {screen === "wholesaler" && (
         <WholesalerScreen
           key={`${stockAdjustWeb ? "manual" : "mobile"}:${uiPreviewMode ? "preview" : `${authAccount?.accountId}:${authAccount?.pharmacyId}`}`}
-          favoriteScope={uiPreviewMode ? "preview" : authAccount?.accountId ?? null}
+          favoriteScope={
+            uiPreviewMode ? "preview" : (authAccount?.accountId ?? null)
+          }
           favoriteApi={uiPreviewMode ? undefined : wholesalerFavoritesApi}
           legacyPharmacyId={authAccount?.pharmacyId}
           currentWholesalerName={selectedWholesaler?.name ?? ""}
@@ -6493,7 +6556,9 @@ function MobileApp({
                 : undefined
           }
           onChoose={(wholesaler) => {
-            setWholesalers((current) => mergeWholesalers(current, [wholesaler]));
+            setWholesalers((current) =>
+              mergeWholesalers(current, [wholesaler]),
+            );
             setPendingWholesalerId(wholesaler.id);
           }}
           onManualReceipt={() => {
@@ -7822,7 +7887,11 @@ function ReceiptMatchScreen({
   onIssues: () => void;
   onRegeneratePreviewSerials?: () => void;
   onSelectPrice: (itemId: string, priceMasterId: string) => void;
-  onSelectQuantity: (itemId: string, productTotalQuantity: number) => void;
+  onSelectQuantity: (
+    itemId: string,
+    productTotalQuantity: number,
+    boxConfirmed?: boolean,
+  ) => void;
   onSelectStock: (itemId: string, stockId: string) => void;
   onVirtualCode: (itemId: string, value: string) => void;
   onVirtualName: (itemId: string, value: string) => void;
@@ -8089,7 +8158,11 @@ function ReceiptIssuesScreen({
   onGenerateVirtual: (itemId: string) => void;
   onRemove: (itemId: string) => void;
   onSelectPrice: (itemId: string, priceMasterId: string) => void;
-  onSelectQuantity: (itemId: string, productTotalQuantity: number) => void;
+  onSelectQuantity: (
+    itemId: string,
+    productTotalQuantity: number,
+    boxConfirmed?: boolean,
+  ) => void;
   onSelectStock: (itemId: string, stockId: string) => void;
   onVirtualCode: (itemId: string, value: string) => void;
   onVirtualName: (itemId: string, value: string) => void;
@@ -8200,7 +8273,11 @@ function ReceiptMatchItem({
     item: ReceiptQueueItem,
     candidates: StockCandidate[],
   ) => void;
-  onSelectQuantity: (itemId: string, productTotalQuantity: number) => void;
+  onSelectQuantity: (
+    itemId: string,
+    productTotalQuantity: number,
+    boxConfirmed?: boolean,
+  ) => void;
   onVirtualCode: (itemId: string, value: string) => void;
   onVirtualName: (itemId: string, value: string) => void;
 }) {
@@ -8264,6 +8341,9 @@ function ReceiptMatchItem({
       >
         {issueReason || "입고 가능한 상태입니다."}
       </p>
+      {item.drug.boxPackage && (
+        <BoxReceiptQuantity item={item} onSelectQuantity={onSelectQuantity} />
+      )}
       {hasPriceCandidates && (
         <ReceiptCandidateTrigger
           active={Boolean(selectedPriceCandidate)}
@@ -8399,6 +8479,90 @@ function ReceiptMatchItem({
   );
 }
 
+function boxReceiptQuantityPatch(
+  drug: DrugMaster,
+  count: number,
+  confirmed = false,
+): Partial<DrugMaster> {
+  const valid = Number.isInteger(count) && count >= 1 && count <= 10000;
+  const total = valid ? count * (drug.baseProductTotalQuantity ?? 0) : 0;
+  return {
+    boxPackageCount: count,
+    boxQuantityConfirmed: valid && total > 0 && confirmed,
+    productTotalQuantity: total,
+  };
+}
+
+function BoxReceiptQuantity({
+  item,
+  onSelectQuantity,
+}: {
+  item: ReceiptQueueItem;
+  onSelectQuantity: (
+    itemId: string,
+    count: number,
+    confirmed?: boolean,
+  ) => void;
+}) {
+  const count = item.drug.boxPackageCount ?? 0;
+  const valid = Number.isInteger(count) && count >= 1 && count <= 10000;
+  const confirmed = item.drug.boxQuantityConfirmed === true;
+  const inputId = `box-count-${item.id}`;
+  return (
+    <section
+      className={`box-receipt-quantity ${confirmed ? "is-confirmed" : ""}`}
+      aria-label="박스 포장 수량 확인"
+    >
+      <strong>
+        {item.drug.boxMappingRevision
+          ? "박스당 포장 수량이 맞나요?"
+          : "박스당 포장 수량을 처음 등록해 주세요"}
+      </strong>
+      <p>상품명과 박스에 표시된 포장 수량을 확인해 주세요.</p>
+      <label htmlFor={inputId}>1박스에 들어 있는 낱개 포장 수량</label>
+      <div className="box-receipt-count">
+        <input
+          id={inputId}
+          type="number"
+          inputMode="numeric"
+          min="1"
+          max="10000"
+          step="1"
+          value={count || ""}
+          placeholder="예: 24"
+          onChange={(event) =>
+            onSelectQuantity(item.id, Number(event.target.value), false)
+          }
+        />
+        <span>개 포장 / 박스</span>
+      </div>
+      <p>
+        낱개 1포장 = 재고 {currency(item.drug.baseProductTotalQuantity ?? 0)}개
+        {valid && (
+          <> · 이번 1박스 입고 +{currency(item.drug.productTotalQuantity)}개</>
+        )}
+      </p>
+      <button
+        type="button"
+        className={confirmed ? "secondary-btn" : "primary-btn"}
+        disabled={!valid}
+        aria-pressed={confirmed}
+        onClick={() => onSelectQuantity(item.id, count, true)}
+      >
+        {confirmed
+          ? `${currency(count)}개 포장 확인 완료`
+          : valid
+            ? `1박스에 ${currency(count)}개 포장이 맞습니다`
+            : "수량 입력 후 확인"}
+      </button>
+      <small>
+        입고를 확정하면 이 수량이 저장되어 다른 사용자에게도 표시됩니다. 수량은
+        매번 확인하고 수정할 수 있습니다.
+      </small>
+    </section>
+  );
+}
+
 function ReceiptQuantitySelector({
   item,
   options,
@@ -8406,7 +8570,11 @@ function ReceiptQuantitySelector({
 }: {
   item: ReceiptQueueItem;
   options: ReceiptQuantityOption[];
-  onSelectQuantity: (itemId: string, productTotalQuantity: number) => void;
+  onSelectQuantity: (
+    itemId: string,
+    productTotalQuantity: number,
+    boxConfirmed?: boolean,
+  ) => void;
 }) {
   return (
     <div
@@ -11604,16 +11772,26 @@ function AgentLanding({ navigate }: { navigate: (path: string) => void }) {
         <div>
           <p className="agent-eyebrow">문제가 생겼나요?</p>
           <h2>연결이 끊겼다면</h2>
-          <p>원격 업데이트는 에이전트가 온라인일 때만 시작됩니다. PC 전원·인터넷과 트레이 상태를 확인하고, 직접 중지한 경우 <b>에이전트 시작</b>을 누르세요. 업데이트가 실패했다면 CMS의 명령 이력과 PC 로그를 담당자에게 전달해 주세요.</p>
-          <p>업데이트를 위해 <b>오늘 처방 전체 재전송</b>을 실행하지 마세요. 이 기능은 기존 처방 데이터를 덮어쓸 수 있습니다.</p>
+          <p>
+            원격 업데이트는 에이전트가 온라인일 때만 시작됩니다. PC
+            전원·인터넷과 트레이 상태를 확인하고, 직접 중지한 경우{" "}
+            <b>에이전트 시작</b>을 누르세요. 업데이트가 실패했다면 CMS의 명령
+            이력과 PC 로그를 담당자에게 전달해 주세요.
+          </p>
+          <p>
+            업데이트를 위해 <b>오늘 처방 전체 재전송</b>을 실행하지 마세요. 이
+            기능은 기존 처방 데이터를 덮어쓸 수 있습니다.
+          </p>
         </div>
         <details className="agent-admin-tools">
           <summary>관리자용 최초 설치·복구 및 진단 파일</summary>
           <a href="/pharmfarm-agent-production.zip" download>
-            1회 설치·전환용 파일 다운로드 <HardDriveDownload size={16} aria-hidden="true" />
+            1회 설치·전환용 파일 다운로드{" "}
+            <HardDriveDownload size={16} aria-hidden="true" />
           </a>
           <a href="/pharmfarm-prescription-trace-tools.zip" download>
-            처방 trace 진단 도구 다운로드 <HardDriveDownload size={16} aria-hidden="true" />
+            처방 trace 진단 도구 다운로드{" "}
+            <HardDriveDownload size={16} aria-hidden="true" />
           </a>
         </details>
       </section>
@@ -13175,9 +13353,12 @@ function CmsApp({
     const hasActiveCommand = agentCommands.some((command) =>
       isActiveAgentCommandStatus(command.status),
     );
-    const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") void refreshCms();
-    }, hasActiveCommand ? 5000 : 30_000);
+    const timer = window.setInterval(
+      () => {
+        if (document.visibilityState === "visible") void refreshCms();
+      },
+      hasActiveCommand ? 5000 : 30_000,
+    );
     const onVisible = () => {
       if (document.visibilityState === "visible") void refreshCms();
     };
@@ -25677,7 +25858,8 @@ function CmsReceiptWholesalerAuditPage() {
               <div className="cms-wholesaler-audit-context">
                 <strong>{record.drugName}</strong>
                 <span>
-                  입고 #{record.receiptId} · 약국 #{record.pharmacyId} · PC {record.pc || "-"}
+                  입고 #{record.receiptId} · 약국 #{record.pharmacyId} · PC{" "}
+                  {record.pc || "-"}
                 </span>
               </div>
               <div className="cms-wholesaler-audit-change">
@@ -25825,11 +26007,7 @@ function CmsReceiptHistoryPage({
     return () => {
       active = false;
     };
-  }, [
-    canViewWholesalerAudits,
-    editingHistory?.id,
-    onLoadWholesalerAudits,
-  ]);
+  }, [canViewWholesalerAudits, editingHistory?.id, onLoadWholesalerAudits]);
 
   const filteredReceiptWholesalers = useMemo(() => {
     const normalizedQuery = normalizeSearchText(receiptWholesalerQuery);

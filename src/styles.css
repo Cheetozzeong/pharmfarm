@@ -17496,3 +17496,57 @@ body:has(.cms-shell) {
   background: #eaf2ff;
   color: #244b88;
 }
+
+/* Box receipt confirmation stays inside the scanned product card. */
+.box-receipt-quantity {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 16px;
+  border: 1px solid #c9dcff;
+  border-radius: 16px;
+  background: #f3f7ff;
+}
+.box-receipt-quantity.is-confirmed {
+  border-color: #9bd2b6;
+  background: #f2faf6;
+}
+.box-receipt-quantity > strong {
+  font-size: 15px;
+}
+.box-receipt-quantity > p,
+.box-receipt-quantity > small {
+  margin: 0;
+  color: #526176;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+.box-receipt-quantity > label {
+  font-size: 13px;
+  font-weight: 600;
+}
+.box-receipt-count {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.box-receipt-count input {
+  width: 110px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #bdcce1;
+  border-radius: 10px;
+  font-size: 18px;
+  background: white;
+  color: #17212b;
+}
+.box-receipt-count span {
+  font-size: 13px;
+}
+.box-receipt-quantity > button {
+  width: 100%;
+  min-height: 44px;
+  height: auto;
+  padding: 12px;
+  white-space: normal;
+}
