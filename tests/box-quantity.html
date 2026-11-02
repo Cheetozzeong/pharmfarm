@@ -1,44 +1,37 @@
-<!doctype html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>박스 입고 수량 확인 검증</title><link rel="stylesheet" href="/src/styles.css"></head><body><main style="max-width:390px;margin:24px auto;padding:16px"><h2>엔커버액 200mL 커피맛</h2><div id="root"></div></main><script type="module">import React, {useState} from 'react';import {createRoot} from 'react-dom/client';function finiteNumber(value, fallback = 0) {
-    const numericValue = Number(value);
-    if (!Number.isFinite(numericValue))
-        return fallback;
-    return Object.is(numericValue, -0) ? 0 : numericValue;
+<!doctype html>
+<html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>박스 수량 입력 디자인 검증</title><link rel="stylesheet" href="/src/styles.css"><style>
+body {display:block;min-height:100vh;background:#edf0f3;}
+.fixture-phone {width: min(var(--fixture-width, 390px), 100%);margin:24px auto;background:#fff;min-height:760px;padding:0 0 20px;box-shadow:0 12px 40px #15243b10;}
+.fixture-header {display:flex;align-items:center;gap:14px;padding:22px 20px;border-bottom:1px solid #edf0f3;font-size:19px;font-weight:800;}
+.fixture-body {padding:16px 20px;}
+.fixture-footer {padding:16px 20px;border-top:1px solid #edf0f3;}
+.fixture-footer button {width:100%;}
+.fixture-note {margin:0 0 14px;font-size:12px;color:#728093;}
+</style></head><body><div id="root"></div><script type="module">
+import React, {useState} from 'react';import {createRoot} from 'react-dom/client';
+import {BoxReceiptQuantity} from '/src/BoxReceiptQuantity.tsx';
+import {ArrowLeft} from 'lucide-react';
+const params=new URLSearchParams(location.search);
+const saved=params.get('saved')==='1';
+const base=Number(params.get('base')||1);
+const width=Number(params.get('width')||390);
+function Fixture(){
+ const [drug,setDrug]=useState({boxPackage:true,baseProductTotalQuantity:base,boxPackageCount:saved?24:undefined,boxMappingRevision:saved?1:0,productTotalQuantity:saved?24*base:0,boxQuantityConfirmed:false});
+ const issue=!drug.boxQuantityConfirmed;
+ function selectQuantity(id,count,confirmed=false){setDrug(current=>({...current,boxPackageCount:count,productTotalQuantity:Number.isInteger(count)&&count>0&&count<=10000?count*base:0,boxQuantityConfirmed:confirmed&&Number.isInteger(count)&&count>=1&&count<=10000}));}
+ return React.createElement('main',{className:'fixture-phone',style:{'--fixture-width':width+'px'}},
+  React.createElement('header',{className:'fixture-header'},React.createElement(ArrowLeft,{size:23}),'매칭 결과'),
+  React.createElement('div',{className:'fixture-body'},
+   React.createElement('p',{className:'fixture-note'},'스캔한 약품과 입고 수량을 확인해 주세요.'),
+   React.createElement('section',{className:'receipt-step-panel'},
+    React.createElement('div',{className:'receipt-fix-card'},
+     React.createElement('div',{className:'receipt-fix-head'},React.createElement('div',null,React.createElement('strong',null,'엔커버액 200mL 커피맛'),React.createElement('span',null,'보험코드 644912233')),React.createElement('span',{className:'badge normal'},'일치')),
+     React.createElement(BoxReceiptQuantity,{item:{id:'fixture',drug},onSelectQuantity:selectQuantity})
+    )
+   )
+  ),
+  React.createElement('footer',{className:'fixture-footer'},React.createElement('button',{className:'primary-btn',disabled:issue,onClick:()=>document.getElementById('result').textContent='테스트 화면: 입고 요청은 전송하지 않습니다.'},'1건 입고 확정'),React.createElement('p',{id:'result',className:'fixture-note'}))
+ );
 }
-
-function currency(value) {
-    return new Intl.NumberFormat("ko-KR").format(finiteNumber(value));
-}
-function boxReceiptQuantityPatch(drug, count, confirmed = false) {
-    const valid = Number.isInteger(count) && count >= 1 && count <= 10000;
-    const total = valid ? count * (drug.baseProductTotalQuantity ?? 0) : 0;
-    return {
-        boxPackageCount: count,
-        boxQuantityConfirmed: valid && total > 0 && confirmed,
-        productTotalQuantity: total,
-    };
-}
-function BoxReceiptQuantity({ item, onSelectQuantity }) {
-    const count = item.drug.boxPackageCount ?? 0;
-    const valid = Number.isInteger(count) && count >= 1 && count <= 10000;
-    const confirmed = item.drug.boxQuantityConfirmed === true;
-    const inputId = `box-count-${item.id}`;
-    return (React.createElement("section", { className: `box-receipt-quantity ${confirmed ? "is-confirmed" : ""}`, "aria-label": "\uBC15\uC2A4 \uD3EC\uC7A5 \uC218\uB7C9 \uD655\uC778" },
-        React.createElement("strong", null, item.drug.boxMappingRevision ? "박스당 포장 수량이 맞나요?" : "박스당 포장 수량을 처음 등록해 주세요"),
-        React.createElement("p", null, "\uC0C1\uD488\uBA85\uACFC \uBC15\uC2A4\uC5D0 \uD45C\uC2DC\uB41C \uD3EC\uC7A5 \uC218\uB7C9\uC744 \uD655\uC778\uD574 \uC8FC\uC138\uC694."),
-        React.createElement("label", { htmlFor: inputId }, "1\uBC15\uC2A4\uC5D0 \uB4E4\uC5B4 \uC788\uB294 \uB0B1\uAC1C \uD3EC\uC7A5 \uC218\uB7C9"),
-        React.createElement("div", { className: "box-receipt-count" },
-            React.createElement("input", { id: inputId, type: "number", inputMode: "numeric", min: "1", max: "10000", step: "1", value: count || "", placeholder: "\uC608: 24", onChange: (event) => onSelectQuantity(item.id, Number(event.target.value), false) }),
-            React.createElement("span", null, "\uAC1C \uD3EC\uC7A5 / \uBC15\uC2A4")),
-        React.createElement("p", null,
-            "\uB0B1\uAC1C 1\uD3EC\uC7A5 = \uC7AC\uACE0 ",
-            currency(item.drug.baseProductTotalQuantity ?? 0),
-            "\uAC1C",
-            valid && React.createElement(React.Fragment, null,
-                " \u00B7 \uC774\uBC88 1\uBC15\uC2A4 \uC785\uACE0 +",
-                currency(item.drug.productTotalQuantity),
-                "\uAC1C")),
-        React.createElement("button", { type: "button", className: confirmed ? "secondary-btn" : "primary-btn", disabled: !valid, "aria-pressed": confirmed, onClick: () => onSelectQuantity(item.id, count, true) }, confirmed ? `${currency(count)}개 포장 확인 완료` : valid ? `1박스에 ${currency(count)}개 포장이 맞습니다` : "수량 입력 후 확인"),
-        React.createElement("small", null, "\uC785\uACE0\uB97C \uD655\uC815\uD558\uBA74 \uC774 \uC218\uB7C9\uC774 \uC800\uC7A5\uB418\uC5B4 \uB2E4\uB978 \uC0AC\uC6A9\uC790\uC5D0\uAC8C\uB3C4 \uD45C\uC2DC\uB429\uB2C8\uB2E4. \uC218\uB7C9\uC740 \uB9E4\uBC88 \uD655\uC778\uD558\uACE0 \uC218\uC815\uD560 \uC218 \uC788\uC2B5\uB2C8\uB2E4.")));
-}
-
-function Fixture(){const saved=new URLSearchParams(location.search).get('saved')==='1';const [drug,setDrug]=useState({boxPackage:true,baseProductTotalQuantity:1,boxPackageCount:saved?24:undefined,boxMappingRevision:saved?1:0,productTotalQuantity:saved?24:0,boxQuantityConfirmed:false});return React.createElement(React.Fragment,null,React.createElement(BoxReceiptQuantity,{item:{id:'fixture',drug},onSelectQuantity:(id,count,confirmed)=>setDrug(current=>({...current,...boxReceiptQuantityPatch(current,count,confirmed)}))}),React.createElement('button',{className:'primary-btn',style:{width:'100%',marginTop:24},disabled:!drug.boxQuantityConfirmed,onClick:()=>document.getElementById('result').textContent=JSON.stringify(drug)},'1건 입고 확정'),React.createElement('pre',{id:'result',style:{whiteSpace:'pre-wrap'}}));}createRoot(document.getElementById('root')).render(React.createElement(Fixture));</script></body></html>
+createRoot(document.getElementById('root')).render(React.createElement(Fixture));
+</script></body></html>

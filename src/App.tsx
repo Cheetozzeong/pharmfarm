@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { agentConnection, agentTimestamp } from "./agentHealth";
 import { AgentDiagnosticsDialog } from "./AgentDiagnosticsDialog";
+import { BoxReceiptQuantity } from "./BoxReceiptQuantity";
 import {
   PrescriptionChangeAlert,
   PrescriptionChangePage,
@@ -8491,76 +8492,6 @@ function boxReceiptQuantityPatch(
     boxQuantityConfirmed: valid && total > 0 && confirmed,
     productTotalQuantity: total,
   };
-}
-
-function BoxReceiptQuantity({
-  item,
-  onSelectQuantity,
-}: {
-  item: ReceiptQueueItem;
-  onSelectQuantity: (
-    itemId: string,
-    count: number,
-    confirmed?: boolean,
-  ) => void;
-}) {
-  const count = item.drug.boxPackageCount ?? 0;
-  const valid = Number.isInteger(count) && count >= 1 && count <= 10000;
-  const confirmed = item.drug.boxQuantityConfirmed === true;
-  const inputId = `box-count-${item.id}`;
-  return (
-    <section
-      className={`box-receipt-quantity ${confirmed ? "is-confirmed" : ""}`}
-      aria-label="박스 포장 수량 확인"
-    >
-      <strong>
-        {item.drug.boxMappingRevision
-          ? "박스당 포장 수량이 맞나요?"
-          : "박스당 포장 수량을 처음 등록해 주세요"}
-      </strong>
-      <p>상품명과 박스에 표시된 포장 수량을 확인해 주세요.</p>
-      <label htmlFor={inputId}>1박스에 들어 있는 낱개 포장 수량</label>
-      <div className="box-receipt-count">
-        <input
-          id={inputId}
-          type="number"
-          inputMode="numeric"
-          min="1"
-          max="10000"
-          step="1"
-          value={count || ""}
-          placeholder="예: 24"
-          onChange={(event) =>
-            onSelectQuantity(item.id, Number(event.target.value), false)
-          }
-        />
-        <span>개 포장 / 박스</span>
-      </div>
-      <p>
-        낱개 1포장 = 재고 {currency(item.drug.baseProductTotalQuantity ?? 0)}개
-        {valid && (
-          <> · 이번 1박스 입고 +{currency(item.drug.productTotalQuantity)}개</>
-        )}
-      </p>
-      <button
-        type="button"
-        className={confirmed ? "secondary-btn" : "primary-btn"}
-        disabled={!valid}
-        aria-pressed={confirmed}
-        onClick={() => onSelectQuantity(item.id, count, true)}
-      >
-        {confirmed
-          ? `${currency(count)}개 포장 확인 완료`
-          : valid
-            ? `1박스에 ${currency(count)}개 포장이 맞습니다`
-            : "수량 입력 후 확인"}
-      </button>
-      <small>
-        입고를 확정하면 이 수량이 저장되어 다른 사용자에게도 표시됩니다. 수량은
-        매번 확인하고 수정할 수 있습니다.
-      </small>
-    </section>
-  );
 }
 
 function ReceiptQuantitySelector({

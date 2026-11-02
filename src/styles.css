@@ -17497,56 +17497,226 @@ body:has(.cms-shell) {
   color: #244b88;
 }
 
-/* Box receipt confirmation stays inside the scanned product card. */
+/* Box receipt quantity editor. */
 .box-receipt-quantity {
   display: grid;
-  gap: 10px;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
   min-width: 0;
+  margin-top: 12px;
   padding: 16px;
-  border: 1px solid #c9dcff;
-  border-radius: 16px;
-  background: #f3f7ff;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
 }
-.box-receipt-quantity.is-confirmed {
-  border-color: #9bd2b6;
-  background: #f2faf6;
-}
-.box-receipt-quantity > strong {
-  font-size: 15px;
-}
-.box-receipt-quantity > p,
-.box-receipt-quantity > small {
-  margin: 0;
-  color: #526176;
-  line-height: 1.5;
-  overflow-wrap: anywhere;
-}
-.box-receipt-quantity > label {
-  font-size: 13px;
-  font-weight: 600;
-}
-.box-receipt-count {
+.box-receipt-heading {
   display: flex;
   align-items: center;
-  gap: 10px;
+  justify-content: space-between;
+  gap: 8px;
 }
-.box-receipt-count input {
-  width: 110px;
+.box-receipt-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 800;
+}
+.box-receipt-title svg {
+  color: #64748b;
+}
+.box-receipt-badge {
+  flex-shrink: 0;
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: #f2f4f6;
+  color: #637081;
+  font-size: 10px;
+  font-weight: 700;
+}
+.box-receipt-quantity.is-confirmed .box-receipt-badge {
+  background: #eaf7f0;
+  color: #23805a;
+}
+.box-receipt-editor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   min-width: 0;
-  padding: 12px;
-  border: 1px solid #bdcce1;
-  border-radius: 10px;
-  font-size: 18px;
-  background: white;
-  color: #17212b;
+  gap: 9px;
 }
-.box-receipt-count span {
-  font-size: 13px;
+.box-receipt-editor > label {
+  color: #526174;
+  font-size: 12px;
+  font-weight: 600;
 }
-.box-receipt-quantity > button {
+.box-receipt-stepper {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 7px;
+  border: 1px solid #edf0f3;
+  border-radius: 12px;
+  background: #f6f8fa;
+}
+.box-receipt-stepper:focus-within {
+  border-color: #8eb9ff;
+}
+.box-receipt-stepper > button {
+  display: grid;
+  place-items: center;
+  flex: 0 0 44px;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 1px solid #e2e7ec;
+  border-radius: 9px;
+  background: #fff;
+  color: #344256;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.box-receipt-stepper > button:disabled {
+  background: #f8f9fb;
+  color: #b9c1cb;
+  cursor: default;
+}
+.box-receipt-value {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: baseline;
+  justify-content: center;
+  gap: 4px;
+}
+.box-receipt-value input {
   width: 100%;
-  min-height: 44px;
-  height: auto;
-  padding: 12px;
-  white-space: normal;
+  max-width: 108px;
+  min-width: 0;
+  height: 48px;
+  margin: 0;
+  padding: 0 2px;
+  border: 0;
+  border-radius: 0;
+  outline: none;
+  background: transparent;
+  box-shadow: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 30px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -1px;
+  text-align: center;
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+.box-receipt-value.is-long-count input {
+  padding: 0;
+  font-size: 18px;
+  letter-spacing: -0.5px;
+}
+.box-receipt-value input::-webkit-inner-spin-button,
+.box-receipt-value input::-webkit-outer-spin-button {
+  margin: 0;
+  -webkit-appearance: none;
+}
+.box-receipt-value input::placeholder {
+  color: #a3adba;
+  font-size: 21px;
+  font-weight: 600;
+  letter-spacing: 0;
+}
+.box-receipt-value > span {
+  padding-right: 4px;
+  color: #728093;
+  font-size: 14px;
+}
+.box-receipt-hint,
+.box-receipt-footnote {
+  margin: 0;
+  color: #788596;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.box-receipt-total {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 14px;
+  border-top: 1px solid #edf0f3;
+}
+.box-receipt-total > span {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+  color: #66758a;
+  font-size: 12px;
+}
+.box-receipt-total small {
+  font-size: 10px;
+  word-break: keep-all;
+}
+.box-receipt-total > strong {
+  flex-shrink: 0;
+  color: var(--blue);
+  font-size: 17px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.box-receipt-confirm {
+  display: flex;
+  width: 100%;
+  min-height: 46px;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 8px;
+  border: 1px solid #dbe3ed;
+  border-radius: 10px;
+  background: #fff;
+  color: #344256;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  cursor: pointer;
+  touch-action: manipulation;
+}
+.box-receipt-check {
+  display: grid;
+  place-items: center;
+  flex: 0 0 19px;
+  width: 19px;
+  height: 19px;
+  border: 1.5px solid #bdc8d5;
+  border-radius: 6px;
+  background: #fff;
+}
+.box-receipt-confirm[aria-pressed="true"] {
+  border-color: #b6d3ff;
+  background: #f1f6ff;
+  color: #0056d6;
+}
+.box-receipt-confirm[aria-pressed="true"] .box-receipt-check {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: white;
+}
+.box-receipt-confirm:disabled {
+  border-color: #edf0f3;
+  color: #9aa5b3;
+  cursor: default;
+}
+.box-receipt-confirm:focus-visible,
+.box-receipt-stepper > button:focus-visible {
+  outline: 3px solid #94beff;
+  outline-offset: 2px;
+}
+.box-receipt-footnote {
+  margin-top: -8px;
+  text-align: center;
+  font-size: 10px;
 }
