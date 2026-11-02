@@ -1,143 +1,26 @@
-<!doctype html>
-<html lang="ko">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>변동 처방 관리 검증</title>
-    <link rel="stylesheet" href="/src/styles.css" />
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module">
-      import React from "react";
-      import { createRoot } from "react-dom/client";
-      import {
-        PrescriptionChangePage,
-        PrescriptionChangeAlert,
-      } from "/src/PrescriptionChanges.tsx";
-      const before = {
-        lineNo: "1",
-        insuranceCode: "640007761",
-        drugName: "검증용 약품",
-        dose: "4",
-        daily: "2",
-        days: 60,
-        quantity: 480,
-        totalQuantity: "480",
-        substitutionType: 0,
-      };
-      const after = { ...before, days: 10, quantity: 80, totalQuantity: "80" };
-      let record = {
-        id: 1,
-        pharmacyId: 4,
-        prescriptionCode: "TEST-001",
-        status: "PENDING",
-        reason: "이미 차감한 수량보다 처방이 줄어 재고 반환 확인이 필요합니다.",
-        cancellation: false,
-        before: [before],
-        after: [after],
-        capturedAt: "2026-10-28T18:00:00",
-        createdAt: "2026-10-28T18:00:00",
-      };
-      const auto = {
-        ...record,
-        id: 2,
-        prescriptionCode: "TEST-AUTO",
-        status: "AUTO_APPLIED",
-        after: [{ ...after, quantity: 240, totalQuantity: "240", days: 30 }],
-        reason:
-          "기존 차감 96개와 주문 완료 상태를 유지하고 부족 수량을 144개로 반영했습니다.",
-      };
-      let lastDecision = "요청 전";
-      async function request(path, options) {
-        if (path.endsWith("/summary"))
-          return {
-            data: { pendingCount: record.status === "PENDING" ? 1 : 0 },
-          };
-        if (options?.method === "POST") {
-          const body = JSON.parse(options.body);
-          lastDecision = JSON.stringify(body);
-          document.getElementById("decision-output").textContent = lastDecision;
-          record = {
-            ...record,
-            status: body.action === "APPROVE" ? "APPROVED" : "REJECTED",
-            memo: body.memo,
-            decidedByAccountId: 99,
-            decidedAt: "2026-10-28T18:01:00",
-          };
-          return { data: record };
-        }
-        if (path === "/prescription-changes/2") return { data: auto };
-        if (path === "/prescription-changes/1")
-          return {
-            data: {
-              ...record,
-              current: record.before,
-              processing: [
-                {
-                  line_no: "1",
-                  insurance_code: "640007761",
-                  deducted_quantity: 96,
-                  shortage_quantity: 384,
-                  substitute_quantity: 0,
-                  shortage_status: "ORDERED",
-                },
-              ],
-              stockEffects: [
-                {
-                  stockId: 10,
-                  drugName: "검증용 약품",
-                  beforeQuantity: 0,
-                  returnQuantity: 16,
-                  afterQuantity: 16,
-                },
-              ],
-              canApprove: true,
-              reviewToken: "fixture-token",
-            },
-          };
-        const query = new URL("https://fixture.invalid" + path).searchParams;
-        const status = query.get("status");
-        const rows = [record, auto].filter(
-          (item) => status === "ALL" || item.status === status,
-        );
-        return { data: { items: rows, total: rows.length, page: 0, size: 50 } };
-      }
-      createRoot(document.getElementById("root")).render(
-        React.createElement(
-          React.Fragment,
-          null,
-          React.createElement(
-            "div",
-            {
-              style: { maxWidth: 1300, margin: "20px auto", padding: "0 20px" },
-            },
-            React.createElement("h1", null, "검증용 · 변동 처방"),
-            React.createElement(PrescriptionChangeAlert, {
-              request,
-              navigate: (path) => {
-                document.getElementById("navigation-output").textContent = path;
-              },
-            }),
-          ),
-          React.createElement(PrescriptionChangePage, { request, root: true }),
-          React.createElement(
-            "div",
-            { style: { padding: 20 } },
-            React.createElement(
-              "output",
-              { id: "navigation-output", "aria-label": "이동 경로" },
-              "이동 전",
-            ),
-            React.createElement("br"),
-            React.createElement(
-              "output",
-              { id: "decision-output", "aria-label": "처리 요청" },
-              lastDecision,
-            ),
-          ),
-        ),
-      );
-    </script>
-  </body>
-</html>
+<!doctype html><html lang="ko"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>변동 처방 디자인 검증</title><link rel="stylesheet" href="/src/styles.css"><style>
+body {display:block;padding:0;background:#f7f9fc;}#root {display:flex;flex-direction:column;height:100dvh;min-width:0;} .fixture-global-header {display:flex;flex:0 0 58px;align-items:center;justify-content:space-between;padding:0 28px;border-bottom:1px solid #e1e7ef;background:white;font-size:15px;font-weight:700;} .fixture-global-header small {font-size:11px;color:#98a2b0;font-weight:400;}
+@media(max-width:900px){#root{height:auto;min-height:100dvh}.fixture-global-header{padding:18px;}}
+</style></head><body><div id="root"></div><script type="module">
+import React from 'react';import {createRoot} from 'react-dom/client';
+import {PrescriptionChangePage} from '/src/PrescriptionChanges.tsx';
+const params=new URLSearchParams(location.search),blocked=params.get('state')==='blocked',limited=params.get('state')==='limited';
+const rowCount=Number(params.get('rows')||3);
+const line={lineNo:'1',insuranceCode:'640007761',drugName:'검증용 약품 A',dose:'1',daily:'2',days:60,quantity:120,totalQuantity:'120',substitutionType:0};
+const unchanged=Array.from({length:24},(_,i)=>({...line,lineNo:String(i+2),insuranceCode:String(641000000+i),drugName:`변경 없는 약품 ${i+1}`}));
+const before=[line,...unchanged],after=[{...line,days:40,quantity:80,totalQuantity:'80'},...unchanged];
+const records=Array.from({length:rowCount},(_,i)=>({id:i+1,pharmacyId:4,prescriptionCode:`2026102900${String(i+1).padStart(2,'0')}`,status:i===1&&rowCount===3?'AUTO_APPLIED':'PENDING',reason:'이미 차감한 수량보다 처방이 줄어 재고 반환 확인이 필요합니다.',cancellation:rowCount===3&&i===2,before,after:rowCount===3&&i===2?[]:after,capturedAt:'2026-11-02T11:00:00',createdAt:'2026-11-02T11:00:00'}));
+window.fixtureDecisions=[];
+async function request(path,options){
+ if(options?.method==='POST'){
+  const body=JSON.parse(options.body);window.fixtureDecisions.push(body);
+  const id=Number(path.split('/')[2]);const record=records.find(r=>r.id===id);record.status=body.action==='APPROVE'?'APPROVED':'REJECTED';record.memo=body.memo;record.decidedAt='2026-11-02T11:30:00';return {data:record};
+ }
+ const match=path.match(/^\/prescription-changes\/(\d+)$/);
+ if(match){const record=records.find(r=>r.id===Number(match[1]));return {data:{...record,current:record.before,processing:[{line_no:'1',insurance_code:line.insuranceCode,deducted_quantity:96,substitute_quantity:0,shortage_quantity:24,shortage_status:'ORDERED'}],stockEffects:record.status==='PENDING'?[{stockId:10,drugName:line.drugName,insuranceCode:line.insuranceCode,beforeQuantity:12,returnQuantity:record.cancellation?96:16,afterQuantity:record.cancellation?108:28,blocked}]:[],canApprove:!blocked,reviewToken:'fixture-only'}};}
+ const query=new URL('https://fixture.invalid'+path).searchParams;
+ const rows=records.filter(r=>query.get('status')==='ALL'||r.status===query.get('status'));
+ const page=Number(query.get('page')||0);return {data:{items:rows.slice(page*50,page*50+50),total:rows.length,size:50}};
+}
+createRoot(document.getElementById('root')).render(React.createElement(React.Fragment,null,React.createElement('header',{className:'fixture-global-header'},'처방전',React.createElement('small',null,'검증 화면 · 실제 처방 및 재고 변경 없음')),React.createElement(PrescriptionChangePage,{request,root:false,limited})));
+</script></body></html>

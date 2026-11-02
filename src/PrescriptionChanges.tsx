@@ -1,19 +1,25 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertTriangle, ArrowRight, RefreshCw } from "lucide-react";
+import {
+  AlertTriangle,
+  ArrowLeft,
+  ArrowRight,
+  Check,
+  ChevronRight,
+  ClipboardList,
+  RefreshCw,
+} from "lucide-react";
+import {
+  prescriptionLineChanges,
+  prescriptionChangeSummary,
+  prescriptionDecisionReadiness,
+} from "./prescriptionChangeView";
+import type {
+  PrescriptionChangeLine as Line,
+  PrescriptionLineChange,
+} from "./prescriptionChangeView";
 import "./PrescriptionChanges.css";
 
 type Api = (path: string, init?: RequestInit) => Promise<unknown>;
-type Line = {
-  lineNo: string;
-  insuranceCode: string;
-  drugName: string;
-  dose: string;
-  daily: string;
-  days: number;
-  quantity: number;
-  totalQuantity?: string;
-  substitutionType: number;
-};
 type StockEffect = {
   stockId: number;
   drugName: string;
@@ -68,15 +74,6 @@ const message = (error: unknown) =>
     : "요청을 완료하지 못했습니다. 다시 확인해 주세요.";
 const date = (value?: string) =>
   value ? value.replace("T", " ").slice(0, 19) : "-";
-const quantity = (lines: Line[]) =>
-  lines
-    .filter(
-      (line) =>
-        line.insuranceCode.length >= 9 &&
-        ![1, 9].includes(line.substitutionType),
-    )
-    .reduce((sum, line) => sum + line.quantity, 0);
-
 export function PrescriptionChangeAlert({
   request,
   navigate,
@@ -171,6 +168,20 @@ export function PrescriptionChangePage({
   const [saving, setSaving] = useState(false);
   const [reload, setReload] = useState(0);
   const detailRequest = useRef(0);
+  const detailHeading = useRef<HTMLHeadingElement>(null);
+  const listPanel = useRef<HTMLElement>(null);
+  const selectedId = selected?.id;
+  useEffect(() => {
+    if (!selectedId) return;
+    detailHeading.current?.focus({ preventScroll: true });
+    if (window.matchMedia("(max-width: 900px)").matches) {
+      detailHeading.current
+        ?.closest(".rx-change-detail")
+        ?.scrollIntoView({ block: "start" });
+    }
+  }, [selectedId]);
+  const batchPage = Math.floor(page / 5);
+  const visibleRecords = records.slice((page % 5) * 10, ((page % 5) + 1) * 10);
   useEffect(() => {
     let active = true;
     setLoading(true);
@@ -178,7 +189,7 @@ export function PrescriptionChangePage({
     setSelected(null);
     setDetailLoading(false);
     detailRequest.current++;
-    const query = new URLSearchParams({ status, page: String(page) });
+    const query = new URLSearchParams({ status, page: String(batchPage) });
     if (filter.keyword) query.set("keyword", filter.keyword);
     if (root && filter.pharmacy) query.set("pharmacyId", filter.pharmacy);
     request(`/prescription-changes?${query}`)
@@ -186,7 +197,11 @@ export function PrescriptionChangePage({
         if (!active) return;
         const data = payload(raw);
         setRecords(Array.isArray(data.items) ? (data.items as Change[]) : []);
-        setTotal(Number(data.total ?? 0));
+        const nextTotal = Number(data.total ?? 0);
+        setTotal(nextTotal);
+        setPage((current) =>
+          Math.min(current, Math.max(0, Math.ceil(nextTotal / 10) - 1)),
+        );
       })
       .catch((e) => {
         if (active) {
@@ -201,7 +216,12 @@ export function PrescriptionChangePage({
     return () => {
       active = false;
     };
-  }, [request, status, filter, page, root, reload, refreshKey]);
+  }, [request, status, filter, batchPage, root, reload, refreshKey]);
+  useEffect(() => {
+    setSelected(null);
+    setDetailLoading(false);
+    detailRequest.current++;
+  }, [page]);
   useEffect(
     () => () => {
       detailRequest.current++;
@@ -260,22 +280,50 @@ export function PrescriptionChangePage({
     }
   }
   const pending = selected?.status === "PENDING";
+  const comparisonBefore = pending
+    ? (selected?.current ?? selected?.before ?? [])
+    : (selected?.before ?? []);
+  const lineChanges = selected
+    ? prescriptionLineChanges(
+        comparisonBefore,
+        selected.after,
+        selected.cancellation,
+      )
+    : [];
+  const readiness = prescriptionDecisionReadiness({
+    memo,
+    confirmed,
+    reviewToken: selected?.reviewToken,
+    canApprove: selected?.canApprove,
+    saving,
+  });
+  const pageCount = Math.max(1, Math.ceil(total / 10));
+  function closeDetail() {
+    if (saving) return;
+    detailRequest.current++;
+    setSelected(null);
+    setDetailLoading(false);
+    setError("");
+    if (window.matchMedia("(max-width: 900px)").matches) {
+      window.requestAnimationFrame(() =>
+        listPanel.current?.scrollIntoView({ block: "start" }),
+      );
+    }
+  }
   return (
     <section className="cms-content rx-change-page">
       <div className="rx-change-heading">
         <div>
           <h2>변동 처방 내역관리</h2>
-          <p>
-            일반 수정은 자동 반영합니다. 반환 재고·대체·완료 처리와 겹치는
-            변경만 확인합니다.
-          </p>
+          <p>이팜 수정 내용을 확인하고, 우리 쪽 처방과 재고에 반영합니다.</p>
         </div>
         <button
           type="button"
+          className="rx-change-secondary"
           onClick={() => setReload((value) => value + 1)}
           disabled={saving}
         >
-          <RefreshCw size={16} /> 새로고침
+          <RefreshCw size={15} aria-hidden="true" /> 새로고침
         </button>
       </div>
       <form
@@ -304,7 +352,7 @@ export function PrescriptionChangePage({
             <option value="SUPERSEDED">새 수정본 있음</option>
           </select>
         </label>
-        <label>
+        <label className="rx-change-search">
           처방전 번호
           <input
             value={keyword}
@@ -327,6 +375,9 @@ export function PrescriptionChangePage({
         <button type="submit" disabled={loading || saving}>
           조회
         </button>
+        <span className="rx-change-filter-note">
+          일반 수정은 자동 반영되고, 재고 처리가 겹치는 내역만 확인합니다.
+        </span>
       </form>
       {error && (
         <p className="rx-change-error" role="alert">
@@ -338,45 +389,75 @@ export function PrescriptionChangePage({
           {notice}
         </p>
       )}
-      <div className="rx-change-layout">
-        <div className="rx-change-list" aria-busy={loading}>
+      <div
+        className={`rx-change-layout ${selected || detailLoading ? "is-detail" : ""}`}
+      >
+        <section
+          className="rx-change-list"
+          ref={listPanel}
+          aria-label="변동 처방 목록"
+          aria-busy={loading}
+        >
           <header>
-            <strong>{labels[status] ?? "변동 처방"}</strong>
-            <span>{total}건</span>
+            <strong>
+              {labels[status] ?? "전체 내역"}
+              <span className="rx-change-count">{total}건</span>
+            </strong>
+            <span>처방 선택</span>
           </header>
-          {loading ? (
-            <p>변동 처방을 불러오고 있습니다.</p>
-          ) : records.length === 0 ? (
-            <p>표시할 변동 처방이 없습니다.</p>
-          ) : (
-            records.map((record) => (
-              <button
-                type="button"
-                key={record.id}
-                disabled={saving}
-                className={selected?.id === record.id ? "is-selected" : ""}
-                onClick={() => void open(record)}
-              >
-                <span
-                  className={`rx-change-badge ${record.status === "PENDING" ? "is-pending" : ""}`}
-                >
-                  {labels[record.status] ?? record.status}
-                </span>
-                <strong>{record.prescriptionCode}</strong>
-                <span>
-                  {quantity(record.before)}개 →{" "}
-                  {record.cancellation
-                    ? "처방 취소"
-                    : `${quantity(record.after)}개`}
-                </span>
-                <small>
-                  {root ? `약국 ${record.pharmacyId} · ` : ""}
-                  {date(record.capturedAt)}
-                </small>
-                <p>{record.reason}</p>
-              </button>
-            ))
-          )}
+          <div className="rx-change-list-scroll">
+            {loading ? (
+              <p className="rx-change-empty">변동 처방을 불러오고 있습니다.</p>
+            ) : !records.length ? (
+              <p className="rx-change-empty">표시할 변동 처방이 없습니다.</p>
+            ) : (
+              visibleRecords.map((record) => {
+                const changes = prescriptionLineChanges(
+                  record.before,
+                  record.after,
+                  record.cancellation,
+                );
+                const names = [
+                  ...new Set(
+                    changes
+                      .map(
+                        (change) => (change.after ?? change.before)?.drugName,
+                      )
+                      .filter(Boolean),
+                  ),
+                ];
+                return (
+                  <button
+                    type="button"
+                    key={record.id}
+                    disabled={saving}
+                    className={`rx-change-list-item ${selected?.id === record.id ? "is-selected" : ""}`}
+                    aria-pressed={selected?.id === record.id}
+                    onClick={() => void open(record)}
+                  >
+                    <span className="rx-change-list-top">
+                      <strong>{record.prescriptionCode}</strong>
+                      <StatusBadge status={record.status} />
+                    </span>
+                    <span className="rx-change-list-summary">
+                      {prescriptionChangeSummary(changes, record.cancellation)}
+                    </span>
+                    <span
+                      className="rx-change-list-drugs"
+                      title={names.join(", ")}
+                    >
+                      {names.slice(0, 2).join(", ") || "처방 정보 확인"}
+                      {names.length > 2 ? ` 외 ${names.length - 2}품목` : ""}
+                    </span>
+                    <small>
+                      {root ? `약국 ${record.pharmacyId} · ` : ""}
+                      {date(record.capturedAt).slice(0, 16)}
+                    </small>
+                  </button>
+                );
+              })
+            )}
+          </div>
           <div className="rx-change-pagination">
             <button
               type="button"
@@ -386,177 +467,402 @@ export function PrescriptionChangePage({
               이전
             </button>
             <span>
-              {page + 1} / {Math.max(1, Math.ceil(total / 50))}
+              {page + 1} / {pageCount}
             </span>
             <button
               type="button"
-              disabled={(page + 1) * 50 >= total || loading || saving}
+              disabled={page + 1 >= pageCount || loading || saving}
               onClick={() => setPage((value) => value + 1)}
             >
               다음
             </button>
           </div>
-        </div>
-        <div className="rx-change-detail" aria-busy={detailLoading}>
+        </section>
+        <section
+          className="rx-change-detail"
+          aria-label="선택한 처방 변경 내용"
+          aria-busy={detailLoading}
+        >
           {detailLoading ? (
-            <p>변경 상세를 불러오고 있습니다.</p>
+            <div className="rx-change-empty">
+              변경 상세를 불러오고 있습니다.
+            </div>
           ) : !selected ? (
-            <p>목록에서 변동 처방을 선택해 주세요.</p>
+            <div className="rx-change-placeholder">
+              <ClipboardList size={32} aria-hidden="true" />
+              <strong>확인할 처방을 선택해 주세요</strong>
+              <p>바뀐 약품과 재고 영향을 먼저 보여드립니다.</p>
+            </div>
           ) : (
             <>
-              <header>
-                <div>
-                  <span
-                    className={`rx-change-badge ${pending ? "is-pending" : ""}`}
+              <header className="rx-change-detail-header">
+                <div className="rx-change-detail-title">
+                  <button
+                    type="button"
+                    className="rx-change-mobile-back rx-change-secondary"
+                    onClick={closeDetail}
+                    disabled={saving}
+                    aria-label="처방 목록으로 돌아가기"
                   >
-                    {labels[selected.status] ?? selected.status}
-                  </span>
-                  <h3>{selected.prescriptionCode}</h3>
-                </div>
-                <span>{date(selected.capturedAt)}</span>
-              </header>
-              <p className="rx-change-reason">
-                {selected.currentReason ?? selected.reason}
-              </p>
-              <div className="rx-change-comparison">
-                <LineTable title="이전 처방" lines={selected.before} />
-                <LineTable
-                  title={
-                    selected.cancellation ? "수정본 · 처방 취소" : "이팜 수정본"
-                  }
-                  lines={selected.after}
-                />
-              </div>
-              {selected.processing && selected.processing.length > 0 && (
-                <div className="rx-change-processing">
-                  <strong>현재 재고 처리</strong>
-                  {selected.processing.map((item, index) => (
-                    <p key={`${item.line_no}:${index}`}>
-                      행 {item.line_no} · 차감 {item.deducted_quantity ?? 0}개 ·
-                      대체 {item.substitute_quantity ?? 0}개 · 부족{" "}
-                      {item.shortage_quantity ?? 0}개
-                      {item.shortage_status
-                        ? ` · ${workflowLabel(item.shortage_status)}`
-                        : ""}
-                    </p>
-                  ))}
-                </div>
-              )}
-              {pending && (
-                <>
-                  <div className="rx-change-effects">
-                    <h4>승인 시 재고 보정</h4>
-                    {!selected.stockEffects?.length ? (
-                      <p>
-                        반환되는 재고가 없습니다. 기존 차감 수량을 유지하고 부족
-                        수량을 다시 계산합니다.
-                      </p>
-                    ) : (
-                      selected.stockEffects.map((effect) => (
-                        <div key={effect.stockId}>
-                          <strong>{effect.drugName}</strong>
-                          <span>
-                            {effect.blocked
-                              ? "재고 연결 복구 필요"
-                              : `${effect.beforeQuantity}개 → ${effect.afterQuantity}개`}
-                          </span>
-                          <b>반환 +{effect.returnQuantity}개</b>
-                        </div>
-                      ))
-                    )}
-                    <small>
-                      새로운 약품이나 늘어난 미차감 수량은 부족분으로
-                      기록합니다. 입고 재고 차감은 기존 확인 절차로 처리합니다.
-                    </small>
+                    <ArrowLeft size={17} />
+                  </button>
+                  <div>
+                    <div className="rx-change-detail-title-row">
+                      <h3 ref={detailHeading} tabIndex={-1}>
+                        {selected.prescriptionCode}
+                      </h3>
+                      <StatusBadge status={selected.status} />
+                    </div>
+                    <span>
+                      수집 {date(selected.capturedAt)}
+                      {root ? ` · 약국 ${selected.pharmacyId}` : ""}
+                    </span>
                   </div>
-                  {limited ? (
-                    <p>
-                      승인은 약국 주계정 또는 관리자 계정으로 진행해 주세요.
-                    </p>
+                </div>
+              </header>
+              <div className="rx-change-detail-scroll" key={selected.id}>
+                <div
+                  className={`rx-change-review-note ${pending ? "is-pending" : ""}`}
+                >
+                  {pending && <AlertTriangle size={17} aria-hidden="true" />}
+                  <div>
+                    <strong>
+                      {pending
+                        ? "확인이 필요한 이유"
+                        : (labels[selected.status] ?? "처리 내역")}
+                    </strong>
+                    <p>{selected.currentReason ?? selected.reason}</p>
+                  </div>
+                </div>
+                <section className="rx-change-section">
+                  <div className="rx-change-section-heading">
+                    <h4>바뀐 약품</h4>
+                    <span>
+                      {prescriptionChangeSummary(
+                        lineChanges,
+                        selected.cancellation,
+                      )}
+                    </span>
+                  </div>
+                  <ChangedLines
+                    changes={lineChanges}
+                    cancellation={selected.cancellation}
+                  />
+                </section>
+                <section className="rx-change-section rx-change-impact">
+                  <div className="rx-change-section-heading">
+                    <h4>
+                      {pending
+                        ? "수정 반영 시 재고 변화"
+                        : "반영 당시 재고 변화"}
+                    </h4>
+                  </div>
+                  {selected.stockEffects?.length ? (
+                    <>
+                      {selected.stockEffects.map((effect) => (
+                        <div
+                          className="rx-change-impact-row"
+                          key={effect.stockId}
+                        >
+                          <div>
+                            <strong>{effect.drugName}</strong>
+                            <span>
+                              {effect.blocked
+                                ? "재고 연결 복구 필요"
+                                : `${pending ? "현재" : "반영 전"} ${effect.beforeQuantity ?? "-"}개 → 반영 후 ${effect.afterQuantity ?? "-"}개`}
+                            </span>
+                          </div>
+                          <b className={effect.blocked ? "is-blocked" : ""}>
+                            +{effect.returnQuantity}개 복원
+                          </b>
+                        </div>
+                      ))}
+                      <p className="rx-change-help">
+                        초과 차감한 수량을 전산 재고에 되돌립니다. 도매처 반품을
+                        뜻하지 않습니다.
+                      </p>
+                    </>
                   ) : (
-                    <div className="rx-change-decision">
-                      <label>
-                        처리 사유
-                        <textarea
-                          maxLength={1000}
-                          value={memo}
-                          disabled={saving}
-                          onChange={(event) => setMemo(event.target.value)}
-                          placeholder="변경 확인 내용과 재고 보정 사유를 입력해 주세요."
-                        />
+                    <p className="rx-change-help">
+                      {pending
+                        ? "재고에 다시 더할 수량은 없습니다. 기존 차감을 유지하고 부족 수량을 다시 계산합니다."
+                        : "기록된 재고 보정이 없습니다."}
+                    </p>
+                  )}
+                  {pending && (
+                    <p className="rx-change-help">
+                      추가로 필요한 수량은 부족분으로 기록하며, 자동으로 더
+                      차감하지 않습니다.
+                    </p>
+                  )}
+                </section>
+                <details className="rx-change-disclosure">
+                  <summary>
+                    <span>전체 처방 비교</span>
+                    <small>
+                      우리 쪽 {comparisonBefore.length}품목 · 수정본{" "}
+                      {selected.cancellation ? 0 : selected.after.length}품목
+                    </small>
+                    <ChevronRight size={16} aria-hidden="true" />
+                  </summary>
+                  <div className="rx-change-comparison">
+                    <LineTable
+                      title={pending ? "우리 쪽 현재 처방" : "수정 전 처방"}
+                      lines={comparisonBefore}
+                    />
+                    <LineTable
+                      title={
+                        selected.cancellation
+                          ? "이팜 수정본 · 처방 취소"
+                          : "이팜 수정본"
+                      }
+                      lines={selected.cancellation ? [] : selected.after}
+                    />
+                  </div>
+                </details>
+                {Boolean(selected.processing?.length) && (
+                  <details className="rx-change-disclosure">
+                    <summary>
+                      <span>차감·부족 처리 내역</span>
+                      <small>{selected.processing?.length}품목</small>
+                      <ChevronRight size={16} aria-hidden="true" />
+                    </summary>
+                    <div className="rx-change-processing">
+                      {selected.processing?.map((item, index) => {
+                        const line = comparisonBefore.find(
+                          (line) => line.lineNo === item.line_no,
+                        );
+                        return (
+                          <div key={`${item.line_no}:${index}`}>
+                            <strong>
+                              {line?.drugName || `처방 행 ${item.line_no}`}
+                            </strong>
+                            <p>
+                              이미 차감 {item.deducted_quantity ?? 0}개 · 대체
+                              차감 {item.substitute_quantity ?? 0}개 · 부족{" "}
+                              {item.shortage_quantity ?? 0}개
+                              {item.shortage_status
+                                ? ` · ${workflowLabel(item.shortage_status)}`
+                                : ""}
+                            </p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </details>
+                )}
+                {!pending && (
+                  <details className="rx-change-disclosure">
+                    <summary>
+                      <span>처리 이력</span>
+                      <small>{date(selected.decidedAt).slice(0, 16)}</small>
+                      <ChevronRight size={16} aria-hidden="true" />
+                    </summary>
+                    <p className="rx-change-audit">
+                      처리 {date(selected.decidedAt)}
+                      {selected.decidedByAccountId
+                        ? ` · 계정 #${selected.decidedByAccountId}`
+                        : ""}
+                      <br />
+                      {selected.memo || "기록된 처리 사유가 없습니다."}
+                    </p>
+                  </details>
+                )}
+              </div>
+              {pending &&
+                (limited ? (
+                  <div className="rx-change-decision">
+                    <p className="rx-change-help">
+                      처리는 약국 주계정 또는 관리자 계정으로 진행해 주세요.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="rx-change-decision">
+                    <div className="rx-change-decision-heading">
+                      <label htmlFor="rx-change-memo">
+                        처리 사유{" "}
+                        <span className="rx-change-required">필수</span>
                       </label>
-                      <label className="rx-change-confirm">
-                        <input
-                          type="checkbox"
-                          checked={confirmed}
-                          disabled={saving}
-                          onChange={(event) =>
-                            setConfirmed(event.target.checked)
-                          }
-                        />
-                        처방 변경과 반환할 실물 재고를 확인했습니다.
-                      </label>
-                      <div>
+                      <span className={readiness.canKeep ? "is-ready" : ""}>
+                        {Number(Boolean(memo.trim())) + Number(confirmed)}/2
+                        완료
+                      </span>
+                    </div>
+                    <textarea
+                      id="rx-change-memo"
+                      aria-required="true"
+                      aria-describedby="rx-change-action-hint"
+                      rows={1}
+                      maxLength={1000}
+                      value={memo}
+                      disabled={saving}
+                      onChange={(event) => setMemo(event.target.value)}
+                      placeholder="변경 확인 내용과 처리 사유를 입력해 주세요."
+                    />
+                    <label className="rx-change-confirm">
+                      <input
+                        type="checkbox"
+                        checked={confirmed}
+                        aria-required="true"
+                        aria-describedby="rx-change-action-hint"
+                        disabled={saving}
+                        onChange={(event) => setConfirmed(event.target.checked)}
+                      />
+                      <span>
+                        변경 내용과 실제 재고를 확인했습니다.{" "}
+                        <span className="rx-change-required">필수</span>
+                      </span>
+                    </label>
+                    <div className="rx-change-decision-bottom">
+                      <p
+                        id="rx-change-action-hint"
+                        className={
+                          readiness.canKeep
+                            ? "rx-change-ready"
+                            : "rx-change-action-hint"
+                        }
+                        role="status"
+                        aria-live="polite"
+                      >
+                        {readiness.canKeep && (
+                          <Check size={14} aria-hidden="true" />
+                        )}
+                        {readiness.commonMessage}
+                      </p>
+                      <div className="rx-change-decision-buttons">
                         <button
                           type="button"
                           className="rx-change-secondary"
-                          disabled={saving || !confirmed || !memo.trim()}
+                          disabled={!readiness.canKeep}
                           onClick={() => void decide("REJECT")}
                         >
                           기존 처방 유지
                         </button>
                         <button
                           type="button"
-                          disabled={
-                            saving ||
-                            !confirmed ||
-                            !memo.trim() ||
-                            !selected.canApprove
-                          }
+                          disabled={!readiness.canApply}
                           onClick={() => void decide("APPROVE")}
                         >
                           {saving ? "처리 중" : "확인 후 수정 반영"}
                         </button>
                       </div>
-                      {!selected.canApprove && (
-                        <p role="status">
-                          재고 연결을 복구한 뒤 수정 반영을 승인할 수 있습니다.
-                        </p>
-                      )}
                     </div>
-                  )}
-                </>
-              )}
-              {!pending && Boolean(selected.stockEffects?.length) && (
-                <div className="rx-change-effects">
-                  <h4>반영 당시 재고 보정</h4>
-                  {selected.stockEffects?.map((effect) => (
-                    <div key={effect.stockId}>
-                      <strong>{effect.drugName}</strong>
-                      <span>
-                        {effect.beforeQuantity}개 → {effect.afterQuantity}개
-                      </span>
-                      <b>반환 +{effect.returnQuantity}개</b>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {!pending && (
-                <p className="rx-change-audit">
-                  처리 {date(selected.decidedAt)}
-                  {selected.decidedByAccountId
-                    ? ` · 계정 #${selected.decidedByAccountId}`
-                    : ""}
-                  {selected.memo ? ` · ${selected.memo}` : ""}
-                </p>
-              )}
+                    {readiness.applyMessage && (
+                      <p className="rx-change-blocked" role="status">
+                        {readiness.applyMessage}
+                      </p>
+                    )}
+                  </div>
+                ))}
             </>
           )}
-        </div>
+        </section>
       </div>
     </section>
   );
 }
+
+function StatusBadge({ status }: { status: string }) {
+  return (
+    <span
+      className={`rx-change-badge ${status === "PENDING" ? "is-pending" : ""}`}
+    >
+      {labels[status] ?? status}
+    </span>
+  );
+}
+
+function ChangedLines({
+  changes,
+  cancellation,
+}: {
+  changes: PrescriptionLineChange[];
+  cancellation: boolean;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const visible = expanded ? changes : changes.slice(0, 3);
+  if (!changes.length)
+    return (
+      <p className="rx-change-help">
+        약품별 수량 차이는 없습니다. 위의 변경 사유와 재고 영향을 확인해 주세요.
+      </p>
+    );
+  return (
+    <div className="rx-change-diff-list">
+      {visible.map((change) => {
+        const line = change.after ?? change.before!;
+        return (
+          <article className="rx-change-diff" key={change.key}>
+            <div className="rx-change-diff-title">
+              <div>
+                <strong>{line.drugName || "약품명 없음"}</strong>
+                <small>{line.insuranceCode}</small>
+              </div>
+              <span className={`rx-change-kind is-${change.kind}`}>
+                {change.kind === "added"
+                  ? "추가"
+                  : change.kind === "removed"
+                    ? cancellation
+                      ? "취소"
+                      : "삭제"
+                    : "수정"}
+              </span>
+            </div>
+            <div className="rx-change-quantity-diff">
+              <span>
+                <small>기존</small>
+                <b>
+                  {change.before
+                    ? `${change.before.totalQuantity ?? change.before.quantity}개`
+                    : "없음"}
+                </b>
+              </span>
+              <ArrowRight size={16} aria-hidden="true" />
+              <span>
+                <small>수정</small>
+                <b>
+                  {change.after
+                    ? `${change.after.totalQuantity ?? change.after.quantity}개`
+                    : "처방에서 제외"}
+                </b>
+              </span>
+            </div>
+            {change.fields.includes("복용 정보") && (
+              <p className="rx-change-help">
+                복용 정보: {change.before?.dose} × {change.before?.daily}회 ×{" "}
+                {change.before?.days}일 → {change.after?.dose} ×{" "}
+                {change.after?.daily}회 × {change.after?.days}일
+              </p>
+            )}
+            {change.fields.filter(
+              (field) => !["수량", "복용 정보"].includes(field),
+            ).length > 0 && (
+              <p className="rx-change-help">
+                {change.fields
+                  .filter((field) => !["수량", "복용 정보"].includes(field))
+                  .join(" · ")}{" "}
+                변경
+              </p>
+            )}
+          </article>
+        );
+      })}
+      {changes.length > 3 && (
+        <button
+          type="button"
+          className="rx-change-expand"
+          aria-expanded={expanded}
+          onClick={() => setExpanded((value) => !value)}
+        >
+          {expanded
+            ? "변경 품목 접기"
+            : `나머지 ${changes.length - 3}품목 더 보기`}
+        </button>
+      )}
+    </div>
+  );
+}
+
 function LineTable({ title, lines }: { title: string; lines: Line[] }) {
   return (
     <section className="rx-change-lines">
