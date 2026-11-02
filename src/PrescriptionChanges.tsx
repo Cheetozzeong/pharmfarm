@@ -798,16 +798,16 @@ function ChangedLines({
                 <strong>{line.drugName || "약품명 없음"}</strong>
                 <small>{line.insuranceCode}</small>
               </div>
-              <span className={`rx-change-kind is-${change.kind}`}>
-                {change.kind === "added"
-                  ? "추가"
-                  : change.kind === "removed"
-                    ? cancellation
-                      ? "취소"
-                      : "삭제"
-                    : "수정"}
-              </span>
             </div>
+            <span className={`rx-change-kind is-${change.kind}`}>
+              {change.kind === "added"
+                ? "추가"
+                : change.kind === "removed"
+                  ? cancellation
+                    ? "취소"
+                    : "삭제"
+                  : "수정"}
+            </span>
             <div className="rx-change-quantity-diff">
               <span>
                 <small>기존</small>

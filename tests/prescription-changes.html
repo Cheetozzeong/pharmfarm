@@ -9,6 +9,11 @@ const rowCount=Number(params.get('rows')||3);
 const line={lineNo:'1',insuranceCode:'640007761',drugName:'검증용 약품 A',dose:'1',daily:'2',days:60,quantity:120,totalQuantity:'120',substitutionType:0};
 const unchanged=Array.from({length:24},(_,i)=>({...line,lineNo:String(i+2),insuranceCode:String(641000000+i),drugName:`변경 없는 약품 ${i+1}`}));
 const before=[line,...unchanged],after=[{...line,days:40,quantity:80,totalQuantity:'80'},...unchanged];
+if(params.get('alignment')==='1') {
+ before[0]={...before[0],drugName:'검증용 아주 긴 약품명 · 이름이 여러 줄로 표시되는 경우의 취소 내역',quantity:12345,totalQuantity:'12345'};
+ before[1]={...before[1],drugName:'짧은 약품',quantity:2,totalQuantity:'2'};
+ before[2]={...before[2],drugName:'길이가 다른 검증용 약품 이름',quantity:120000,totalQuantity:'120000'};
+}
 const records=Array.from({length:rowCount},(_,i)=>({id:i+1,pharmacyId:4,prescriptionCode:`2026102900${String(i+1).padStart(2,'0')}`,status:i===1&&rowCount===3?'AUTO_APPLIED':'PENDING',reason:'이미 차감한 수량보다 처방이 줄어 재고 반환 확인이 필요합니다.',cancellation:rowCount===3&&i===2,before,after:rowCount===3&&i===2?[]:after,capturedAt:'2026-11-02T11:00:00',createdAt:'2026-11-02T11:00:00'}));
 window.fixtureDecisions=[];
 async function request(path,options){
